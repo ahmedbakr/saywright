@@ -172,6 +172,8 @@ export class SessionRecorder {
   private idleHandle = 0;
   private stats = { events: 0, issues: 0 };
   private installed = false;
+  /** The look at the screen a session starts with, still to take: a moment after it starts, or before the first action. */
+  private firstLook: 'start' | 'reload' | null = null;
   /** Requests started, DOM changes seen: lets a click tell whether it did anything. */
   private requests = 0;
   private lastClicks: { t: number; x: number; y: number }[] = [];
@@ -291,8 +293,12 @@ export class SessionRecorder {
     const pending = readJson<Pending>(PENDING_KEY);
     writeJson(PENDING_KEY, null);
     if (pending?.id === info.id && Array.isArray(pending.batches)) this.outbox.carry(pending.batches);
-    if (document.readyState === 'complete') setTimeout(() => this.snapshot(resumed ? 'reload' : 'start'), 300);
-    else addEventListener('load', () => setTimeout(() => this.snapshot(resumed ? 'reload' : 'start'), 300), { once: true });
+    // The first look waits a moment for the page to finish drawing, unless the person acts sooner: then it is taken
+    // before that action changes anything (see beforeAction), so it shows the screen as the session found it.
+    this.firstLook = resumed ? 'reload' : 'start';
+    const later = () => setTimeout(() => this.takeFirstLook(), 300);
+    if (document.readyState === 'complete') later();
+    else addEventListener('load', later, { once: true });
     this.report();
   }
 
@@ -402,6 +408,8 @@ export class SessionRecorder {
     this.installed = true;
     const opts = { capture: true, passive: true } as const;
 
+    // First, before the app's own handlers and the listeners below: the screen as the session found it.
+    for (const type of ['pointerdown', 'keydown', 'input', 'change', 'submit', 'click']) addEventListener(type, this.beforeAction, opts);
     addEventListener('click', this.onClick, opts);
     addEventListener('pointerdown', this.onPointerDown, opts);
     addEventListener('input', this.onInput, opts);
@@ -913,12 +921,26 @@ export class SessionRecorder {
     }, 400);
   }
 
-  private snapshot(reason: string): void {
+  /** Read the screen now; `at` is the moment the reading stands for (just before an action), else now. */
+  private snapshot(reason: string, at?: number): void {
     if (!this.active || !document.body) return;
-    own(() => this.readScreen(reason));
+    own(() => this.readScreen(reason, at));
   }
 
-  private readScreen(reason: string): void {
+  /** The look a session starts with, once: when the page has settled, or before the first action if that comes sooner. */
+  private takeFirstLook(at?: number): void {
+    const reason = this.firstLook;
+    if (!reason) return;
+    this.firstLook = null;
+    this.snapshot(reason, at);
+  }
+
+  /** Before the app sees something the person does (the listener runs first): the session's first look, if still to take. */
+  private beforeAction = (e: Event): void => {
+    if (this.firstLook && this.active && !ours(e.target)) this.takeFirstLook(eventTime(e) - 1);
+  };
+
+  private readScreen(reason: string, at?: number): void {
     const started = performance.now();
     const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
       .map((h) => collapse(h.textContent, 80))
@@ -936,7 +958,7 @@ export class SessionRecorder {
     const seen = `${location.href}\n${headings.join('\n')}\n${text}`;
     if (reason === 'after' && seen === this.lastScreen) return;
     this.lastScreen = seen;
-    this.record({ type: 'dom', reason, url: location.href, title: document.title, headings, text }, now());
+    this.record({ type: 'dom', reason, url: location.href, title: document.title, headings, text }, at ?? now());
   }
 
   // ---- leaving -----------------------------------------------------------------

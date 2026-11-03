@@ -78,6 +78,7 @@ The first release: `saywright` (the studio and its command) and `@saywright/vite
 **Honest reports and plain words**
 
 - Reports check what the screen showed. The page's text is read once it settles after each action (dialogs and messages included, card numbers masked), and the AI checks each result against what the action should do, with the code behind it. In a session where nobody said a word, the sample shop's coupon bug is found and traced to `src/lib/pricing.ts:32` (2 of 2 runs with Claude Sonnet 5.5, $0.03 a report with its translation), and **Replay & verify** looks for the expected amount on the screen after the same step: still there before the fix, fixed after it.
+- A session's first look at the screen shows it as the session found it, also when the first action comes within a moment of the start (as Autopilot's can): the look is taken before that action.
 - The sessions list counts each report's findings, not only the problems the recording showed.
 - A report with nothing serious says “No technical problems found” instead of “Ready to ship”, says what a recording can't tell, and offers **Add a check** and Autopilot for the rest.
 - One privacy statement, with “What’s sent?”, wherever it matters.
@@ -99,6 +100,7 @@ The first release: `saywright` (the studio and its command) and `@saywright/vite
 - Requests run one at a time, and keep and undo work from the command bar.
 - **Replay & verify** checks a value you said while pointing (“this should show eighty dollars eighty”) on what you pointed at; recorded steps name the card a button is in, and generated tests use readable, stable locators.
 - A starting session can be cancelled, and every finished report is announced.
+- Calibrating reach by holding still works with any camera: at 20, 24 or 25 frames a second a held corner could stay just short of counting.
 - Quick renames take only the quoted words; “everywhere” goes to the AI.
 - An amount said in words reads “show $80.80” in the transcript, with its space, in English.
 - An answer from the studio's server that can't be read (cut short, or an error page from something in between) is an error, never an empty success that empties the list of changes.

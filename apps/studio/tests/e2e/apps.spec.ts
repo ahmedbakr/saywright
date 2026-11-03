@@ -48,6 +48,32 @@ async function linkFolder(folder: string): Promise<string> {
 
 const frame = (page: Page) => page.frameLocator('iframe');
 
+/**
+ * Click in the app the way a person can: once nothing of the studio's covers that point. (Playwright looks inside the
+ * frame only, so it would click a layer of the studio's lying over the app.) Says what covers it if that lasts.
+ */
+async function clickInApp(page: Page, testId: string): Promise<void> {
+  const target = frame(page).getByTestId(testId);
+  const box = (await target.boundingBox())!;
+  const at: [number, number] = [box.x + box.width / 2, box.y + box.height / 2];
+  const cover = () =>
+    page.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return el?.tagName === 'IFRAME' ? 'the app' : el ? `<${el.tagName.toLowerCase()} class="${String(el.className).slice(0, 120)}">` : 'nothing';
+    }, at);
+  await expect.poll(cover, { message: `what is over the app's ${testId}` }).toBe('the app');
+  await target.click();
+}
+
+/** What the studio shows, for a failure's message: its mode, whether the app is connected, and where the frame is. */
+async function studioState(page: Page): Promise<string> {
+  const s = await page.evaluate(() => {
+    const st = (window as any).__saywrightStore.get();
+    return { mode: st.mode, connected: st.app.connected, app: st.app.url, frames: document.querySelectorAll('iframe').length };
+  });
+  return JSON.stringify({ ...s, frameUrls: page.frames().map((f) => f.url()) });
+}
+
 test.beforeEach(() => resetAll());
 test.afterEach(async () => {
   // The other tests work on the sample shop.
@@ -186,8 +212,12 @@ test('each app keeps its own sessions, recorded through the proxy too', async ({
   await page.getByPlaceholder('What are you testing? (optional)').fill('Notes through the proxy');
   await page.getByRole('button', { name: 'Start recording' }).click();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
-  await frame(page).getByTestId('add-note').click();
-  await expect(frame(page).getByText('A new note')).toBeVisible();
+  await clickInApp(page, 'add-note');
+  await expect(frame(page).getByText('A new note'))
+    .toBeVisible()
+    .catch(async (e: Error) => {
+      throw new Error(`${e.message}\nThe studio then: ${await studioState(page)}`);
+    });
   await page.waitForTimeout(800);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   let id = '';

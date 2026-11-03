@@ -1,11 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { openStudio, resetAll, setHand, startHand } from './helpers';
 
 test.beforeEach(() => resetAll());
 
-test('calibrating reach maps four held points to the whole screen', async ({ page }) => {
-  await openStudio(page);
-  await startHand(page);
+/** Calibrate by holding still at each corner; the reach found is the one the hand covered. */
+async function calibrate(page: Page): Promise<void> {
   await page.keyboard.press('ControlOrMeta+k');
   await page.getByPlaceholder('Search commands…').fill('calibrate');
   await page.getByRole('option', { name: /Calibrate reach/ }).click();
@@ -34,4 +33,16 @@ test('calibrating reach maps four held points to the whole screen', async ({ pag
   expect(box.y1).toBeCloseTo(reach.y1, 2);
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText('Reach calibrated')).toBeHidden();
+}
+
+test('calibrating reach maps four held points to the whole screen', async ({ page }) => {
+  await openStudio(page);
+  await startHand(page);
+  await calibrate(page);
+});
+
+test('holding still counts however the camera’s frames fall: 25 a second, exactly 40 ms apart', async ({ page }) => {
+  await openStudio(page);
+  await startHand(page, { frameMs: 40, steady: true });
+  await calibrate(page);
 });

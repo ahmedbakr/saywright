@@ -142,10 +142,12 @@ export async function appPoint(page: Page, testId: string, fx = 0.5, fy = 0.5): 
 
 /**
  * Start feeding hand frames. `setHand` moves the hand or changes its pose;
- * the pump keeps sending frames at 30 fps like a camera would.
+ * the pump keeps sending frames at 30 fps like a camera would. `frameMs` sets
+ * another rate, and `steady` stamps the frames exactly that far apart, as a
+ * camera's clock does, instead of when the timer happened to fire.
  */
-export async function startHand(page: Page): Promise<void> {
-  await page.evaluate(([fixtures, pointingPinch]) => {
+export async function startHand(page: Page, { frameMs = 33, steady = false }: { frameMs?: number; steady?: boolean } = {}): Promise<void> {
+  await page.evaluate(([fixtures, pointingPinch, frameMs, steady]) => {
     const w = window as any;
     // Hand control is a Labs feature: a person using it has turned it on.
     w.__saywrightSettings.getState().setLabs({ hand: true });
@@ -178,8 +180,10 @@ export async function startHand(page: Page): Promise<void> {
       return { t: performance.now(), hands: [{ landmarks: pts, handedness: f.hands[0].handedness, score: 0.99 }], aspect: f.w / f.h };
     };
     clearInterval(w.__pump);
-    w.__pump = setInterval(() => w.__saywright.onFrame(frame()), 33);
-  }, [FIXTURES, POINTING_PINCH] as const);
+    let n = 0;
+    const start = performance.now();
+    w.__pump = setInterval(() => w.__saywright.onFrame(steady ? { ...frame(), t: start + ++n * frameMs } : frame()), frameMs);
+  }, [FIXTURES, POINTING_PINCH, frameMs, steady] as const);
 }
 
 export async function setHand(page: Page, hand: { pose?: string | null; x?: number; y?: number; pinch?: number; raw?: { x: number; y: number } | null }): Promise<void> {

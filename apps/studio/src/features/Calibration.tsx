@@ -87,7 +87,9 @@ export function Calibration() {
         return;
       }
       buf.current.push(p);
-      while (buf.current.length && buf.current[0].t < f.t - HOLD_MS) buf.current.shift();
+      // The last HOLD_MS and the frame just before them, so the stillness reaches HOLD_MS however the camera's frames
+      // fall: a window of only the last HOLD_MS stays one frame short when they come evenly (every 40 ms: 720 ms).
+      while (buf.current.length > 1 && buf.current[1].t <= f.t - HOLD_MS) buf.current.shift();
       const n = buf.current.length;
       const mx = buf.current.reduce((a, b) => a + b.x, 0) / n;
       const my = buf.current.reduce((a, b) => a + b.y, 0) / n;
@@ -102,7 +104,7 @@ export function Calibration() {
         setProgress(0);
         if (!pinched) return;
       } else setProgress(Math.min(1, span / HOLD_MS));
-      if (pinched || (spread <= STILL && span >= HOLD_MS * 0.97)) {
+      if (pinched || (spread <= STILL && span >= HOLD_MS)) {
         samples.current.push(pinched ? { x: p.x, y: p.y } : { x: mx, y: my });
         buf.current = [];
         setProgress(0);
