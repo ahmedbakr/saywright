@@ -31,9 +31,9 @@ const changes = absolute(lines.slice(start + 1, end).join('\n').trim());
 const start_ = absolute(`## Start
 
 \`\`\`bash
-npx saywright
+npx @saywright/studio
 \`\`\`
 
-The studio opens at \`http://localhost:7357\`. Link your app (a folder, an address or a GitHub repository), or try the sample shop: [Getting started](docs/getting-started.md) walks through every feature on it. For the exact file and line of every element in a React app on Vite, \`npx saywright connect ./my-app\` adds the [\`@saywright/vite\`](packages/vite/README.md) plugin.`);
+The studio opens at \`http://localhost:7357\`. Link your app (a folder, an address or a GitHub repository), or try the sample shop: [Getting started](docs/getting-started.md) walks through every feature on it. For the exact file and line of every element in a React app on Vite, \`npx @saywright/studio connect ./my-app\` adds the [\`@saywright/vite\`](packages/vite/README.md) plugin.`);
 
 process.stdout.write(`${start_}\n\n${changes}\n`);

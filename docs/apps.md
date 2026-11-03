@@ -36,8 +36,8 @@ Quick edits are the changes made on your computer without an AI (size, variant, 
 `connect` sets an app up once, from a terminal, and links it:
 
 ```bash
-npx saywright connect ./my-app
-npx saywright
+npx @saywright/studio connect ./my-app
+npx @saywright/studio
 ```
 
 (In a checkout of this repository: `npm run connect -- ./my-app`, then `npm run dev`.)
@@ -89,7 +89,7 @@ An app linked by its address, or one without the plugin or the script tag, is sh
 - keeps redirects within the site inside the proxy, and fetches pages of that site only;
 - passes on the app's requests to another port of this computer (its API, at `http://localhost:5010` say), from the app's own address and with its cookies, so the API's CORS rules work as they do in the app's own tab. Only the app's own page can ask for that.
 
-What can't work through any proxy: signing in on another site that returns to the real address (OAuth, single sign-on), bot checks, API keys locked to the real domain, an API on another site that allows only the app's real address, and service workers (they are switched off while the studio shows the site). For an app on this computer, connecting it (`npx saywright connect <folder>`) avoids all of these: the studio then shows it at its own address.
+What can't work through any proxy: signing in on another site that returns to the real address (OAuth, single sign-on), bot checks, API keys locked to the real domain, an API on another site that allows only the app's real address, and service workers (they are switched off while the studio shows the site). For an app on this computer, connecting it (`npx @saywright/studio connect <folder>`) avoids all of these: the studio then shows it at its own address.
 
 ## Several addresses, switching, removing
 

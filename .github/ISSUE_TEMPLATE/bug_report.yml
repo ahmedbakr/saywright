@@ -20,7 +20,7 @@ body:
   - type: textarea
     id: doctor
     attributes:
-      label: Output of `npx saywright doctor`
+      label: Output of `npx @saywright/studio doctor`
       render: text
   - type: input
     id: versions

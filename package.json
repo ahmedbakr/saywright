@@ -17,7 +17,7 @@
     "connect": "node scripts/saywright.mjs connect",
     "setup": "node scripts/saywright.mjs setup",
     "doctor": "node scripts/saywright.mjs doctor",
-    "build": "npm run build -w saywright",
+    "build": "npm run build -w @saywright/studio",
     "start": "node apps/studio/bin/saywright.mjs",
     "reset:sample": "git checkout -- apps/shop && git clean -fdq -- apps/shop/tests/saywright",
     "build:plugin": "npm run build -w @saywright/vite",

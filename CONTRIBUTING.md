@@ -98,11 +98,11 @@ CI runs on pull requests and on pushes to `main`: the type check, lint, the unit
 
 ## Releases
 
-For maintainers: set both packages' version and the changelog's date, push, then run the **Release** workflow from the Actions tab (**Run workflow**), or push the version's tag (`v0.1.0`). After the type check and unit tests pass, and only when both packages have the same version, it tags that version, publishes `@saywright/vite` and `saywright` to npm with provenance, and creates the GitHub release with that version's section of the changelog. It needs the `NPM_TOKEN` repository secret. Run again after a failure, it skips what is already done.
+For maintainers: set both packages' version and the changelog's date, push, then run the **Release** workflow from the Actions tab (**Run workflow**), or push the version's tag (`v0.1.0`). After the type check and unit tests pass, and only when both packages have the same version, it tags that version, publishes `@saywright/vite` and `@saywright/studio` to npm with provenance, and creates the GitHub release with that version's section of the changelog. It needs the `NPM_TOKEN` repository secret. Run again after a failure, it skips what is already done.
 
 ## Reporting bugs
 
-Open an issue with what you did, what you expected and what happened, and the output of `npx saywright doctor` (or `npm run doctor` in a checkout). Security problems: see [SECURITY.md](SECURITY.md) instead.
+Open an issue with what you did, what you expected and what happened, and the output of `npx @saywright/studio doctor` (or `npm run doctor` in a checkout). Security problems: see [SECURITY.md](SECURITY.md) instead.
 
 ## Licence
 

@@ -5,7 +5,7 @@
  *
  *   { "mcpServers": { "saywright": { "command": "node", "args": ["<this folder>/scripts/mcp-stdio.mjs"] } } }
  *
- * Installed from npm, the same is `npx -y saywright mcp`.
+ * Installed from npm, the same is `npx -y @saywright/studio mcp`.
  */
 import { saywright } from './saywright.mjs';
 

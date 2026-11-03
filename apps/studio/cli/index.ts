@@ -21,7 +21,7 @@ export interface CliContext {
   clientDir: string | null;
   /** What `connect` installs for the Vite plugin: the published package, or the repository's folder. */
   pluginSpec: string;
-  /** How a person starts the studio, for messages: "npx saywright", "npm run dev". */
+  /** How a person starts the studio, for messages: "npx @saywright/studio", "npm run dev". */
   startCommand: string;
 }
 
@@ -41,7 +41,7 @@ ${c.bold('saywright')} ${c.dim('— point at your running app, say what to chang
 function installed(): CliContext {
   const pkg = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const layout = packageLayout(pkg);
-  return { layout, clientDir: path.join(pkg, 'dist', 'client'), pluginSpec: `@saywright/vite@^${layout.version}`, startCommand: 'npx saywright' };
+  return { layout, clientDir: path.join(pkg, 'dist', 'client'), pluginSpec: `@saywright/vite@^${layout.version}`, startCommand: 'npx @saywright/studio' };
 }
 
 /** Run a command; resolves with the exit code (`start` resolves once the studio stops). */

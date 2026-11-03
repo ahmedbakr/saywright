@@ -218,7 +218,7 @@ function start(): void {
     if (m.type === 'hello') {
       studioOrigin = e.origin;
       const side = outdated({ v: Number(m.v) || 0, oldest: m.oldest }, { v: PROTOCOL_VERSION, oldest: OLDEST_PROTOCOL });
-      if (side && side !== mismatch) console.warn(side === 'plugin' ? '[saywright] This app’s Saywright plugin is older than the studio: run npm i -D @saywright/vite@latest and restart the dev server.' : '[saywright] The Saywright studio is older than this app’s plugin: update Saywright (npx saywright@latest).');
+      if (side && side !== mismatch) console.warn(side === 'plugin' ? '[saywright] This app’s Saywright plugin is older than the studio: run npm i -D @saywright/vite@latest and restart the dev server.' : '[saywright] The Saywright studio is older than this app’s plugin: update Saywright (npx @saywright/studio@latest).');
       mismatch = side;
       post({ type: 'ready', v: PROTOCOL_VERSION, oldest: OLDEST_PROTOCOL, url: location.href, title: document.title });
       if (!mismatch) post({ type: 'session', id: session.id, events: 0, issues: 0 });

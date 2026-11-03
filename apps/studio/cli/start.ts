@@ -39,7 +39,7 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
     return 0;
   }
   if (!ctx.clientDir || !fs.existsSync(path.join(ctx.clientDir, 'index.html'))) {
-    fail('The studio’s interface isn’t built.', ctx.clientDir ? 'Reinstall Saywright (npx saywright@latest).' : 'In the repository, start it with npm run dev.');
+    fail('The studio’s interface isn’t built.', ctx.clientDir ? 'Reinstall Saywright (npx @saywright/studio@latest).' : 'In the repository, start it with npm run dev.');
     return 1;
   }
   const port = values.port === undefined ? STUDIO_PORT : Number(values.port);

@@ -7,7 +7,7 @@ Saywright is a studio that runs on your computer, next to the web app you are bu
 ## Start
 
 ```bash
-npx saywright
+npx @saywright/studio
 ```
 
 The studio opens in your browser at `http://localhost:7357`. Link your app (a folder on this computer, an address, or a GitHub repository), or try the sample shop, which has a real bug to find. You need Node.js 22.18 or newer (or 24.11 or newer).
@@ -15,8 +15,8 @@ The studio opens in your browser at `http://localhost:7357`. Link your app (a fo
 Or set your app up from the terminal first, then start the studio:
 
 ```bash
-npx saywright connect ./my-app
-npx saywright
+npx @saywright/studio connect ./my-app
+npx @saywright/studio
 ```
 
 For a Vite + React app, `connect` adds the [`@saywright/vite`](https://www.npmjs.com/package/@saywright/vite) plugin, which gives the exact file, line and column of every element. Next.js and other React apps get one development-only script tag; anything else works through the studio's local proxy, with no change.
@@ -34,11 +34,11 @@ For a Vite + React app, `connect` adds the [`@saywright/vite`](https://www.npmjs
 
 | Command | What it does |
 | --- | --- |
-| `npx saywright` | Start the studio and open it (`--port <n>`, `--no-open`, `--target <url>`, `--root <folder>`) |
-| `npx saywright connect <folder>` | Connect an app once (`--url`, `--start "<command>"`, `--no-start`, `--studio <address>`, `--dry-run`) |
-| `npx saywright setup` | Download the optional extras: the on-device voice model (28 MB) and speech models for Arabic and English (about 740 MB; `--no-speech`, `--best-arabic`, `--hand`) |
-| `npx saywright doctor` | Check what the studio needs, and how to fix what is missing |
-| `npx saywright mcp` | For AI apps that start MCP servers as programs (Claude Desktop) |
+| `npx @saywright/studio` | Start the studio and open it (`--port <n>`, `--no-open`, `--target <url>`, `--root <folder>`) |
+| `npx @saywright/studio connect <folder>` | Connect an app once (`--url`, `--start "<command>"`, `--no-start`, `--studio <address>`, `--dry-run`) |
+| `npx @saywright/studio setup` | Download the optional extras: the on-device voice model (28 MB) and speech models for Arabic and English (about 740 MB; `--no-speech`, `--best-arabic`, `--hand`) |
+| `npx @saywright/studio doctor` | Check what the studio needs, and how to fix what is missing |
+| `npx @saywright/studio mcp` | For AI apps that start MCP servers as programs (Claude Desktop) |
 
 Every command takes `--help`. All options, ports and environment variables: [Configuration](https://github.com/ahmedbakr/saywright/blob/HEAD/docs/configuration.md).
 

@@ -1,6 +1,6 @@
 # Saywright documentation
 
-New here? Start with [Getting started](getting-started.md): `npx saywright`, then every feature on the sample shop, one step at a time, with pictures.
+New here? Start with [Getting started](getting-started.md): `npx @saywright/studio`, then every feature on the sample shop, one step at a time, with pictures.
 
 ## Pages
 
@@ -19,7 +19,7 @@ New here? Start with [Getting started](getting-started.md): `npx saywright`, the
 | [Speech accuracy](speech-accuracy.md) | How well the speech models hear Arabic and English, measured |
 | [Brand guide](brand.md) | The name, the mark, the colours and the words we use |
 
-Also: [SECURITY.md](../SECURITY.md) (threat model, protections, reporting a vulnerability), [CONTRIBUTING.md](../CONTRIBUTING.md) (working on Saywright itself), [CHANGELOG.md](../CHANGELOG.md), and the npm pages of [`saywright`](../apps/studio/README.md) and [`@saywright/vite`](../packages/vite/README.md).
+Also: [SECURITY.md](../SECURITY.md) (threat model, protections, reporting a vulnerability), [CONTRIBUTING.md](../CONTRIBUTING.md) (working on Saywright itself), [CHANGELOG.md](../CHANGELOG.md), and the npm pages of [`@saywright/studio`](../apps/studio/README.md) and [`@saywright/vite`](../packages/vite/README.md).
 
 ## By what you want to do
 

@@ -1,7 +1,7 @@
 name: Release
 
 # Releases the version in the packages' package.json: run it from the Actions tab (Release, then Run workflow), or
-# push its tag (v0.1.0). It tests, tags the version if it isn't yet, publishes @saywright/vite and saywright to npm,
+# push its tag (v0.1.0). It tests, tags the version if it isn't yet, publishes @saywright/vite and @saywright/studio to npm,
 # then creates the GitHub release with that version's notes from CHANGELOG.md. Needs the repository secret NPM_TOKEN:
 # an npm token allowed to publish both packages. Run again after a failure, it skips what is already done.
 on:
@@ -34,20 +34,27 @@ jobs:
       - run: npm test
       - name: The tag
         run: |
-          if git fetch -q origin "refs/tags/v$VERSION:refs/tags/v$VERSION" 2>/dev/null; then
-            if [ "$(git rev-parse "v$VERSION^{commit}")" != "$(git rev-parse HEAD)" ]; then echo "v$VERSION is another commit: raise the version to release this one."; exit 1; fi
-            echo "v$VERSION is tagged."
-          else
+          if ! git fetch -q origin "refs/tags/v$VERSION:refs/tags/v$VERSION" 2>/dev/null; then
             git tag "v$VERSION" && git push origin "v$VERSION"
+          elif [ "$(git rev-parse "v$VERSION^{commit}")" = "$(git rev-parse HEAD)" ]; then
+            echo "v$VERSION is tagged."
+          elif gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is released from another commit: raise the version to release this one."; exit 1
+          else
+            # Left by a run that stopped before its release: it moves to the commit being released.
+            echo "v$VERSION has no release yet: moving it to this commit."
+            git tag -f "v$VERSION" && git push -f origin "v$VERSION"
           fi
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Publish @saywright/vite
         run: |
           if [ "$(npm view "@saywright/vite@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w packages/vite --provenance --access public; fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish saywright
+      - name: Publish @saywright/studio
         run: |
-          if [ "$(npm view "saywright@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w apps/studio --provenance --access public; fi
+          if [ "$(npm view "@saywright/studio@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w apps/studio --provenance --access public; fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: The GitHub release

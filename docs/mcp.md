@@ -6,7 +6,7 @@ This is the other way round from **Settings → AI**, where Saywright uses an AI
 
 ## Connect an app
 
-1. Start the studio (`npx saywright`) and open your app in it.
+1. Start the studio (`npx @saywright/studio`) and open your app in it.
 2. Open **Settings → Other AI apps**. It shows the server's address, a private token, and ready-to-copy settings for each app below, with your address and token filled in.
 3. Paste the settings for your app, as below.
 
@@ -70,7 +70,7 @@ Claude Desktop starts MCP servers as programs, so it runs `saywright mcp`, which
 ```json
 {
   "mcpServers": {
-    "saywright": { "command": "npx", "args": ["-y", "saywright", "mcp"] }
+    "saywright": { "command": "npx", "args": ["-y", "@saywright/studio", "mcp"] }
   }
 }
 ```
@@ -121,7 +121,7 @@ When the studio runs Claude Code, Codex or Gemini CLI for your own requests (**S
 | --- | --- |
 | “Missing or wrong token” | Copy the settings again from **Settings → Other AI apps**. The token stays the same until you delete `mcp-token` from the data folder. |
 | “Saywright hasn’t been started on this computer yet” (Claude Desktop) | Start the studio once: it creates the token. |
-| “Saywright isn’t running” | Start the studio (`npx saywright`), then try again. |
+| “Saywright isn’t running” | Start the studio (`npx @saywright/studio`), then try again. |
 | “No app is open in Saywright” | Open your app in the studio first. |
 | “Nothing is selected in the studio right now” | Select or point at something in the studio, then ask again. |
 | It worked, then stopped after restarting the studio | The studio may be on another port: copy the address again, or start it with `--port 7357`. |

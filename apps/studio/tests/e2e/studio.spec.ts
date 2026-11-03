@@ -452,7 +452,7 @@ test('voice settings offer the missing on-device model’s download, and this in
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   const missing = page.locator('[data-model="unavailable"]');
   await expect(missing).toContainText('Download the voice model (28 MB)', { timeout: 20_000 });
-  // Run from this repository: its own setup script (an npm install says npx saywright setup).
+  // Run from this repository: its own setup script (an npm install says npx @saywright/studio setup).
   await expect(missing).toContainText('or run npm run setup');
   // The download itself is the server's (stood in for here); then the model loads.
   await page.unroute('**/models/moonshine/tiny/encoder_model.onnx');

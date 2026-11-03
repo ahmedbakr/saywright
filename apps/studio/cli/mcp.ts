@@ -3,7 +3,7 @@
  * message between the app (stdin and stdout) and the running studio's MCP endpoint, with the studio's token. The
  * app's MCP settings:
  *
- *   { "mcpServers": { "saywright": { "command": "npx", "args": ["-y", "saywright", "mcp"] } } }
+ *   { "mcpServers": { "saywright": { "command": "npx", "args": ["-y", "@saywright/studio", "mcp"] } } }
  *
  * Nothing else may be written to stdout: it carries the protocol.
  */
@@ -18,7 +18,7 @@ const HELP = `
 ${c.bold('saywright mcp')}: Saywright for AI apps that start their MCP servers as programs (Claude Desktop)
 
   Put this in the app's MCP settings, and keep the studio running:
-  { "mcpServers": { "saywright": { "command": "npx", "args": ["-y", "saywright", "mcp"] } } }
+  { "mcpServers": { "saywright": { "command": "npx", "args": ["-y", "@saywright/studio", "mcp"] } } }
 `;
 
 export async function mcp(argv: string[], ctx: CliContext): Promise<number> {

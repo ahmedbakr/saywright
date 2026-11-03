@@ -29,7 +29,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void out.push(a.join(' ')));
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-cli-'));
   // The plugin is already installed in the apps below, so connect never runs a package manager.
-  ctx = { layout: { ...repoLayout(ROOT), dataDir: data, envDir: data }, clientDir: null, pluginSpec: '@saywright/vite@^0.1.0', startCommand: 'npx saywright' };
+  ctx = { layout: { ...repoLayout(ROOT), dataDir: data, envDir: data }, clientDir: null, pluginSpec: '@saywright/vite@^0.1.0', startCommand: 'npx @saywright/studio' };
 });
 let path$: { restore: () => void } | null = null;
 /** The package managers this computer has, for one test. */

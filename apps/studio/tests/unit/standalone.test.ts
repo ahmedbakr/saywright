@@ -1,5 +1,5 @@
 /**
- * The studio as one program (`npx saywright`): its interface's files, the dispatch of the studio's routes, and the
+ * The studio as one program (`npx @saywright/studio`): its interface's files, the dispatch of the studio's routes, and the
  * guards around them (this computer's names only, nothing outside the interface's folder). Also its downloads, and
  * opening a file in your editor.
  */

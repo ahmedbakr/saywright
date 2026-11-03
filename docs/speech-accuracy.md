@@ -19,7 +19,7 @@ For narration during a test session, speech is cut into sentences at your pauses
 | Arabic, Cohere | 10.2% | 5.5% |
 | Arabic, Omnilingual | 18.5% | 5.7% |
 
-**Which to install.** `npx saywright setup` (`npm run setup` in a checkout) installs Omnilingual (Arabic, English and mixed sentences) and Parakeet (English) and asks whether to add Cohere for Arabic (`--best-arabic` adds it without asking). If you narrate or speak in Arabic, say yes: it gets 40% fewer words wrong. You can also add it later in **Settings → Voice**, which shows these numbers next to each model.
+**Which to install.** `npx @saywright/studio setup` (`npm run setup` in a checkout) installs Omnilingual (Arabic, English and mixed sentences) and Parakeet (English) and asks whether to add Cohere for Arabic (`--best-arabic` adds it without asking). If you narrate or speak in Arabic, say yes: it gets 40% fewer words wrong. You can also add it later in **Settings → Voice**, which shows these numbers next to each model.
 
 **When you speak both.** In a session set to *Arabic + English*, each sentence is first transcribed by Omnilingual, which hears both and handles sentences that mix them. When a sentence is clearly one language, it is transcribed again by the best installed model for that language.
 

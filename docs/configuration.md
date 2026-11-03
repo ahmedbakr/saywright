@@ -14,13 +14,13 @@ Most of Saywright is set up in the studio itself (**Settings**). This page lists
 
 | Command | What it does |
 | --- | --- |
-| `npx saywright` | Starts the studio and opens it in your browser. Same as `npx saywright start`. |
-| `npx saywright connect <app folder>` | Connects an app once: adds the Vite plugin or a script tag where they help, and opens the app first the next time the studio starts. See [Linking apps](apps.md#connect-from-the-terminal). |
-| `npx saywright setup` | Downloads the optional extras (voice and speech models). |
-| `npx saywright doctor` | Checks what the studio needs and says how to fix what is missing. Exits with code 1 when something must be fixed. |
-| `npx saywright mcp` | Connects an AI app that starts MCP servers as programs (Claude Desktop) to the running studio. See [MCP](mcp.md). |
-| `npx saywright --version` (`-v`) | Prints the version. |
-| `npx saywright --help` (`-h`) | Prints the commands. Each command also takes `--help`. |
+| `npx @saywright/studio` | Starts the studio and opens it in your browser. Same as `npx @saywright/studio start`. |
+| `npx @saywright/studio connect <app folder>` | Connects an app once: adds the Vite plugin or a script tag where they help, and opens the app first the next time the studio starts. See [Linking apps](apps.md#connect-from-the-terminal). |
+| `npx @saywright/studio setup` | Downloads the optional extras (voice and speech models). |
+| `npx @saywright/studio doctor` | Checks what the studio needs and says how to fix what is missing. Exits with code 1 when something must be fixed. |
+| `npx @saywright/studio mcp` | Connects an AI app that starts MCP servers as programs (Claude Desktop) to the running studio. See [MCP](mcp.md). |
+| `npx @saywright/studio --version` (`-v`) | Prints the version. |
+| `npx @saywright/studio --help` (`-h`) | Prints the commands. Each command also takes `--help`. |
 
 #### `saywright` (start)
 

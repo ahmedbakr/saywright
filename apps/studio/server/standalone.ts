@@ -1,5 +1,5 @@
 /**
- * The studio as one program (`npx saywright`): the built interface and the studio's API on one port of this
+ * The studio as one program (`npx @saywright/studio`): the built interface and the studio's API on one port of this
  * computer, without Vite. In the repository, `npm run dev` serves the same API through Vite instead (studioApi).
  */
 import fs from 'node:fs';

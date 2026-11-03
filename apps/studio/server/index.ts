@@ -726,7 +726,7 @@ export type Studio = Awaited<ReturnType<typeof createStudioApi>>;
 /**
  * Everything the studio serves besides its interface: the API, the script that makes apps pointable, the
  * accessibility checks, and the WebAssembly runtimes for hand tracking and speech. Vite (`npm run dev`) and the
- * standalone server (`npx saywright`) mount the same list.
+ * standalone server (`npx @saywright/studio`) mount the same list.
  */
 export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route: string, handler: Middleware]> {
   const require = createRequire(import.meta.url);

@@ -6,7 +6,7 @@
 
 ## The name
 
-**Saywright**: one word, capital *S*. Not “SayWright”, “Say Wright” or “SAYWRIGHT” (all capitals only where code requires it, such as `SAYWRIGHT_HOME`). In file names, packages and identifiers it is `saywright`.
+**Saywright**: one word, capital *S*. Not “SayWright”, “Say Wright” or “SAYWRIGHT” (all capitals only where code requires it, such as `SAYWRIGHT_HOME`). In file names, commands and identifiers it is `saywright`; its npm packages are `@saywright/studio` and `@saywright/vite`.
 
 A *wright* is a maker: a playwright makes plays, a shipwright ships. A saywright makes software by saying what to change, pointing at it in the running app. The name also nods to Playwright, the testing library: Saywright turns what you do in your app into Playwright tests.
 

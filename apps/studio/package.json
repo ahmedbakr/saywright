@@ -1,5 +1,5 @@
 {
-  "name": "saywright",
+  "name": "@saywright/studio",
   "version": "0.1.0",
   "description": "Point at your running web app and say what to change. A studio on your computer for any web app: edits traced to the exact source line, Playwright tests from plain words, session reports, AI testing and accessibility reviews, with the AI you already have.",
   "keywords": [
@@ -40,6 +40,9 @@
   },
   "bugs": "https://github.com/ahmedbakr/saywright/issues",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "saywright": "bin/saywright.mjs"
   },

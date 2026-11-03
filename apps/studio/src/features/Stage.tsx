@@ -138,7 +138,7 @@ function Connecting({ app, loaded, url, slow, error, outdated }: { app: StatusRe
             </>
           ) : (
             <>
-              Update Saywright: stop it and start it again with <span className="font-mono text-fg-2">npx saywright@latest</span>.
+              Update Saywright: stop it and start it again with <span className="font-mono text-fg-2">npx @saywright/studio@latest</span>.
             </>
           )}
         </div>

@@ -54,11 +54,11 @@ export async function doctor(argv: string[], ctx: CliContext): Promise<number> {
   else bad(`Node ${process.versions.node} is too old`, 'Install Node 22 or newer from https://nodejs.org.');
 
   if (fs.existsSync(layout.bridgeFile)) ok('The script that makes apps pointable is built');
-  else bad('The script that makes apps pointable isn’t built', ctx.clientDir ? 'Reinstall Saywright (npx saywright@latest).' : 'Run npm run build:plugin.');
-  if (ctx.clientDir && !fs.existsSync(path.join(ctx.clientDir, 'index.html'))) bad('The studio’s interface isn’t built', 'Reinstall Saywright (npx saywright@latest).');
+  else bad('The script that makes apps pointable isn’t built', ctx.clientDir ? 'Reinstall Saywright (npx @saywright/studio@latest).' : 'Run npm run build:plugin.');
+  if (ctx.clientDir && !fs.existsSync(path.join(ctx.clientDir, 'index.html'))) bad('The studio’s interface isn’t built', 'Reinstall Saywright (npx @saywright/studio@latest).');
 
   if (browserSpeechReady(layout.dataDir)) ok('On-device voice model');
-  else warn('On-device voice model not downloaded: voice uses the browser’s recogniser alone', `Run ${ctx.clientDir ? 'npx saywright setup' : 'npm run setup'} to download it once (28 MB).`);
+  else warn('On-device voice model not downloaded: voice uses the browser’s recogniser alone', `Run ${ctx.clientDir ? 'npx @saywright/studio setup' : 'npm run setup'} to download it once (28 MB).`);
   if (isHandModel(handModelFile(layout.dataDir))) ok('Hand model (for hand control, in Settings → Labs)');
 
   const speech = new SpeechService(speechDir(layout), layout.speechWorker, () => undefined).status();
@@ -67,7 +67,7 @@ export async function doctor(argv: string[], ctx: CliContext): Promise<number> {
     const have = speech.models.filter((m) => m.installed);
     const missing = [!speech.active.ar && 'Arabic', !speech.active.en && 'English'].filter(Boolean);
     if (!missing.length) ok(`Speech models: ${have.map((m) => m.label).join(', ')}`);
-    else warn(`No speech model for ${missing.join(' or ')}`, `Run ${ctx.clientDir ? 'npx saywright setup' : 'npm run setup'}, or install one from Settings → Voice in the studio.`);
+    else warn(`No speech model for ${missing.join(' or ')}`, `Run ${ctx.clientDir ? 'npx @saywright/studio setup' : 'npm run setup'}, or install one from Settings → Voice in the studio.`);
   }
 
   // AI: a plan through its official app, an API key, or a model on this computer. Any one is enough.

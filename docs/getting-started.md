@@ -32,7 +32,7 @@ The pictures on this page were taken with the studio's built-in test AI, so its 
 ## 1. Start the studio
 
 ```bash
-npx saywright
+npx @saywright/studio
 ```
 
 The studio opens in your browser at `http://localhost:7357`. The first time, it welcomes you with the three ways to link an app.
@@ -220,7 +220,7 @@ Open the app menu (top left) and choose **Link an app**, or **All apps**, then *
 
 <img src="media/guide/link-app.png" alt="The Link an app dialog: a folder, an address, or a GitHub repository" width="880">
 
-For the exact file and line of every element in a React app on Vite, run `npx saywright connect ./my-app` once: it adds the `@saywright/vite` plugin. Everything about linking: [Linking your apps](apps.md).
+For the exact file and line of every element in a React app on Vite, run `npx @saywright/studio connect ./my-app` once: it adds the `@saywright/vite` plugin. Everything about linking: [Linking your apps](apps.md).
 
 To put the sample shop back as it was: delete `~/.saywright/sample-shop` and remove the shop from **All apps** (in a checkout of this repository: `npm run reset:sample`).
 

@@ -8,7 +8,7 @@ Saywright runs on your computer, reads and changes your code, starts your apps' 
 | --- | --- |
 | 0.1.x (latest) | Yes |
 
-Until 1.0, security fixes go into the latest release only. Update with `npx saywright@latest`, and `npm install -D @saywright/vite@latest` in your apps.
+Until 1.0, security fixes go into the latest release only. Update with `npx @saywright/studio@latest`, and `npm install -D @saywright/vite@latest` in your apps.
 
 ## Reporting a vulnerability
 
@@ -43,7 +43,7 @@ We aim to answer within three working days, and to fix confirmed problems in the
 
 ### Network
 
-- **This computer only.** The studio and the proxy listen on `127.0.0.1` (the proxy also on `::1`). `npx saywright` and the proxy answer only requests addressed to `localhost`, `127.0.0.1` or `[::1]`, so a web page can't reach them by pointing its own domain at your computer (DNS rebinding). In a checkout, `npm run dev` serves the studio through Vite, which applies the same host check.
+- **This computer only.** The studio and the proxy listen on `127.0.0.1` (the proxy also on `::1`). `npx @saywright/studio` and the proxy answer only requests addressed to `localhost`, `127.0.0.1` or `[::1]`, so a web page can't reach them by pointing its own domain at your computer (DNS rebinding). In a checkout, `npm run dev` serves the studio through Vite, which applies the same host check.
 - **The API answers the studio's own page.** Requests from any other origin are refused. The only exceptions are the few routes an app's page uses to record a session, which accept pages on `localhost`.
 - **Recordings take a key.** Each session gets a key, given to whoever started it. Another page on this computer can learn that a session is running, but can't follow it, stop it, or add events, screenshots or audio to it.
 - **The live event stream** (previews with their code, your apps' dev server output) is sent to the studio's own page only.

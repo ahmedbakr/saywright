@@ -1,6 +1,6 @@
 /**
  * Where the studio finds its parts and keeps its data. Run from this repository (`npm run dev`), its data is in
- * .saywright/ at the repository's root; installed from npm (`npx saywright`), in .saywright/ in your home folder.
+ * .saywright/ at the repository's root; installed from npm (`npx @saywright/studio`), in .saywright/ in your home folder.
  * SAYWRIGHT_HOME moves it anywhere.
  */
 import fs from 'node:fs';
@@ -62,7 +62,7 @@ export function packageLayout(pkg: string): StudioLayout {
     dataDir,
     envDir: dataDir,
     version: versionOf(pkg),
-    setupCommand: 'npx saywright setup',
+    setupCommand: 'npx @saywright/studio setup',
     bridgeFile: path.join(pkg, 'dist', 'bridge.js'),
     axeFile: path.join(pkg, 'dist', 'axe.min.js'),
     speechWorker: path.join(pkg, 'dist', 'server', 'speech-worker.mjs'),

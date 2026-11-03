@@ -5,7 +5,7 @@
 
 <p>
   <a href="https://github.com/ahmedbakr/saywright/actions/workflows/ci.yml"><img src="https://github.com/ahmedbakr/saywright/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://www.npmjs.com/package/saywright"><img src="https://img.shields.io/npm/v/saywright?label=saywright&color=ffb224" alt="saywright on npm"></a>
+  <a href="https://www.npmjs.com/package/@saywright/studio"><img src="https://img.shields.io/npm/v/@saywright/studio?label=%40saywright%2Fstudio&color=ffb224" alt="@saywright/studio on npm"></a>
   <a href="https://www.npmjs.com/package/@saywright/vite"><img src="https://img.shields.io/npm/v/@saywright/vite?label=%40saywright%2Fvite&color=3cc8e8" alt="@saywright/vite on npm"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Licence: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22.18 or newer">
@@ -29,7 +29,7 @@ Saywright is a studio that runs on your computer, next to the web app you are bu
 You need Node.js 22.18 or newer (or 24.11 or newer), and Chrome or Edge.
 
 ```bash
-npx saywright
+npx @saywright/studio
 ```
 
 The studio opens at `http://localhost:7357`. Link your app, from:
@@ -45,8 +45,8 @@ Or try the sample shop: it has a real bug to find, and [Getting started](docs/ge
 To set an app up from the terminal instead, connect it once, then start the studio:
 
 ```bash
-npx saywright connect ./my-app
-npx saywright
+npx @saywright/studio connect ./my-app
+npx @saywright/studio
 ```
 
 **Exact file and line for React apps on Vite.** `connect` adds the [`@saywright/vite`](packages/vite/README.md) plugin. To add it by hand:
@@ -66,7 +66,7 @@ export default defineConfig({
 
 Other apps work too: Next.js and other React apps through one development-only script tag (`connect` adds it), everything else through the proxy, with no change. See [Linking your apps](docs/apps.md).
 
-**Optional extras.** `npx saywright setup` downloads the on-device voice model (28 MB) and the speech models that transcribe Arabic and English narration (about 740 MB). `npx saywright doctor` checks your setup.
+**Optional extras.** `npx @saywright/studio setup` downloads the on-device voice model (28 MB) and the speech models that transcribe Arabic and English narration (about 740 MB). `npx @saywright/studio doctor` checks your setup.
 
 ## What you can do
 
@@ -144,12 +144,12 @@ The threat model, every protection, and how to report a vulnerability: [SECURITY
 | Problem | What to do |
 | --- | --- |
 | The app doesn't open | The opening card shows the command it ran and the app's output. Check the app's dev command and address in **Your apps**. |
-| Clicking an element finds no source | For React on Vite, add the plugin (`npx saywright connect <folder>`). An app linked by its address alone has no code on this computer: link its folder. |
+| Clicking an element finds no source | For React on Vite, add the plugin (`npx @saywright/studio connect <folder>`). An app linked by its address alone has no code on this computer: link its folder. |
 | **No AI** in the top bar | Quick edits work without one. Connect one in **Settings → AI**. |
 | Voice does nothing | Allow the microphone in the browser and in your system settings. You can always type: press <kbd>/</kbd>. |
 | Port 7357 is taken | The studio takes the next free port and prints it; `--port` chooses one. |
 
-Run `npx saywright doctor` first. Everything else: [Troubleshooting](docs/troubleshooting.md).
+Run `npx @saywright/studio doctor` first. Everything else: [Troubleshooting](docs/troubleshooting.md).
 
 ## Documentation
 

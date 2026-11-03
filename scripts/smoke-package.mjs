@@ -4,15 +4,15 @@
 // other hosts; `@saywright/vite` loads in Node, its protocol module too (with types), and a Vite dev server with
 // the plugin serves the bridge. Used by CI on Linux, macOS and Windows.
 //
-//   node scripts/smoke-package.mjs <folder with saywright-x.y.z.tgz and saywright-vite-x.y.z.tgz>
+//   node scripts/smoke-package.mjs <folder with saywright-studio-x.y.z.tgz and saywright-vite-x.y.z.tgz>
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 const dir = path.resolve(process.argv[2] ?? '.');
-const tarball = fs.readdirSync(dir).find((f) => /^saywright-\d.*\.tgz$/.test(f));
-if (!tarball) throw new Error(`No saywright-*.tgz in ${dir}`);
+const tarball = fs.readdirSync(dir).find((f) => /^saywright-studio-\d.*\.tgz$/.test(f));
+if (!tarball) throw new Error(`No saywright-studio-*.tgz in ${dir}`);
 const pluginTarball = fs.readdirSync(dir).find((f) => /^saywright-vite-\d.*\.tgz$/.test(f));
 if (!pluginTarball) throw new Error(`No saywright-vite-*.tgz in ${dir}`);
 
@@ -34,12 +34,12 @@ await checkPlugin();
 const project = install('saywright-smoke', tarball);
 const home = path.join(project, 'home');
 
-const bin = path.join(project, 'node_modules', 'saywright', 'bin', 'saywright.mjs');
+const bin = path.join(project, 'node_modules', '@saywright', 'studio', 'bin', 'saywright.mjs');
 const env = { ...process.env, SAYWRIGHT_HOME: home, CI: '1' };
 const run = (...args) => spawnSync(process.execPath, [bin, ...args], { cwd: project, env, encoding: 'utf8' });
 
 const version = run('--version');
-const expected = JSON.parse(fs.readFileSync(path.join(project, 'node_modules', 'saywright', 'package.json'), 'utf8')).version;
+const expected = JSON.parse(fs.readFileSync(path.join(project, 'node_modules', '@saywright', 'studio', 'package.json'), 'utf8')).version;
 if (version.status !== 0 || version.stdout.trim() !== expected) throw new Error(`--version printed “${version.stdout.trim()}” (${version.stderr})`);
 console.log(`✓ saywright --version: ${expected}`);
 

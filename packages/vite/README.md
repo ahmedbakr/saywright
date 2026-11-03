@@ -1,6 +1,6 @@
 # @saywright/vite
 
-The Vite plugin for [Saywright](https://www.npmjs.com/package/saywright), the studio where you point at your running web app, say what to change, and keep or undo the result.
+The Vite plugin for [Saywright](https://www.npmjs.com/package/@saywright/studio), the studio where you point at your running web app, say what to change, and keep or undo the result.
 
 With the plugin, each element you point at in the studio is traced to the exact file, line and column that wrote it, and your app can record sessions from its own tab. It runs on the development server only: production builds are untouched.
 
@@ -9,7 +9,7 @@ With the plugin, each element you point at in the studio is traced to the exact 
 The quickest way is to let Saywright do it. It installs the plugin with your app's package manager and adds it to your Vite config:
 
 ```bash
-npx saywright connect path/to/your-app
+npx @saywright/studio connect path/to/your-app
 ```
 
 Or by hand:
@@ -29,7 +29,7 @@ export default defineConfig({
 });
 ```
 
-Then start your app as usual, start the studio with `npx saywright`, and open your app in it.
+Then start your app as usual, start the studio with `npx @saywright/studio`, and open your app in it.
 
 ## Options
 
@@ -61,7 +61,7 @@ saywright({
 
 - **Vite 4 or newer** (the peer range is `vite >=4`) and **Node.js 22.18 or newer, or 24.11 or newer**.
 - **React** apps get exact locations from the JSX. In other apps on Vite (Vue, Svelte…), the plugin still connects the app to the studio and records sessions, and the studio finds an element's source through the framework's development information.
-- **Updating.** The plugin and the studio are updated separately. When the two can't work together, the studio says which one to update: `npm i -D @saywright/vite@latest` in your app, or `npx saywright@latest`.
+- **Updating.** The plugin and the studio are updated separately. When the two can't work together, the studio says which one to update: `npm i -D @saywright/vite@latest` in your app, or `npx @saywright/studio@latest`.
 
 For tools that talk to the studio or read its sessions, `@saywright/vite/protocol` exports the messages, the session events and `PROTOCOL_VERSION`, with their types.
 

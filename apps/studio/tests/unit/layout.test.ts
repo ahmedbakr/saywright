@@ -9,6 +9,6 @@ describe('where the studio runs from', () => {
   it('names the command that downloads the extras as this install runs it', () => {
     // `npm run setup` is this repository's script: in someone's app folder it runs theirs, or fails.
     expect(repoLayout(path.resolve(STUDIO, '../..')).setupCommand).toBe('npm run setup');
-    expect(packageLayout(STUDIO).setupCommand).toBe('npx saywright setup');
+    expect(packageLayout(STUDIO).setupCommand).toBe('npx @saywright/studio setup');
   });
 });

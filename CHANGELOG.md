@@ -4,7 +4,7 @@ All notable changes to Saywright. The format follows [Keep a Changelog](https://
 
 ## [0.1.0] - 2026-11-03
 
-The first release: `saywright` (the studio and its command) and `@saywright/vite` (the Vite plugin) on npm. Both need Node.js 22.18 or newer, or 24.11 or newer (the LTS lines the Babel parser they read code with supports).
+The first release: `@saywright/studio` (the studio, and its command `saywright`) and `@saywright/vite` (the Vite plugin) on npm. Both need Node.js 22.18 or newer, or 24.11 or newer (the LTS lines the Babel parser they read code with supports).
 
 ### Added
 
@@ -17,7 +17,7 @@ The first release: `saywright` (the studio and its command) and `@saywright/vite
 - **Experts.** Reviews of any page for SEO, content, UI/UX and accessibility (WCAG 2.2 with axe-core), an AI expert's opinion, fixes in place, Google's real-user data (Chrome UX Report, Search Console, Analytics 4), and the same rules as Agent Skills for your own coding agent.
 - **MCP server.** Claude Code, Cursor, Codex, VS Code and Claude Desktop see what you point at, read your code and session reports, and propose changes you keep or undo in the studio.
 - **Speech on your computer.** Narration and Arabic commands transcribed by local models (Omnilingual, Parakeet, and optionally Cohere Transcribe), with measured accuracy.
-- **Commands:** `npx saywright`, `connect`, `setup`, `doctor` and `mcp`.
+- **Commands:** `npx @saywright/studio`, `connect`, `setup`, `doctor` and `mcp`.
 - **The plugin and the studio check each other.** They are updated separately; when they can't work together, the studio says which one to update.
 - **`@saywright/vite`** works with Vite 4 and newer, and publishes its protocol module (`@saywright/vite/protocol`) with types, for tools that talk to the studio or read its sessions.
 - **A quick-start tour** on the live studio for a first run: point, say, keep or undo, see the code, your AI and its cost, then sessions, Autopilot and Experts. Skippable, and replayable from Help.
