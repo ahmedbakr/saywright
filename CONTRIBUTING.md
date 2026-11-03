@@ -98,7 +98,7 @@ CI runs on pull requests and on pushes to `main`: the type check, lint, the unit
 
 ## Releases
 
-For maintainers: pushing a version tag (`v0.1.0`) publishes `@saywright/vite` and `saywright` to npm from CI, with provenance, after the type check and unit tests pass and only when the tag matches both packages' version. It needs the `NPM_TOKEN` repository secret.
+For maintainers: pushing a version tag (`v0.1.0`) publishes `@saywright/vite` and `saywright` to npm from CI, with provenance, after the type check and unit tests pass and only when the tag matches both packages' version, then creates the GitHub release with that version's section of the changelog. It needs the `NPM_TOKEN` repository secret. Run again after a failure, the workflow skips what is already done.
 
 ## Reporting bugs
 

@@ -1,13 +1,14 @@
 name: Release
 
-# Publishes @saywright/vite and saywright to npm when a version tag (v0.1.0) is pushed.
-# Needs the repository secret NPM_TOKEN: an npm automation token allowed to publish both packages.
+# When a version tag (v0.1.0) is pushed: publishes @saywright/vite and saywright to npm, then creates the GitHub
+# release with that version's notes from CHANGELOG.md. Needs the repository secret NPM_TOKEN: an npm token allowed to
+# publish both packages. Run again after a failure, it skips what is already done.
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: read
+  contents: write # the GitHub release
   id-token: write # npm provenance
 
 jobs:
@@ -25,9 +26,22 @@ jobs:
       - run: npm test
       - name: The tag matches both packages' version
         run: node -e "const v=process.env.GITHUB_REF_NAME.slice(1);for(const f of ['packages/vite/package.json','apps/studio/package.json']){const p=require('./'+f);if(p.version!==v){console.error(f+' is '+p.version+', the tag is '+v);process.exit(1)}}"
-      - run: npm publish -w packages/vite --provenance --access public
+      - name: Publish @saywright/vite
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          if [ "$(npm view "@saywright/vite@$v" version 2>/dev/null)" = "$v" ]; then echo "Already on npm."; else npm publish -w packages/vite --provenance --access public; fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish -w apps/studio --provenance --access public
+      - name: Publish saywright
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          if [ "$(npm view "saywright@$v" version 2>/dev/null)" = "$v" ]; then echo "Already on npm."; else npm publish -w apps/studio --provenance --access public; fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: The GitHub release
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then echo "Already released."; exit 0; fi
+          node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Saywright ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"
+        env:
+          GH_TOKEN: ${{ github.token }}
