@@ -1,14 +1,16 @@
 name: Release
 
-# When a version tag (v0.1.0) is pushed: publishes @saywright/vite and saywright to npm, then creates the GitHub
-# release with that version's notes from CHANGELOG.md. Needs the repository secret NPM_TOKEN: an npm token allowed to
-# publish both packages. Run again after a failure, it skips what is already done.
+# Releases the version in the packages' package.json: run it from the Actions tab (Release, then Run workflow), or
+# push its tag (v0.1.0). It tests, tags the version if it isn't yet, publishes @saywright/vite and saywright to npm,
+# then creates the GitHub release with that version's notes from CHANGELOG.md. Needs the repository secret NPM_TOKEN:
+# an npm token allowed to publish both packages. Run again after a failure, it skips what is already done.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
-  contents: write # the GitHub release
+  contents: write # the tag and the GitHub release
   id-token: write # npm provenance
 
 jobs:
@@ -21,27 +23,37 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
+      - name: The version to release
+        run: |
+          v=$(node -p "require('./apps/studio/package.json').version")
+          if [ "$(node -p "require('./packages/vite/package.json').version")" != "$v" ]; then echo "The two packages' versions differ."; exit 1; fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$v" ]; then echo "The tag is $GITHUB_REF_NAME, the packages are $v."; exit 1; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: The tag matches both packages' version
-        run: node -e "const v=process.env.GITHUB_REF_NAME.slice(1);for(const f of ['packages/vite/package.json','apps/studio/package.json']){const p=require('./'+f);if(p.version!==v){console.error(f+' is '+p.version+', the tag is '+v);process.exit(1)}}"
+      - name: The tag
+        run: |
+          if git fetch -q origin "refs/tags/v$VERSION:refs/tags/v$VERSION" 2>/dev/null; then
+            if [ "$(git rev-parse "v$VERSION^{commit}")" != "$(git rev-parse HEAD)" ]; then echo "v$VERSION is another commit: raise the version to release this one."; exit 1; fi
+            echo "v$VERSION is tagged."
+          else
+            git tag "v$VERSION" && git push origin "v$VERSION"
+          fi
       - name: Publish @saywright/vite
         run: |
-          v="${GITHUB_REF_NAME#v}"
-          if [ "$(npm view "@saywright/vite@$v" version 2>/dev/null)" = "$v" ]; then echo "Already on npm."; else npm publish -w packages/vite --provenance --access public; fi
+          if [ "$(npm view "@saywright/vite@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w packages/vite --provenance --access public; fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish saywright
         run: |
-          v="${GITHUB_REF_NAME#v}"
-          if [ "$(npm view "saywright@$v" version 2>/dev/null)" = "$v" ]; then echo "Already on npm."; else npm publish -w apps/studio --provenance --access public; fi
+          if [ "$(npm view "saywright@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w apps/studio --provenance --access public; fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: The GitHub release
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then echo "Already released."; exit 0; fi
-          node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Saywright ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then echo "Already released."; exit 0; fi
+          node scripts/release-notes.mjs "$VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" --verify-tag --title "Saywright $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
         env:
           GH_TOKEN: ${{ github.token }}
