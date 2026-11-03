@@ -2,8 +2,9 @@ name: Release
 
 # Releases the version in the packages' package.json: run it from the Actions tab (Release, then Run workflow), or
 # push its tag (v0.1.0). It tests, tags the version if it isn't yet, publishes @saywright/vite and @saywright/studio to npm,
-# then creates the GitHub release with that version's notes from CHANGELOG.md. Needs the repository secret NPM_TOKEN:
-# an npm token allowed to publish both packages. Run again after a failure, it skips what is already done.
+# then creates the GitHub release with that version's notes from CHANGELOG.md. It publishes through npm's trusted
+# publishing (each package trusts this repository's release.yml), so no npm token is kept anywhere. Run again after a
+# failure, it skips what is already done.
 on:
   push:
     tags: ['v*']
@@ -11,7 +12,7 @@ on:
 
 permissions:
   contents: write # the tag and the GitHub release
-  id-token: write # npm provenance
+  id-token: write # npm's trusted publishing, and provenance
 
 jobs:
   publish:
@@ -47,16 +48,14 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 comes with npm 10. Only publishing uses it.
+      - run: npm install -g npm@^11.5.1
       - name: Publish @saywright/vite
         run: |
           if [ "$(npm view "@saywright/vite@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w packages/vite --provenance --access public; fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish @saywright/studio
         run: |
           if [ "$(npm view "@saywright/studio@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then echo "Already on npm."; else npm publish -w apps/studio --provenance --access public; fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: The GitHub release
         run: |
           if gh release view "v$VERSION" >/dev/null 2>&1; then echo "Already released."; exit 0; fi

@@ -98,7 +98,7 @@ CI runs on pull requests and on pushes to `main`: the type check, lint, the unit
 
 ## Releases
 
-For maintainers: set both packages' version and the changelog's date, push, then run the **Release** workflow from the Actions tab (**Run workflow**), or push the version's tag (`v0.1.0`). After the type check and unit tests pass, and only when both packages have the same version, it tags that version, publishes `@saywright/vite` and `@saywright/studio` to npm with provenance, and creates the GitHub release with that version's section of the changelog. It needs the `NPM_TOKEN` repository secret. Run again after a failure, it skips what is already done.
+For maintainers: set both packages' version and the changelog's date, push, then run the **Release** workflow from the Actions tab (**Run workflow**), or push the version's tag (`v0.1.0`). After the type check and unit tests pass, and only when both packages have the same version, it tags that version, publishes `@saywright/vite` and `@saywright/studio` to npm with provenance, and creates the GitHub release with that version's section of the changelog. It publishes through npm's trusted publishing, set on both packages for this repository and `release.yml`, so no npm token is needed. Run again after a failure, it skips what is already done.
 
 ## Reporting bugs
 
