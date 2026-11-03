@@ -1,13 +1,18 @@
 {
   "name": "@saywright/vite",
   "version": "0.1.0",
-  "description": "Vite plugin for Saywright: lets you point at your running React app's elements and change them by saying what to change. Development server only.",
+  "description": "Vite plugin for Saywright: traces every element of your running React app to its file and line, so you can point at it and say what to change. Dev server only.",
   "keywords": [
     "vite",
     "vite-plugin",
     "react",
     "saywright",
+    "click-to-source",
+    "click-to-component",
+    "open-in-editor",
+    "source-location",
     "developer-tools",
+    "devtools",
     "visual-editing"
   ],
   "license": "Apache-2.0",

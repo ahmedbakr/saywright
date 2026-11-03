@@ -3,6 +3,15 @@
   <img src="docs/brand/lockup-on-light.svg" alt="Saywright" height="44">
 </picture>
 
+<p>
+  <a href="https://github.com/ahmedbakr/saywright/actions/workflows/ci.yml"><img src="https://github.com/ahmedbakr/saywright/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/saywright"><img src="https://img.shields.io/npm/v/saywright?label=saywright&color=ffb224" alt="saywright on npm"></a>
+  <a href="https://www.npmjs.com/package/@saywright/vite"><img src="https://img.shields.io/npm/v/@saywright/vite?label=%40saywright%2Fvite&color=3cc8e8" alt="@saywright/vite on npm"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Licence: Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22.18 or newer">
+  <img src="https://img.shields.io/badge/runs%20on-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-555" alt="Runs on Windows, macOS and Linux">
+</p>
+
 **Point at your app. Say what to change.** Then keep or undo the result.
 
 Saywright is a studio that runs on your computer, next to the web app you are building. Point at anything in your running app, traced to the file and line that wrote it, and say or type what to change: “make this bigger”, “rename this to Place order”. The change appears in your code and your live app at once, as a preview you keep or undo. Record yourself using the app and get a report of what went wrong, with the evidence; let Autopilot test it; have the Experts review a page; turn what you do into a Playwright test.
