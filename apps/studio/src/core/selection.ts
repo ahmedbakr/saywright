@@ -1,0 +1,75 @@
+/**
+ * What is selected, and what a pinch (or click) will do to it.
+ *
+ * One element is selected, or several picked together, in the order they were
+ * picked (the first is "this", the second "that"). The store keeps the one
+ * shown in the Inspector as `selection`, and the whole group, when there are
+ * two or more, as `pins`.
+ *
+ * A pinch on what is highlighted selects just that; on what is the only thing
+ * selected, deselects it; on empty space, clears. Holding the pinch adds what
+ * it is on to the selection, or takes it out.
+ */
+import type { ElementInfo } from '@saywright/vite/protocol';
+
+export interface Picked {
+  selection: ElementInfo | null;
+  pins: ElementInfo[];
+}
+
+/** At most this many picked together. */
+export const MAX_PICKED = 8;
+
+/** Everything selected, in the order it was picked. */
+export function selectedOf(p: Picked): ElementInfo[] {
+  return p.pins.length ? p.pins : p.selection ? [p.selection] : [];
+}
+
+/** These selected, `primary` (or the last picked) shown in the Inspector. */
+export function picked(list: ElementInfo[], primary?: ElementInfo | null): Picked {
+  const seen = new Set<number>();
+  const unique = list.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true))).slice(-MAX_PICKED);
+  const main = (primary && unique.find((e) => e.id === primary.id)) || unique[unique.length - 1] || null;
+  return { selection: main, pins: unique.length > 1 ? unique : [] };
+}
+
+/** In the selection, or added to the end of it. */
+function toggled(now: ElementInfo[], el: ElementInfo): ElementInfo[] {
+  return now.some((e) => e.id === el.id) ? now.filter((e) => e.id !== el.id) : [...now, el];
+}
+
+type TapMeaning = 'select' | 'only' | 'deselect' | 'clear' | 'none';
+export type HoldMeaning = 'add' | 'remove' | 'none';
+
+/** What a quick pinch, and a held one, on `target` (null: nothing highlighted) would do now. */
+export function pinchMeaning(target: ElementInfo | null, now: ElementInfo[]): { tap: TapMeaning; hold: HoldMeaning } {
+  if (!target) return { tap: now.length ? 'clear' : 'none', hold: 'none' };
+  const inside = now.some((e) => e.id === target.id);
+  if (!inside) return { tap: 'select', hold: now.length ? 'add' : 'none' };
+  // The only thing selected: a hold would do just what the pinch did.
+  return now.length === 1 ? { tap: 'deselect', hold: 'none' } : { tap: 'only', hold: 'remove' };
+}
+
+/** After a quick pinch (or a click) on `target`. */
+export function afterTap(p: Picked, target: ElementInfo | null): Picked {
+  const { tap } = pinchMeaning(target, selectedOf(p));
+  if (tap === 'select' || tap === 'only') return picked([target!]);
+  if (tap === 'deselect' || tap === 'clear') return picked([]);
+  return p;
+}
+
+/** After holding the pinch (or ⇧ click) on `target`: added, or taken out. */
+export function afterHold(p: Picked, target: ElementInfo | null): Picked {
+  if (!target) return p;
+  const now = selectedOf(p);
+  const next = toggled(now, target);
+  return picked(next, next.length > now.length ? target : p.selection);
+}
+
+/** With `from` (one of the selected) swapped for `to`, in its place; `to` is now the one shown. */
+export function replaced(p: Picked, from: ElementInfo, to: ElementInfo): Picked {
+  return picked(
+    selectedOf(p).map((e) => (e.id === from.id ? to : e)),
+    to,
+  );
+}

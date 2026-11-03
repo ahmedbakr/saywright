@@ -1,0 +1,417 @@
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { CodeIndex, type Coverage } from './code-index.ts';
+import { HttpError } from './http.ts';
+import { workspaceRoot } from '../../../packages/vite/src/workspace.ts';
+import { importedFrom, variantsIn } from './quick/variants.ts';
+
+export interface ComponentProp {
+  values: string[];
+  default?: string;
+  /** Values have a natural order (sm < md < lg), so "bigger"/"smaller" can step through them. */
+  ordered?: boolean;
+  /** The values "bigger"/"smaller" step through, smallest first, when not all of them (an "icon" size isn't a step). */
+  ladder?: string[];
+}
+
+export interface ComponentSpec {
+  file?: string;
+  /** Which prop holds the visible text: "children" or a prop name like "label". */
+  text?: string;
+  props: Record<string, ComponentProp>;
+}
+
+interface ProjectConfig {
+  name?: string;
+  components: Record<string, ComponentSpec>;
+  synonyms: Record<string, string[]>;
+  guidelines?: string;
+}
+
+/** What people call the variants most design systems have (shadcn/ui's among them), for projects that don't say. */
+const DEFAULT_SYNONYMS: Record<string, string[]> = {
+  red: ['danger', 'destructive', 'error'],
+  danger: ['destructive', 'error'],
+  delete: ['destructive', 'danger'],
+  green: ['success', 'primary', 'brand'],
+  outline: ['outline', 'outlined', 'secondary'],
+  outlined: ['outline', 'secondary'],
+  bordered: ['outline'],
+  subtle: ['ghost', 'muted', 'secondary'],
+  quiet: ['ghost', 'muted'],
+  plain: ['ghost', 'link', 'default'],
+  link: ['link'],
+  primary: ['primary', 'default'],
+  main: ['primary', 'default'],
+  normal: ['default', 'regular', 'md'],
+  grey: ['secondary', 'muted'],
+  gray: ['secondary', 'muted'],
+};
+
+const EMPTY_CONFIG: ProjectConfig = { components: {}, synonyms: DEFAULT_SYNONYMS };
+
+interface SearchHit {
+  path: string;
+  line: number;
+  text: string;
+}
+
+/** How long one code search may take; past it, the answer says how many files it covered. */
+const SEARCH_BUDGET_MS = 4000;
+/** A git commit waits this long for hooks (lint, tests, signing) before it is called off. */
+const COMMIT_TIMEOUT_MS = 60_000;
+/** A repository or Playwright that isn't there is looked for again after this long. */
+const RECHECK_MS = 5000;
+const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.devspace', '.saywright', '.next', '.nuxt', '.svelte-kit', '.astro', '.output', 'coverage', 'test-results', 'playwright-report', '.vite', '.turbo', '.vercel']);
+const TEXT_EXT = /\.([cm]?[jt]sx?|css|scss|sass|less|styl|json|md|mdx|html?|svg|vue|svelte|astro|php|erb|ejs|hbs|handlebars|mustache|njk|liquid|twig|jinja2?|j2|cshtml|razor|py|rb|go|ya?ml|toml|xml|txt)$/i;
+
+/** Folders never searched: dependencies, builds, tools' caches and other dot folders (as listFiles walks them). */
+const unsearched = (name: string) => IGNORED_DIRS.has(name) || (name.startsWith('.') && name !== '.storybook');
+
+/** A project file worth searching: text, outside the folders above. */
+function searchable(rel: string): boolean {
+  const parts = rel.split('/');
+  return TEXT_EXT.test(parts[parts.length - 1]) && !parts.some(unsearched);
+}
+
+export class Project {
+  private cachedConfig: { mtime: number; config: ProjectConfig } | null = null;
+
+  /**
+   * `root`: the app's code. An app linked by URL alone has none: `hasCode` is false, `root` is its data
+   * folder, and nothing in it is read or written as code.
+   */
+  constructor(
+    public readonly root: string,
+    public url: string,
+    private readonly dataDir?: string,
+    public readonly hasCode = true,
+  ) {}
+
+  get name(): string {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(this.root, 'package.json'), 'utf8'));
+      if (this.config.name) return this.config.name;
+      if (typeof pkg.name === 'string') return pkg.name;
+    } catch {
+      /* fall through */
+    }
+    return path.basename(this.root);
+  }
+
+  get configPath(): string {
+    return path.join(this.root, 'saywright.config.json');
+  }
+
+  get hasConfig(): boolean {
+    return fs.existsSync(this.configPath);
+  }
+
+  get config(): ProjectConfig {
+    try {
+      const stat = fs.statSync(this.configPath);
+      if (this.cachedConfig && this.cachedConfig.mtime === stat.mtimeMs) return this.cachedConfig.config;
+      const raw = JSON.parse(fs.readFileSync(this.configPath, 'utf8'));
+      const config: ProjectConfig = {
+        name: typeof raw.name === 'string' ? raw.name : undefined,
+        components: raw.components && typeof raw.components === 'object' ? raw.components : {},
+        synonyms: { ...DEFAULT_SYNONYMS, ...(raw.synonyms && typeof raw.synonyms === 'object' ? raw.synonyms : {}) },
+        guidelines: typeof raw.guidelines === 'string' ? raw.guidelines : undefined,
+      };
+      this.cachedConfig = { mtime: stat.mtimeMs, config };
+      return config;
+    } catch {
+      return EMPTY_CONFIG;
+    }
+  }
+
+  private detected = new Map<string, { mtime: number; spec: ComponentSpec | null }>();
+
+  /**
+   * How a component used in `fromFile` is styled: from saywright.config.json, or else read from the cva(...)
+   * variants in the file it is imported from (shadcn/ui and other class-variance-authority components).
+   */
+  componentSpec(name: string, fromFile: string): ComponentSpec | undefined {
+    const configured = this.config.components[name];
+    if (configured) return configured;
+    if (!/^[A-Z]/.test(name)) return undefined;
+    try {
+      const file = importedFrom(this.root, fromFile, this.read(fromFile), name);
+      if (!file) return undefined;
+      const mtime = fs.statSync(this.resolve(file)).mtimeMs;
+      const key = `${file}\n${name}`;
+      const hit = this.detected.get(key);
+      if (hit && hit.mtime === mtime) return hit.spec ?? undefined;
+      const spec = variantsIn(this.read(file), name);
+      if (spec) spec.file = file;
+      this.detected.set(key, { mtime, spec });
+      return spec ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private ws: string | null | undefined;
+
+  /** The workspace (monorepo) the app is part of: its sibling packages are the app's code too. */
+  private get workspace(): string | null {
+    if (this.ws === undefined) this.ws = workspaceRoot(this.root);
+    return this.ws;
+  }
+
+  /** `abs` relative to the project, or for a sibling package's file to the workspace the app is part of; null outside both. */
+  private inside(abs: string): string | null {
+    const own = path.relative(this.root, abs);
+    if (own && !own.startsWith('..') && !path.isAbsolute(own)) return own;
+    const ws = this.workspace ? path.relative(this.workspace, abs) : '';
+    return ws && !ws.startsWith('..') && !path.isAbsolute(ws) ? ws : null;
+  }
+
+  /** Resolve a project-relative path ("../packages/ui/Button.tsx" for a workspace's package), refusing anything outside or in ignored folders. */
+  resolve(rel: string): string {
+    if (!this.hasCode) throw new HttpError(409, 'This app has no code on this computer. Link its folder to make changes.', 'no-code');
+    if (typeof rel !== 'string' || !rel.trim()) throw new HttpError(400, 'Empty path');
+    const clean = rel.replace(/\\/g, '/').replace(/^\.\//, '');
+    const abs = path.resolve(this.root, clean);
+    const relative = this.inside(abs);
+    if (!relative) throw new HttpError(400, `Path is outside the project: ${rel}`);
+    const first = relative.split(path.sep)[0];
+    if (IGNORED_DIRS.has(first) || relative.split(path.sep).some((p) => p === 'node_modules' || p === '.git')) {
+      throw new HttpError(400, `Path is not editable: ${rel}`);
+    }
+    if (/(^|\/)\.env/.test(clean)) throw new HttpError(400, 'Environment files are off limits');
+    // Where a link inside the project leads must be inside it too: a repository can carry a link to ~/.ssh.
+    if (!this.contains(abs)) throw new HttpError(400, `Path is outside the project: ${rel}`);
+    return abs;
+  }
+
+  private realRoot: string | null = null;
+
+  /**
+   * Whether a path stays inside the project with every link along it followed. A file that doesn't exist yet is
+   * judged by the folder it would be written in; a link that leads nowhere is refused (writing would create its target).
+   */
+  private contains(abs: string): boolean {
+    this.realRoot ??= fs.realpathSync(this.root);
+    let probe = abs;
+    const rest: string[] = [];
+    for (;;) {
+      try {
+        fs.lstatSync(probe);
+        break;
+      } catch {
+        const parent = path.dirname(probe);
+        if (parent === probe) return false;
+        rest.unshift(path.basename(probe));
+        probe = parent;
+      }
+    }
+    let real: string;
+    try {
+      real = fs.realpathSync(probe);
+    } catch {
+      return false;
+    }
+    const target = path.join(real, ...rest);
+    return [this.realRoot, this.workspace && fs.realpathSync(this.workspace)].some((root) => {
+      const relative = root ? path.relative(root, target) : '';
+      return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+    });
+  }
+
+  rel(abs: string): string {
+    return path.relative(this.root, abs).split(path.sep).join('/');
+  }
+
+  exists(rel: string): boolean {
+    try {
+      return fs.statSync(this.resolve(rel)).isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  read(rel: string): string {
+    const abs = this.resolve(rel);
+    if (!fs.existsSync(abs)) throw new HttpError(404, `No such file: ${rel}`);
+    return fs.readFileSync(abs, 'utf8');
+  }
+
+  /** Atomic write: temp file + rename, so the dev server never sees half a file. */
+  write(rel: string, content: string): void {
+    const abs = this.resolve(rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    const tmp = `${abs}.saywright-tmp`;
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, abs);
+    this.index?.forget(this.rel(abs));
+  }
+
+  remove(rel: string): void {
+    const abs = this.resolve(rel);
+    fs.rmSync(abs, { force: true });
+    this.index?.forget(this.rel(abs));
+  }
+
+  private index: CodeIndex | null = null;
+
+  /** The project's files as searches see them (see CodeIndex), shared by every search of this project. */
+  get code(): CodeIndex {
+    this.index ??= new CodeIndex(this.root, searchable, unsearched);
+    return this.index;
+  }
+
+  listFiles(dir = '', limit = 500): string[] {
+    const out: string[] = [];
+    if (!this.hasCode) return out;
+    const start = dir ? this.resolve(dir) : this.root;
+    const walk = (abs: string) => {
+      if (out.length >= limit) return;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(abs, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      for (const e of entries) {
+        if (out.length >= limit) return;
+        // Links can lead outside the project: they are never listed (nor searched).
+        if ((e.name.startsWith('.') && e.name !== '.storybook') || e.isSymbolicLink()) continue;
+        const child = path.join(abs, e.name);
+        if (e.isDirectory()) {
+          if (!IGNORED_DIRS.has(e.name)) walk(child);
+        } else if (TEXT_EXT.test(e.name)) {
+          out.push(this.rel(child));
+        }
+      }
+    };
+    walk(start);
+    return out;
+  }
+
+  /**
+   * Lines matching `query` (text, or a regular expression), case-insensitive, in every file worth searching (see
+   * CodeIndex) or those under `dir`. Stops at `limit` hits, or when its time is up: the coverage says how much it saw.
+   */
+  async search(query: string, opts: { regex?: boolean; dir?: string; limit?: number; budgetMs?: number } = {}): Promise<{ hits: SearchHit[] } & Coverage> {
+    const limit = opts.limit ?? 60;
+    if (!this.hasCode) return { hits: [], searched: 0, total: 0, tooLarge: 0, timedOut: false };
+    let source: string;
+    try {
+      source = opts.regex ? new RegExp(query).source : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    } catch {
+      throw new HttpError(400, 'Invalid search pattern');
+    }
+    const line = new RegExp(source, 'i');
+    // Over a whole file: where a line may match (^ and $ at each line), so only those lines are tested.
+    const any = new RegExp(source, 'gim');
+    const folder = (opts.dir ?? '').replace(/^\.?\/?$/, '');
+    const dir = folder ? `${this.rel(this.resolve(folder))}/` : '';
+    const files = (await this.code.files()).filter((f) => f.startsWith(dir) && (!/\.(svg|json)$/i.test(f) || /package\.json$|saywright\.config\.json$/.test(f)));
+    const hits: SearchHit[] = [];
+    const coverage = await this.code.scan(
+      files,
+      (file, text) => {
+        any.lastIndex = 0;
+        let lineNo = 1;
+        let counted = 0;
+        for (let m = any.exec(text); m; m = any.exec(text)) {
+          const start = m.index === 0 ? 0 : text.lastIndexOf('\n', m.index - 1) + 1;
+          const end = text.indexOf('\n', m.index);
+          const stop = end === -1 ? text.length : end;
+          for (let i = text.indexOf('\n', counted); i !== -1 && i < start; i = text.indexOf('\n', i + 1)) lineNo++;
+          counted = start;
+          const lineText = text.slice(start, stop);
+          if (line.test(lineText)) {
+            hits.push({ path: file, line: lineNo, text: lineText.trim().slice(0, 200) });
+            if (hits.length >= limit) return true;
+          }
+          if (end === -1) break;
+          any.lastIndex = end + 1;
+        }
+        return false;
+      },
+      { budgetMs: opts.budgetMs ?? SEARCH_BUDGET_MS },
+    );
+    return { hits, ...coverage };
+  }
+
+  private gitRoot: { found: boolean; at: number } | null = null;
+
+  /**
+   * Whether the code is in a git repository: a .git (folder, or file for worktrees) here or above. Once found it stays
+   * found; otherwise it is looked for again after a few seconds (git init can come while the studio runs).
+   */
+  get isGit(): boolean {
+    if (!this.hasCode) return false;
+    if (this.gitRoot && (this.gitRoot.found || Date.now() - this.gitRoot.at < RECHECK_MS)) return this.gitRoot.found;
+    let found = false;
+    for (let dir = path.resolve(this.root); ; dir = path.dirname(dir)) {
+      if (fs.existsSync(path.join(dir, '.git'))) {
+        found = true;
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+    this.gitRoot = { found, at: Date.now() };
+    return found;
+  }
+
+  /**
+   * Commit these files. Runs alongside the studio (hooks can take a while) and gives up after a minute; when it fails,
+   * `error` says why, in git's own words.
+   */
+  async commit(files: string[], message: string): Promise<{ committed: boolean; error?: string }> {
+    const git = (args: string[]) =>
+      new Promise<void>((resolve, reject) =>
+        execFile('git', args, { cwd: this.root, timeout: COMMIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, _stdout, stderr) => {
+          if (!err) return resolve();
+          const e = err as Error & { killed?: boolean; code?: unknown };
+          const why = e.killed ? `git took more than ${COMMIT_TIMEOUT_MS / 1000} s (a commit hook may be waiting), so it was stopped` : String(stderr).trim().split('\n').filter(Boolean).slice(-3).join(' ') || e.message;
+          reject(new Error(why));
+        }),
+      );
+    try {
+      await git(['add', '--', ...files]);
+      await git(['commit', '-m', message, '--', ...files]);
+      return { committed: true };
+    } catch (err) {
+      return { committed: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private playwright: { found: boolean; at: number } | null = null;
+
+  /** Whether @playwright/test is installed here or in a folder above. Once found it stays found; otherwise looked up again after a few seconds. */
+  get hasPlaywright(): boolean {
+    if (this.playwright && (this.playwright.found || Date.now() - this.playwright.at < RECHECK_MS)) return this.playwright.found;
+    let found = false;
+    let dir = this.root;
+    for (let i = 0; i < 6; i++) {
+      if (fs.existsSync(path.join(dir, 'node_modules', '@playwright', 'test', 'package.json'))) {
+        found = true;
+        break;
+      }
+      const up = path.dirname(dir);
+      if (up === dir) break;
+      dir = up;
+    }
+    this.playwright = { found, at: Date.now() };
+    return found;
+  }
+
+  /** Where the studio keeps this app's own data: sessions, metrics, settings. */
+  stateDir(): string {
+    if (this.dataDir) {
+      fs.mkdirSync(this.dataDir, { recursive: true });
+      return this.dataDir;
+    }
+    const dir = path.join(this.root, '.saywright');
+    fs.mkdirSync(dir, { recursive: true });
+    const ignore = path.join(dir, '.gitignore');
+    if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+    return dir;
+  }
+}

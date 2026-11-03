@@ -1,0 +1,33 @@
+name: Release
+
+# Publishes @saywright/vite and saywright to npm when a version tag (v0.1.0) is pushed.
+# Needs the repository secret NPM_TOKEN: an npm automation token allowed to publish both packages.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: The tag matches both packages' version
+        run: node -e "const v=process.env.GITHUB_REF_NAME.slice(1);for(const f of ['packages/vite/package.json','apps/studio/package.json']){const p=require('./'+f);if(p.version!==v){console.error(f+' is '+p.version+', the tag is '+v);process.exit(1)}}"
+      - run: npm publish -w packages/vite --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish -w apps/studio --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

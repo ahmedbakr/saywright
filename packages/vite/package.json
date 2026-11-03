@@ -1,0 +1,62 @@
+{
+  "name": "@saywright/vite",
+  "version": "0.1.0",
+  "description": "Vite plugin for Saywright: lets you point at your running React app's elements and change them by saying what to change. Development server only.",
+  "keywords": [
+    "vite",
+    "vite-plugin",
+    "react",
+    "saywright",
+    "developer-tools",
+    "visual-editing"
+  ],
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/ahmedbakr/saywright/tree/main/packages/vite#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahmedbakr/saywright.git",
+    "directory": "packages/vite"
+  },
+  "bugs": "https://github.com/ahmedbakr/saywright/issues",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./protocol": {
+      "source": "./src/protocol.ts",
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./client": {
+      "source": "./src/client/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "prepack": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@babel/parser": "^8.0.7",
+    "magic-string": "^1.4.3"
+  },
+  "peerDependencies": {
+    "vite": ">=4"
+  }
+}

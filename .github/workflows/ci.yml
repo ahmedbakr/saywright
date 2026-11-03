@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Types, unit tests and the package (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22]
+        include:
+          # The oldest supported (package.json's engines).
+          - os: ubuntu-latest
+            node: 22.18
+          - os: ubuntu-latest
+            node: 24
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Build and pack the packages
+        run: |
+          npm pack -w packages/vite --pack-destination ${{ runner.temp }}
+          npm pack -w apps/studio --pack-destination ${{ runner.temp }}
+      - name: Install the packed studio in an empty project and start it
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: node "${{ github.workspace }}/scripts/smoke-package.mjs" "${{ runner.temp }}"
+
+  e2e:
+    name: End-to-end (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: The on-device voice model (the voice tests use it)
+        uses: actions/cache@v4
+        with:
+          path: .saywright/models
+          key: page-models-moonshine-tiny-0.1.29
+      - run: node scripts/saywright.mjs setup --no-speech
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results
+          path: apps/studio/test-results
+          retention-days: 7

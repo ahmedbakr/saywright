@@ -1,0 +1,2297 @@
+/**
+ * The studio's conductor. Connects camera → hand tracking → gestures, the
+ * microphone → speech → fusion, the app inside the iframe (bridge) and the
+ * local API, and turns all of it into a few clear actions: select, ask,
+ * keep, undo, test.
+ *
+ * It runs outside React: per-frame work (cursor, probes) stays imperative,
+ * and React only sees discrete state through the store.
+ */
+import type { ElementInfo, Rect } from '@saywright/vite/protocol';
+import type { UsagePill } from '@shared/ai';
+import type { Change, Expectation, IntentResult, NextStep, RecordedStep, RefInfo, StatusResponse, TestRunResult } from '@shared/api';
+import type { ReportFinding, ReportSuggestion, SessionAnalysis, SessionDetail, SessionReport, SessionTarget, TimelineItem } from '@shared/session';
+import { ApiError, api, subscribe } from '@/lib/api';
+import { apps } from './apps';
+import { fileName } from '@/lib/format';
+import { focusOn } from '@shared/text';
+import { BridgeClient } from './bridge';
+import { CameraError, openCamera, stopStream } from './camera';
+import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
+import { findingBrief } from './evidence';
+import { DEFAULT_FUSION, PointerTrack, implicitTargets, resolveDeictics } from './fusion';
+import { GestureEngine, type HandEvent, type HandFrame } from './hand/engine';
+import { afterHold, afterTap, picked, pinchMeaning, replaced, selectedOf, type HoldMeaning, type Picked } from './selection';
+import { Autopilot, type AutopilotOptions } from './autopilot';
+import { Replayer, findingCheck } from './replay';
+import { MAX_WAITING, RequestQueue, type RequestJob } from './requests';
+import { HandTracker } from './hand/tracker';
+import { modalOpen } from './layers';
+import { sessions, useSessions, type SpeechStatus } from './sessions';
+import { arabicCommand } from '@shared/arabic-commands';
+import { applyTheme, handLab, useSettings } from './settings';
+import { play, setSoundsEnabled } from './sound';
+import { get, initialRecorder, previews, sameEl, set, useStudio, type Binding, type InspectResult, type IslandAction, type MetricsSummary, type Tone } from './store';
+import { alignWords } from './voice/choose';
+import { VoiceInput, type VoiceFinal } from './voice/engine';
+import type { Word } from './voice/speech';
+import { aiName } from '@/lib/ai-name';
+
+const settings = () => useSettings.getState();
+
+const INTERACTIVE =
+  '[data-hand], button, a[href], input, textarea, select, summary, label[for], [role="button"], [role="tab"], [role="switch"], [role="menuitem"], [role="menuitemradio"], [role="option"], [role="radio"], [role="slider"], [role="checkbox"], [contenteditable="true"]';
+
+const isControl = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest('button, select, [role="switch"], [role="tab"], [role="combobox"], [role="option"], [role="slider"], [role="radio"]');
+
+const isTyping = (t: EventTarget | null) =>
+  t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) && !(t as HTMLInputElement).readOnly;
+
+type StudioHit = { kind: 'app' } | { kind: 'studio'; el: HTMLElement } | { kind: 'none' };
+
+/** A spoken request: its words with timings, and when it was said. */
+interface Spoken {
+  words: Word[];
+  /** Word times are when they were said (not when a recogniser reported them). */
+  aligned: boolean;
+  span: { start: number; end: number };
+}
+
+/** A change or question with what it is about, taken when it was asked (it may wait for its turn). */
+interface IntentAsk {
+  text: string;
+  refs: RefInfo[];
+  els: ElementInfo[];
+  input: 'voice' | 'typed';
+  pointer: 'hand' | 'mouse' | 'none';
+  pageUrl: string;
+  /** Straight to the AI, past the quick edits (“Ask the AI anyway”). */
+  ai?: boolean;
+}
+
+interface Pointer {
+  x: number;
+  y: number;
+  source: 'hand' | 'mouse';
+  radius: number;
+  deep: boolean;
+  inApp: boolean;
+}
+
+/** How often the boxes of what is selected, pinned or changed follow the app (scrolling, layout) with no pointer on it. */
+const TRACK_MS = 50;
+/** How long the replay's cursor takes to travel to its next target. */
+const GUIDE_MS = 380;
+
+/** What the frame loop keeps boxes for, by id. */
+const trackedKey = (s: { selection: ElementInfo | null; pins: ElementInfo[]; previewTargets: { el: ElementInfo }[] }) =>
+  [s.selection?.id, ...s.pins.map((p) => p.id), ...s.previewTargets.map((p) => p.el.id)].join();
+
+class Controller {
+  readonly bridge = new BridgeClient();
+  readonly tracker = new HandTracker();
+  readonly engine: GestureEngine;
+  readonly voice = new VoiceInput();
+  readonly track = new PointerTrack();
+  /** Replay & verify: a session's steps played again in the app, after fixes. */
+  readonly replayer = new Replayer({
+    bridge: this.bridge,
+    connected: () => get().app.connected,
+    connections: () => this.appLoads,
+    appUrl: () => get().app.url || get().status?.target.url || '',
+    enterUse: () => this.useWhilePlaying(),
+    show: (view) => set({ replay: view }),
+    point: (el, acting) => this.guideTo(el, acting),
+    openReport: (id) => sessions.openReport(id),
+    notify: (text) => this.notify(text, 'warn'),
+  });
+  /** Autopilot: the AI uses the app, step by step, recorded as a test session. */
+  readonly autopilot = new Autopilot({
+    bridge: this.bridge,
+    connected: () => get().app.connected,
+    connections: () => this.appLoads,
+    appUrl: () => get().app.url || get().status?.target.url || '',
+    enterUse: () => this.useWhilePlaying(),
+    show: (view) => set({ autopilot: view }),
+    point: (el, acting) => this.guideTo(el, acting),
+    openReport: (id) => sessions.openReport(id),
+    notify: (text) => this.notify(text, 'warn'),
+  });
+  /** The replay's cursor: where it is heading, from where, since when. */
+  private guide: { x: number; y: number; fromX: number; fromY: number; at: number } | null = null;
+
+  /** Replay and Autopilot act in Use mode (clicks reach the app); returns how to go back to the mode before. */
+  private useWhilePlaying(): () => void {
+    const prev = get().mode;
+    if (prev !== 'use') this.setMode('use');
+    return () => {
+      if (get().mode === 'use' && prev !== 'use') this.setMode(prev);
+    };
+  }
+
+  /** Move the replay's cursor to an element (window coordinates), with a ripple when it acts there. */
+  private guideTo(el: ElementInfo | null, acting: boolean): void {
+    this.wake();
+    const g = this.geom();
+    if (!el || !g) {
+      this.guide = null;
+      return;
+    }
+    const x = g.left + (el.rect.x + el.rect.w / 2) * g.scale;
+    const y = g.top + (el.rect.y + el.rect.h / 2) * g.scale;
+    if (acting) this.ripples.push({ x, y, t: performance.now(), kind: 'replay' });
+    this.guide = { x, y, fromX: this.guide?.x ?? x - 60, fromY: this.guide?.y ?? y + 80, at: performance.now() };
+  }
+  /** Times the app's bridge has said it is ready (each page load). */
+  private appLoads = 0;
+
+  /** Smoothed hand cursor, window coordinates. */
+  readonly cursor = { x: 0, y: 0, alpha: 0, overApp: false };
+  readonly ripples: { x: number; y: number; t: number; kind: 'tap' | 'pin' | 'replay' }[] = [];
+  stream: MediaStream | null = null;
+  /** Calibration reads raw landmarks and hides the cursor meanwhile. */
+  calibrating = false;
+  /** While set (the setup tour, the voice test in Settings), speech is shown but not acted on. */
+  dryRun: ((text: string, heard?: VoiceFinal) => void) | null = null;
+  readonly frameListeners = new Set<(f: HandFrame) => void>();
+  readonly streamListeners = new Set<(s: MediaStream | null) => void>();
+
+  private started = false;
+  private frame: HTMLIFrameElement | null = null;
+  private overlay: HTMLElement | null = null;
+  private canvas: HTMLCanvasElement | null = null;
+  private scale = 1;
+  private mouse: { x: number; y: number; alt: boolean } | null = null;
+  private appMouse: { x: number; y: number } | null = null;
+  private handTarget: HTMLElement | null = null;
+  private video: HTMLVideoElement | null = null;
+  /** Counts the camera's starts and stops: a start that is no longer the latest gives up. */
+  private cameraRun = 0;
+  private raf = 0;
+  /** The frame loop, asleep, comes back for another look at the app then (a resting pointer, boxes to follow). */
+  private later: ReturnType<typeof setTimeout> | null = null;
+  private lastTick = 0;
+  private frames = 0;
+  private clearedProbe = false;
+  private lastProbe: { x: number; y: number; t: number; deep: boolean } | null = null;
+  /** When the boxes of what is selected, pinned or changed were last asked for. */
+  private trackedAt = 0;
+  /** The cursor canvas has something on it (else it is hidden). */
+  private painted = false;
+  private dragging: 'app' | null = null;
+  private spaceDownAt = 0;
+  private spaceConsumed = false;
+  private noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The spoken request waiting in the command bar (review mode). */
+  private drafted: Spoken | null = null;
+  private lastMouseAt = 0;
+  private resolving = new Set<number>();
+  private colors: Record<string, string> = {};
+  private cleanups: (() => void)[] = [];
+
+  constructor() {
+    this.engine = new GestureEngine(settings().engine, () => ({ w: window.innerWidth, h: window.innerHeight }));
+  }
+
+  // ───────────────────────────── lifecycle ─────────────────────────────
+
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+    const s = settings();
+    applyTheme(s.theme);
+    setSoundsEnabled(s.voice.sounds);
+    this.readColors();
+    this.applyVoiceSettings();
+    // Load the on-device speech model once the studio has settled.
+    const warm = setTimeout(() => this.voice.warmUp(), 2500);
+    this.cleanups.push(() => clearTimeout(warm));
+
+    this.cleanups.push(
+      useSettings.subscribe((now, prev) => {
+        if (now.engine !== prev.engine) {
+          this.engine.configure(now.engine);
+          void this.tracker.setNumHands(now.engine.hand === 'any' ? 1 : 2);
+        }
+        if (now.theme !== prev.theme) {
+          applyTheme(now.theme);
+          requestAnimationFrame(() => this.readColors());
+        }
+        if (now.voice.sounds !== prev.voice.sounds) setSoundsEnabled(now.voice.sounds);
+        if (now.voice !== prev.voice) {
+          this.applyVoiceSettings();
+          if (now.voice.engine !== prev.voice.engine || now.voice.lang !== prev.voice.lang) this.voice.warmUp();
+        }
+      }),
+    );
+    const mq = matchMedia('(prefers-color-scheme: dark)');
+    const onScheme = () => {
+      if (settings().theme === 'system') {
+        applyTheme('system');
+        requestAnimationFrame(() => this.readColors());
+      }
+    };
+    mq.addEventListener('change', onScheme);
+    this.cleanups.push(() => mq.removeEventListener('change', onScheme));
+
+    this.wireVoice();
+    this.wireBridge();
+    this.cleanups.push(
+      subscribe({
+        progress: (d) => {
+          const p = d as { requestId: string; step: string; detail?: string };
+          const r = get().request;
+          if (r && r.id === p.requestId && r.step !== 'Stopping') set({ request: { ...r, step: p.step, detail: p.detail } });
+        },
+        install: (d) => {
+          const line = (d as { line: string }).line;
+          const r = get().recorder;
+          set({ recorder: { ...r, installLog: [...r.installLog, line].slice(-200) } });
+        },
+        speech: (d) => sessions.serverEvent('speech', d),
+        session: (d) => sessions.serverEvent('session', d),
+        apps: (d) => apps.serverEvent(d),
+        // Today's AI use, after every call: the top bar follows.
+        usage: (d) => {
+          const st = get().status;
+          if (st) set({ status: { ...st, ai: { ...st.ai, usage: d as UsagePill } } });
+        },
+        // A change another AI app proposed over MCP: shown like any other, to keep or undo.
+        change: (d) => {
+          const { change, via } = d as { change: Change; via: string };
+          this.upsertChange(change);
+          this.refreshAfterEdit();
+          play('send');
+          this.notify(`${via} proposed a change: ${change.title}. Keep or undo it.`, 'info');
+        },
+      }, (again) => {
+        // Back after a dropped connection: catch up on what was missed meanwhile.
+        if (!again) return;
+        void sessions.resync();
+        void this.refreshStatus();
+        void this.refreshChanges();
+      }),
+    );
+    // Arabic push-to-talk uses the studio server's model when one is installed.
+    const syncServer = (speech: SpeechStatus | null) => {
+      const langs = this.voice.server.langs;
+      langs.clear();
+      if (speech && speech.runtime !== 'missing' && speech.runtime !== 'failed') {
+        if (speech.active.ar) langs.add('ar');
+        if (speech.active.en) langs.add('en');
+      }
+    };
+    this.cleanups.push(useSessions.subscribe((now, prev) => now.speech !== prev.speech && syncServer(now.speech)));
+    sessions.init({
+      frame: () => this.frame,
+      appConnected: () => get().app.connected,
+      appUrl: () => get().app.url || get().status?.target.url || '',
+      bridgeSession: (on, id, endpoint, key) => this.bridge.session(on, id, endpoint, key),
+      bridgeMark: (note, via) => this.bridge.mark(note, via),
+      enterUse: () => {
+        const prev = get().mode;
+        if (prev !== 'use') this.setMode('use');
+        return () => {
+          if (get().mode === 'use' && prev !== 'use') this.setMode(prev);
+        };
+      },
+      notify: (text, actions) => this.notify(text, 'ok', actions),
+      locate: async (id) => (await this.bridge.locator(id))?.locator ?? null,
+    });
+
+    // AI apps connected over MCP see what is selected and pinned.
+    this.cleanups.push(useStudio.subscribe((st, prev) => (st.selection !== prev.selection || st.pins !== prev.pins || st.app.url !== prev.app.url ? this.pushContext() : undefined)));
+
+    const down = (e: KeyboardEvent) => this.onKeyDown(e);
+    const up = (e: KeyboardEvent) => this.onKeyUp(e);
+    const blur = () => this.releaseTalk();
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    this.cleanups.push(() => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    });
+
+    apps.init(() => this.appSwitched());
+    void this.refreshStatus();
+    void this.refreshChanges().then(() => this.announceWaiting());
+    // Boxes to keep up with, or the camera on: the frame loop has work again.
+    this.cleanups.push(
+      useStudio.subscribe((st, prev) => {
+        const boxes = (st.selection !== prev.selection || st.pins !== prev.pins || st.previewTargets !== prev.previewTargets) && trackedKey(st) !== trackedKey(prev);
+        if (boxes || st.camera.status !== prev.camera.status) this.wake();
+      }),
+    );
+    this.wake();
+    if (s.camera.enabled && s.onboarded && s.labs.hand) void this.startCamera();
+    // Hand control turned off in Labs: the camera goes with it.
+    this.cleanups.push(useSettings.subscribe((n, p) => n.labs.hand !== p.labs.hand && !n.labs.hand && get().camera.status !== 'off' && this.stopCamera(false)));
+  }
+
+  dispose(): void {
+    this.started = false;
+    this.rest();
+    for (const fn of this.cleanups.splice(0)) fn();
+    this.stopCamera(false);
+    this.bridge.detach();
+  }
+
+  private readColors(): void {
+    const cs = getComputedStyle(document.documentElement);
+    for (const k of ['human', 'ai', 'ok', 'bad', 'fg', 'fg-2', 'inverse', 'glass']) this.colors[k] = cs.getPropertyValue(`--${k}`).trim();
+  }
+
+  // ───────────────────────────── stage wiring ─────────────────────────────
+
+  attachFrame(frame: HTMLIFrameElement | null, src?: string): void {
+    if (!frame || !src) {
+      this.bridge.detach();
+      this.frame = null;
+      return;
+    }
+    this.frame = frame;
+    this.bridge.attach(frame, src);
+  }
+
+  /** The iframe (re)loaded: its bridge starts fresh, so old element ids mean nothing now. */
+  frameLoaded(): void {
+    set({ app: { ...get().app, connected: false } });
+    this.bridge.sayHello();
+  }
+
+  attachOverlay(el: HTMLElement | null): void {
+    this.overlay = el;
+  }
+
+  attachCanvas(el: HTMLCanvasElement | null): void {
+    this.canvas = el;
+    this.painted = false;
+    if (el) el.style.visibility = 'hidden';
+    this.wake();
+  }
+
+  setScale(scale: number): void {
+    this.scale = scale || 1;
+  }
+
+  private geom(): { left: number; top: number; scale: number; w: number; h: number } | null {
+    if (!this.frame) return null;
+    const r = this.frame.getBoundingClientRect();
+    if (!r.width) return null;
+    return { left: r.left, top: r.top, scale: this.scale, w: r.width, h: r.height };
+  }
+
+  /** Window coordinates → app (iframe) coordinates. */
+  toApp(x: number, y: number): { x: number; y: number } | null {
+    const g = this.geom();
+    if (!g) return null;
+    return { x: (x - g.left) / g.scale, y: (y - g.top) / g.scale };
+  }
+
+  private wireBridge(): void {
+    const b = this.bridge;
+    b.onReady = ({ url, title }) => {
+      this.appLoads++;
+      set({ app: { ...get().app, connected: true, url, title, outdated: undefined } });
+      const mode = get().mode;
+      b.trackMouse(mode !== 'edit');
+      b.record(mode === 'record');
+      b.forwardKeys(true);
+      void this.reresolveAll();
+    };
+    b.onOutdated = (outdated) => set({ app: { ...get().app, connected: false, outdated } });
+    b.onNavigated = ({ url, title }) => set({ app: { ...get().app, url, title } });
+    b.onProbe = (m) => {
+      const s = get();
+      if (!sameEl(s.hover, m.hit) || s.snapped !== m.snapped) set({ hover: m.hit, snapped: m.snapped });
+      if (s.hover?.id !== m.hit?.id) sessions.pointed(m.hit, s.pointer === 'hand' ? 'hand' : 'mouse');
+      // “This” binds to deliberate pointing: the mouse, or the hand with the index finger out (not mid-gesture).
+      const pose = this.engine.state.pose;
+      const deliberate = s.pointer !== 'hand' || pose === 'point' || pose === 'pinch';
+      this.track.push(performance.now(), deliberate ? m.hit : null);
+      this.applyTracked(m.tracked);
+    };
+    b.onMouse = (pos) => {
+      this.appMouse = pos;
+      this.wake();
+      if (pos) this.lastMouseAt = performance.now();
+    };
+    b.onRecorded = (action) => {
+      if (get().mode !== 'record') return;
+      const r = get().recorder;
+      set({ recorder: { ...r, steps: [...r.steps, { kind: action.kind, locator: action.locator, description: action.description, value: 'value' in action ? action.value : undefined, key: 'key' in action ? action.key : undefined }] } });
+    };
+    b.onKey = (key, down) => {
+      if (key === 'Space') {
+        if (down) this.pressTalk();
+        else this.releaseTalk();
+      } else if (key === 'Escape' && down) this.stop('key');
+      else if (key === 'Mark' && down) sessions.mark('', 'shortcut');
+    };
+    b.onSession = (st) => sessions.bridgeSaid(st.id);
+    b.onMoment = (reason) => sessions.moment(reason);
+  }
+
+  private trackedIds(): number[] {
+    const s = get();
+    const ids = new Set<number>();
+    if (s.selection) ids.add(s.selection.id);
+    for (const p of s.pins) ids.add(p.id);
+    for (const p of s.previewTargets) ids.add(p.el.id);
+    return [...ids];
+  }
+
+  private applyTracked(tracked: Record<string, Rect | null>): void {
+    const s = get();
+    const upd = (el: ElementInfo): ElementInfo | 'gone' => {
+      if (!(String(el.id) in tracked)) return el;
+      const r = tracked[el.id];
+      if (!r) return 'gone';
+      return r.x === el.rect.x && r.y === el.rect.y && r.w === el.rect.w && r.h === el.rect.h ? el : { ...el, rect: r };
+    };
+    let changed = false;
+    const patch: Partial<typeof s> = {};
+    if (s.selection) {
+      const n = upd(s.selection);
+      if (n === 'gone') this.resolveLater(s.selection);
+      else if (n !== s.selection) {
+        patch.selection = n;
+        changed = true;
+      }
+    }
+    const pins = s.pins.map((p) => {
+      const n = upd(p);
+      if (n === 'gone') {
+        this.resolveLater(p);
+        return p;
+      }
+      if (n !== p) changed = true;
+      return n;
+    });
+    if (changed) patch.pins = pins;
+    let ptChanged = false;
+    const pts = s.previewTargets.map((p) => {
+      const n = upd(p.el);
+      if (n === 'gone') {
+        this.resolveLater(p.el);
+        return p;
+      }
+      if (n !== p.el) ptChanged = true;
+      return n === p.el ? p : { ...p, el: n };
+    });
+    if (ptChanged) patch.previewTargets = pts;
+    if (changed || ptChanged) set(patch);
+  }
+
+  /** An element left the DOM (hot reload re-rendered it): find it again by its source location. */
+  private resolveLater(el: ElementInfo): void {
+    if (this.resolving.has(el.id)) return;
+    this.resolving.add(el.id);
+    setTimeout(async () => {
+      const next = el.src ? await this.bridge.resolve(el.src, el.index) : null;
+      this.replaceEl(el.id, next);
+      setTimeout(() => this.resolving.delete(el.id), 400);
+    }, 120);
+  }
+
+  private replaceEl(id: number, next: ElementInfo | null): void {
+    const s = get();
+    set({
+      selection: s.selection?.id === id ? next : s.selection,
+      pins: s.pins.flatMap((p) => (p.id === id ? (next ? [next] : []) : [p])),
+      previewTargets: s.previewTargets.flatMap((p) => (p.el.id === id ? (next ? [{ ...p, el: next }] : []) : [p])),
+    });
+    if (s.selection?.id === id && next?.src && next.src !== s.selection.src) void this.loadInspect(next);
+  }
+
+  private async reresolveAll(): Promise<void> {
+    const s = get();
+    const find = async (el: ElementInfo) => (el.src ? await this.bridge.resolve(el.src, el.index) : null);
+    const selection = s.selection ? await find(s.selection) : null;
+    const pins = (await Promise.all(s.pins.map(find))).filter((x): x is ElementInfo => !!x);
+    const pts = (await Promise.all(s.previewTargets.map(async (p) => ({ ...p, el: await find(p.el) })))).filter((p): p is { changeId: string; el: ElementInfo } => !!p.el);
+    set({ selection, pins, previewTargets: pts, hover: null });
+  }
+
+  /** After an edit lands, the app hot-reloads: refresh what we know about targeted elements. A folder of HTML has no hot reload: its page loads again. */
+  private refreshAfterEdit(): void {
+    const s = get();
+    if (s.status?.app?.framework === 'static' && s.app.url) this.bridge.goto(s.app.url);
+    for (const delay of [300, 900, 2000]) setTimeout(() => void this.refreshTargets(), delay);
+  }
+
+  private async refreshTargets(): Promise<void> {
+    const s = get();
+    const fresh = async (el: ElementInfo) => (await this.bridge.describe(el.id)) ?? (el.src ? await this.bridge.resolve(el.src, el.index) : null);
+    const selection = s.selection ? await fresh(s.selection) : null;
+    const pins = (await Promise.all(s.pins.map(fresh))).filter((x): x is ElementInfo => !!x);
+    const pts = (await Promise.all(s.previewTargets.map(async (p) => ({ ...p, el: await fresh(p.el) })))).filter((p): p is { changeId: string; el: ElementInfo } => !!p.el);
+    const now = get();
+    set({
+      selection: now.selection?.id === s.selection?.id ? selection : now.selection,
+      pins: now.pins === s.pins ? pins : now.pins,
+      previewTargets: now.previewTargets === s.previewTargets ? pts : now.previewTargets,
+    });
+    const sel = get().selection;
+    if (sel) void this.loadInspect(sel, true);
+  }
+
+  // ───────────────────────────── frame loop ─────────────────────────────
+  //
+  // The hand cursor, what the pointer is on in the app, the boxes that follow what is selected, and the cursor
+  // canvas. The loop runs while something moves or needs following and sleeps otherwise, so an idle studio costs
+  // nothing; whatever gives it work again wakes it.
+
+  private wake = (): void => {
+    if (this.raf || !this.started) return;
+    if (this.later) clearTimeout(this.later);
+    this.later = null;
+    this.raf = requestAnimationFrame(this.loop);
+  };
+
+  /** Stop the frame loop until something wakes it. */
+  private rest(): void {
+    cancelAnimationFrame(this.raf);
+    this.raf = 0;
+    if (this.later) clearTimeout(this.later);
+    this.later = null;
+  }
+
+  private loop = (now: number): void => {
+    this.raf = 0;
+    const dt = Math.min(64, now - (this.lastTick || now));
+    this.lastTick = now;
+    this.frames++;
+    const st = this.engine.state;
+    const handOn = get().camera.status === 'on' && st.present && !this.calibrating;
+
+    // Interpolate the hand cursor between camera frames (30 fps) for a smooth 60–120 Hz display.
+    if (handOn) {
+      if (this.cursor.alpha <= 0.01) {
+        this.cursor.x = st.x;
+        this.cursor.y = st.y;
+      }
+      const k = 1 - Math.exp(-dt / 18);
+      this.cursor.x += (st.x - this.cursor.x) * k;
+      this.cursor.y += (st.y - this.cursor.y) * k;
+      this.cursor.alpha = Math.min(1, this.cursor.alpha + dt / 120);
+    } else {
+      this.cursor.alpha = Math.max(0, this.cursor.alpha - dt / 220);
+    }
+
+    const p = this.pointer(handOn);
+    const pointerKind = p ? p.source : null;
+    if (get().pointer !== pointerKind) set({ pointer: pointerKind });
+    this.updateDwell(now, handOn);
+
+    // Ask the app what is under the pointer; refresh tracked boxes otherwise. A pointer resting still, with
+    // no boxes to keep up with, is asked about a few times a second rather than every frame.
+    const ids = this.trackedIds();
+    const g = this.geom();
+    let resting = false;
+    if (p && p.inApp && g) {
+      const ax = (p.x - g.left) / g.scale;
+      const ay = (p.y - g.top) / g.scale;
+      const last = this.lastProbe;
+      resting = !!last && !ids.length && Math.abs(ax - last.x) < 0.75 && Math.abs(ay - last.y) < 0.75 && now - last.t < 200 && last.deep === p.deep;
+      if (!resting) {
+        this.bridge.probe(ax, ay, p.radius / g.scale, p.deep, ids, p.source === 'hand');
+        this.lastProbe = { x: ax, y: ay, t: now, deep: p.deep };
+      }
+      this.clearedProbe = false;
+    } else if (!this.clearedProbe || (ids.length && now - this.trackedAt >= TRACK_MS)) {
+      this.lastProbe = null;
+      this.bridge.probe(null, null, 0, false, ids);
+      this.clearedProbe = true;
+      this.trackedAt = now;
+    }
+
+    if (this.frames % 30 === 0 && get().camera.status === 'on' && get().camera.fps !== this.tracker.fps) {
+      set({ camera: { ...get().camera, fps: this.tracker.fps } });
+    }
+    this.draw(now);
+
+    // Every frame while something moves; a little later while a resting pointer or boxes only need watching.
+    const moving = get().camera.status === 'on' || this.cursor.alpha > 0.01 || this.ripples.length > 0 || (!!this.guide && now - this.guide.at < GUIDE_MS) || (!!p?.inApp && !resting);
+    if (moving) this.raf = requestAnimationFrame(this.loop);
+    else if (p?.inApp || ids.length) this.later = setTimeout(this.wake, p?.inApp ? 200 : TRACK_MS);
+  };
+
+  private pointer(handOn: boolean): Pointer | null {
+    const mode = get().mode;
+    if (handOn) {
+      const hit = this.hitStudio(this.cursor.x, this.cursor.y);
+      this.setHandTarget(hit.kind === 'studio' ? hit.el : null);
+      this.cursor.overApp = hit.kind === 'app';
+      return { x: this.cursor.x, y: this.cursor.y, source: 'hand', radius: settings().aimAssist, deep: false, inApp: hit.kind === 'app' };
+    }
+    this.setHandTarget(null);
+    if (mode === 'edit' && this.mouse) return { ...this.mouse, source: 'mouse', radius: 0, deep: this.mouse.alt, inApp: true };
+    if (mode !== 'edit' && this.appMouse) {
+      const g = this.geom();
+      if (!g) return null;
+      return { x: g.left + this.appMouse.x * g.scale, y: g.top + this.appMouse.y * g.scale, source: 'mouse', radius: 0, deep: false, inApp: true };
+    }
+    return null;
+  }
+
+  /** What the hand cursor is over: the app, a studio control (with a little aim assist), or nothing. */
+  private hitStudio(x: number, y: number): StudioHit {
+    const at = (px: number, py: number): StudioHit | null => {
+      const el = document.elementFromPoint(px, py) as HTMLElement | null;
+      if (!el) return null;
+      if (el === this.frame || (this.overlay && (el === this.overlay || this.overlay.contains(el)))) return { kind: 'app' };
+      const ctl = el.closest<HTMLElement>(INTERACTIVE);
+      if (ctl && !ctl.closest('[data-hand-ignore]') && !(ctl as HTMLButtonElement).disabled) return { kind: 'studio', el: ctl };
+      return null;
+    };
+    const direct = at(x, y);
+    if (direct) return direct;
+    for (const r of [10, 20]) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const h = at(x + Math.cos(a) * r, y + Math.sin(a) * r);
+        if (h?.kind === 'studio') return h;
+      }
+    }
+    return { kind: 'none' };
+  }
+
+  private setHandTarget(el: HTMLElement | null): void {
+    if (el === this.handTarget) return;
+    this.handTarget?.removeAttribute('data-hand-hover');
+    this.handTarget = el;
+    el?.setAttribute('data-hand-hover', '');
+  }
+
+  // ───────────────────────────── drawing ─────────────────────────────
+
+  private draw(now: number): void {
+    const c = this.canvas;
+    if (!c) return;
+    // Nothing to show: cleared once, and hidden. A canvas drawn on over the app makes the browser ask the studio's
+    // page where each click in the app lands, and that waits whenever the studio is busy.
+    if (!this.ripples.length && !this.guide && (this.calibrating || this.cursor.alpha <= 0.01)) {
+      if (this.painted) {
+        c.getContext('2d')?.clearRect(0, 0, c.width, c.height);
+        c.style.visibility = 'hidden';
+        this.painted = false;
+      }
+      return;
+    }
+    if (!this.painted) c.style.visibility = 'visible';
+    this.painted = true;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+    }
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const human = this.colors.human || '#ffb224';
+
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const r = this.ripples[i];
+      const age = (now - r.t) / 450;
+      if (age >= 1) {
+        this.ripples.splice(i, 1);
+        continue;
+      }
+      ctx.globalAlpha = (1 - age) * 0.9;
+      ctx.strokeStyle = r.kind === 'replay' ? this.colors.ai || '#3dd6f5' : human;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 10 + age * (r.kind === 'pin' ? 34 : 24), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Replaying a session: a pointer that travels to each step's target (in the AI's colour: it isn't you).
+    const gd = this.guide;
+    if (gd) {
+      const k = Math.min(1, (now - gd.at) / GUIDE_MS);
+      const e = 1 - Math.pow(1 - k, 3);
+      const gx = gd.fromX + (gd.x - gd.fromX) * e;
+      const gy = gd.fromY + (gd.y - gd.fromY) * e;
+      const ai = this.colors.ai || '#3dd6f5';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = ai;
+      ctx.strokeStyle = this.colors.inverse || '#000';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(gx, gy);
+      ctx.lineTo(gx + 3.5, gy + 17);
+      ctx.lineTo(gx + 7.5, gy + 12.5);
+      ctx.lineTo(gx + 14, gy + 13);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    const a = this.calibrating ? 0 : this.cursor.alpha;
+    if (a <= 0.01) {
+      ctx.globalAlpha = 1;
+      return;
+    }
+    const st = this.engine.state;
+    const { x, y } = this.cursor;
+    ctx.globalAlpha = a;
+    ctx.lineWidth = 2;
+
+    if (st.clutched) {
+      ctx.setLineDash([3, 4]);
+      ctx.strokeStyle = this.colors['fg-2'] || '#999';
+      ctx.beginPath();
+      ctx.arc(x, y, 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = this.colors['fg-2'] || '#999';
+      ctx.fillRect(x - 4, y - 5, 2.5, 10);
+      ctx.fillRect(x + 1.5, y - 5, 2.5, 10);
+    } else if (st.dragging) {
+      ctx.strokeStyle = human;
+      ctx.fillStyle = withAlpha(human, 0.18);
+      ctx.beginPath();
+      ctx.arc(x, y, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = human;
+      for (const d of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(x - 4.5, y + d * 3);
+        ctx.lineTo(x, y + d * 8);
+        ctx.lineTo(x + 4.5, y + d * 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (st.pinching) {
+      ctx.fillStyle = human;
+      ctx.beginPath();
+      ctx.arc(x, y, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = withAlpha(human, 0.6);
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      const k = st.pinchAmount;
+      const r = (this.handTarget ? 9 : 15) - (this.handTarget ? 3 : 6) * k;
+      ctx.fillStyle = withAlpha(human, (this.handTarget ? 0.04 : 0.1) + 0.25 * k);
+      ctx.strokeStyle = human;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = human;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (st.holdKind && st.holdProgress > 0.03) {
+      const color =
+        st.holdKind === 'thumbUp' ? this.colors.ok : st.holdKind === 'thumbDown' ? this.colors.bad : st.holdKind === 'victory' ? human : this.colors.fg;
+      this.ring(ctx, x, y, st.holdProgress, color || '#fff', { palm: 'Stop', thumbUp: 'Keep', thumbDown: 'Undo', victory: 'Talk' }[st.holdKind]);
+    } else if (st.pinching && !st.dragging && st.pinchHold > 0.03) {
+      // Holding a pinch in Edit mode: when the ring closes, what it is on is added to the selection (or taken out).
+      const meaning = this.pinchHoldMeaning();
+      if (meaning !== 'none') this.ring(ctx, x, y, st.pinchHold, human, meaning === 'add' ? 'Add' : 'Remove');
+    } else if (this.dwellProgress > 0.03) {
+      this.ring(ctx, x, y, this.dwellProgress, human, 'Select');
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /** A progress ring around the cursor, with what happens when it closes. */
+  private ring(ctx: CanvasRenderingContext2D, x: number, y: number, progress: number, color: string, label: string): void {
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = withAlpha(color, 0.2);
+    ctx.beginPath();
+    ctx.arc(x, y, 23, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, 23, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.font = '600 11px "Geist Variable", system-ui, sans-serif';
+    const tw = ctx.measureText(label).width;
+    const lx = x + 30;
+    const ly = y - 9;
+    ctx.fillStyle = color;
+    roundRect(ctx, lx, ly, tw + 14, 19, 6);
+    ctx.fill();
+    ctx.fillStyle = this.colors.inverse || '#000';
+    ctx.fillText(label, lx + 7, ly + 13.5);
+  }
+
+  // ───────────────────────────── camera & hand ─────────────────────────────
+
+  async startCamera(deviceId?: string | null): Promise<boolean> {
+    if (!handLab()) return false;
+    const s = get();
+    if (s.camera.status === 'starting') return false;
+    if (s.camera.status === 'on' && deviceId === undefined) return true;
+    if (s.camera.status === 'on') this.stopCamera(false);
+    const run = ++this.cameraRun;
+    // Turned off while it started (the setup skipped, hand control switched off): it stays off, and lets go of the
+    // camera it opened. Opening the camera and loading the tracker take seconds on a slow computer.
+    const stopped = () => run !== this.cameraRun || !handLab();
+    set({ camera: { ...get().camera, status: 'starting', error: null } });
+    let stream: MediaStream | null = null;
+    try {
+      stream = await openCamera((deviceId === undefined ? settings().camera.deviceId : deviceId) ?? undefined);
+      if (stopped()) return this.letGoOf(stream, run);
+      this.stream = stream;
+      if (!this.video) {
+        this.video = document.createElement('video');
+        this.video.muted = true;
+        this.video.playsInline = true;
+      }
+      this.video.srcObject = stream;
+      await this.video.play().catch(() => undefined);
+      if (stopped()) return this.letGoOf(stream, run);
+      for (const fn of this.streamListeners) fn(stream);
+      this.tracker.numHands = settings().engine.hand === 'any' ? 1 : 2;
+      await this.tracker.init();
+      if (stopped()) return this.letGoOf(stream, run);
+      this.tracker.onFrame = (f) => this.onFrame(f);
+      this.tracker.start(this.video);
+      set({ camera: { status: 'on', error: null, fps: 0, delegate: this.tracker.delegate } });
+      settings().setCamera({ enabled: true, ...(deviceId !== undefined ? { deviceId } : {}) });
+      return true;
+    } catch (err) {
+      if (stopped()) return this.letGoOf(stream, run);
+      stopStream(this.stream);
+      this.stream = null;
+      for (const fn of this.streamListeners) fn(null);
+      const message = err instanceof CameraError ? err.message : `Hand tracking couldn’t start: ${(err as Error)?.message ?? err}`;
+      set({ camera: { status: 'error', error: message, fps: 0, delegate: null } });
+      this.notify(message, 'error');
+      return false;
+    }
+  }
+
+  /**
+   * What a start that was stopped meanwhile opened, closed; a newer start's camera is left alone. Hand control switched
+   * off with no stop since (still the latest start): stopped now, so the camera reads off rather than starting.
+   */
+  private letGoOf(stream: MediaStream | null, run: number): false {
+    stopStream(stream);
+    if (run === this.cameraRun) this.stopCamera(false);
+    else if (stream && this.stream === stream) {
+      this.stream = null;
+      for (const fn of this.streamListeners) fn(null);
+    }
+    return false;
+  }
+
+  stopCamera(remember = true): void {
+    // A start still on its way ends without turning the camera on.
+    this.cameraRun++;
+    this.tracker.stop();
+    stopStream(this.stream);
+    this.stream = null;
+    for (const fn of this.streamListeners) fn(null);
+    this.engine.update({ t: performance.now() + 10_000, hands: [], aspect: 4 / 3 });
+    this.setHandTarget(null);
+    set({ camera: { status: 'off', error: null, fps: 0, delegate: null }, hand: { ...get().hand, present: false, holdKind: null } });
+    if (remember) settings().setCamera({ enabled: false });
+  }
+
+  toggleCamera(): void {
+    if (get().camera.status === 'on') this.stopCamera();
+    else void this.startCamera();
+  }
+
+  private onFrame(f: HandFrame): void {
+    const events = this.engine.update(f);
+    for (const fn of this.frameListeners) fn(f);
+    for (const e of events) this.onHandEvent(e);
+    const st = this.engine.state;
+    const h = get().hand;
+    if (h.present !== st.present || h.pose !== st.pose || h.holdKind !== st.holdKind || h.clutched !== st.clutched || h.dragging !== st.dragging || h.hand !== st.hand) {
+      set({ hand: { present: st.present, pose: st.pose, holdKind: st.holdKind, clutched: st.clutched, dragging: st.dragging, hand: st.hand } });
+    }
+  }
+
+  private onHandEvent(e: HandEvent): void {
+    if (this.calibrating) return;
+    switch (e.type) {
+      case 'lost':
+        this.dragging = null;
+        this.setHandTarget(null);
+        return;
+      case 'pinchStart':
+        return this.handPinchStart(e.x, e.y);
+      case 'hold':
+        return this.handHold(e.x, e.y);
+      case 'pinchCancel':
+        return this.restorePinch();
+      case 'tap':
+        return this.handTap(e.x, e.y);
+      case 'dragStart':
+        // Pinch and move scrolls, and leaves the selection as it was.
+        this.restorePinch();
+        this.dragging = this.hitStudio(e.x, e.y).kind === 'app' ? 'app' : null;
+        return;
+      case 'drag': {
+        if (this.dragging !== 'app' || this.replayer.running || this.autopilot.running) return;
+        const a = this.toApp(this.cursor.x, this.cursor.y);
+        if (a) this.bridge.scroll(a.x, a.y, (-e.dx * 1.7) / this.scale, (-e.dy * 1.7) / this.scale);
+        return;
+      }
+      case 'dragEnd':
+        this.dragging = null;
+        return;
+      case 'palm':
+        return this.stop('palm');
+      case 'thumbUp':
+        return void this.keep('thumb');
+      case 'thumbDown':
+        return void this.undo('thumb');
+      case 'victory':
+        return this.toggleTalk();
+    }
+  }
+
+  /**
+   * A pinch still closed, in Edit mode: what it is on, and the selection from
+   * before it, to put back if it turns into a scroll.
+   */
+  private pinchPick: { before: Picked; target: ElementInfo | null } | null = null;
+
+  /** What the hand is highlighting at this window point, if the highlight is (almost) there; aim assist may have snapped to a neighbour. */
+  private handTargetAt(x: number, y: number): ElementInfo | null {
+    const hover = get().hover;
+    const a = this.toApp(x, y);
+    if (!hover || !a) return null;
+    const reach = settings().aimAssist / this.scale + 6;
+    const r = hover.rect;
+    return a.x < r.x - reach || a.x > r.x + r.w + reach || a.y < r.y - reach || a.y > r.y + r.h + reach ? null : hover;
+  }
+
+  /**
+   * Edit mode acts the moment the fingers meet, on exactly what was
+   * highlighted: select it, deselect it if it was the only thing selected, or
+   * clear on empty space. Holding adds instead; moving scrolls instead.
+   */
+  private handPinchStart(x: number, y: number): void {
+    this.pinchPick = null;
+    if (get().mode !== 'edit' || this.hitStudio(x, y).kind !== 'app') return;
+    const s = get();
+    const target = this.handTargetAt(x, y);
+    const before: Picked = { selection: s.selection, pins: s.pins };
+    this.pinchPick = { before, target };
+    if (pinchMeaning(target, selectedOf(before)).tap === 'none') return;
+    this.ripples.push({ x, y, t: performance.now(), kind: 'tap' });
+    play('tap');
+    this.setPicked(afterTap(before, target));
+  }
+
+  /** Held still: add what the pinch is on to the selection, or take it out. A scroll after this keeps it. */
+  private handHold(x: number, y: number): void {
+    const p = this.pinchPick;
+    if (!p || get().mode !== 'edit') return;
+    this.pinchPick = null;
+    if (pinchMeaning(p.target, selectedOf(p.before)).hold === 'none') return;
+    this.ripples.push({ x, y, t: performance.now(), kind: 'pin' });
+    play('pick');
+    this.setPicked(afterHold(p.before, p.target));
+  }
+
+  /** The pinch became a scroll, or closed into a fist: the selection goes back to what it was. */
+  private restorePinch(): void {
+    const p = this.pinchPick;
+    this.pinchPick = null;
+    if (p) this.setPicked(p.before);
+  }
+
+  private handTap(x: number, y: number): void {
+    const hit = this.hitStudio(x, y);
+    if (get().mode === 'edit' && hit.kind === 'app') {
+      this.pinchPick = null; // done as the fingers met
+      return;
+    }
+    if (hit.kind === 'none') return;
+    this.ripples.push({ x, y, t: performance.now(), kind: 'tap' });
+    play('tap');
+    if (hit.kind === 'studio') return activate(hit.el, x, y);
+    // Use / Record: click for real, however long the pinch was held. Aim assist may have snapped to a target next to the fingertip.
+    if (this.replayer.running || this.autopilot.running) return;
+    const hover = get().hover;
+    const a = this.toApp(x, y);
+    if (!a) return;
+    const inside = hover && a.x >= hover.rect.x && a.x <= hover.rect.x + hover.rect.w && a.y >= hover.rect.y && a.y <= hover.rect.y + hover.rect.h;
+    const target = !hover || inside ? a : { x: hover.rect.x + hover.rect.w / 2, y: hover.rect.y + hover.rect.h / 2 };
+    void this.bridge.click(target.x, target.y);
+  }
+
+  /** While a pinch is closed in Edit mode: what holding it would do, for the cursor. */
+  pinchHoldMeaning(): HoldMeaning {
+    const p = this.pinchPick;
+    return p ? pinchMeaning(p.target, selectedOf(p.before)).hold : 'none';
+  }
+
+  // ───────────────────────────── mouse on the stage (Edit mode) ─────────────────────────────
+
+  mouseMove(x: number, y: number, alt: boolean): void {
+    this.mouse = { x, y, alt };
+    this.lastMouseAt = performance.now();
+    this.wake();
+  }
+
+  mouseLeave(): void {
+    this.mouse = null;
+    this.wake();
+  }
+
+  /** Like a pinch: a click selects, deselects what is the only thing selected, or clears; ⇧ click adds or takes out. */
+  async mouseClick(x: number, y: number, shift: boolean, alt: boolean, count = 1): Promise<void> {
+    // A double click selects, like a single one (its second click would deselect again).
+    if (count > 1) return;
+    const a = this.toApp(x, y);
+    const run = (async () => {
+      const hit = (a ? await this.bridge.probeAt(a.x, a.y, 0, alt) : null) ?? get().hover;
+      const now: Picked = { selection: get().selection, pins: get().pins };
+      this.setPicked(shift ? afterHold(now, hit) : afterTap(now, hit));
+    })();
+    this.picking = run;
+    try {
+      await run;
+    } finally {
+      if (this.picking === run) this.picking = null;
+    }
+  }
+
+  /** A click's selection, still on its way back from the app: a request sent right after it waits for it. */
+  private picking: Promise<void> | null = null;
+
+  wheel(dx: number, dy: number): void {
+    const m = this.mouse;
+    if (!m) return;
+    const a = this.toApp(m.x, m.y);
+    if (a) this.bridge.scroll(a.x, a.y, dx / this.scale, dy / this.scale);
+  }
+
+  // ───────────────────────────── selection ─────────────────────────────
+
+  /** Select just this one (or nothing). */
+  select(el: ElementInfo | null): void {
+    this.setPicked(picked(el ? [el] : []));
+  }
+
+  private setPicked(p: Picked): void {
+    const s = get();
+    const el = p.selection;
+    const same = el?.id === s.selection?.id;
+    const inspect = same || (el?.src && s.inspect?.file && el.src.startsWith(s.inspect.file + ':')) ? s.inspect : null;
+    set({ selection: el, pins: p.pins, inspect: el ? inspect : null });
+    if (el && (!same || !s.inspect)) void this.loadInspect(el);
+  }
+
+  /** Add to the selection, or take out of it: holding a pinch, ⇧ click, “add this”. */
+  toggleSelected(el: ElementInfo): void {
+    this.setPicked(afterHold({ selection: get().selection, pins: get().pins }, el));
+  }
+
+  /** Take one element out of the selection. */
+  deselect(id: number): void {
+    const s = get();
+    this.setPicked(picked(selectedOf(s).filter((e) => e.id !== id), s.selection));
+  }
+
+  clearTargets(): void {
+    set({ selection: null, pins: [], inspect: null });
+  }
+
+  /** Move the selection out, in, to the next or the previous one. With several selected, the one shown moves. */
+  async step(to: 'parent' | 'child' | 'next' | 'prev'): Promise<void> {
+    const sel = get().selection;
+    if (!sel) return this.notify(to === 'parent' ? 'Select something first, then go up to what contains it.' : 'Select something first.', 'info');
+    const next = await this.bridge.step(sel.id, to);
+    if (!next) {
+      const why = { parent: 'That’s already the outermost element.', child: 'There’s nothing inside it to select.', next: 'That’s the last one.', prev: 'That’s the first one.' };
+      return this.notify(why[to], 'info');
+    }
+    const s = get();
+    if (s.selection?.id === sel.id) this.setPicked(replaced(s, sel, next));
+  }
+
+  selectParent(): Promise<void> {
+    return this.step('parent');
+  }
+
+  /** “The card”, “the button inside”: the nearest one around or inside the selection (or what you point at). */
+  async selectCalled(what: string, where: 'any' | 'out' | 'in', from: ElementInfo | null): Promise<void> {
+    const el = await this.bridge.find(from?.id ?? null, what, where);
+    if (!el) {
+      const place = !from ? 'on the page' : where === 'in' ? 'inside it' : where === 'out' ? 'around it' : 'around or inside it';
+      return this.notify(`Couldn’t find a “${what}” ${place}.`, 'info');
+    }
+    const s = get();
+    if (s.selection && from?.id === s.selection.id) this.setPicked(replaced(s, s.selection, el));
+    else this.select(el);
+  }
+
+  /** Dwell select (optional): the pointing hand resting on one element selects it. */
+  private dwell: { id: number; since: number; done: boolean } | null = null;
+
+  /** How far a dwell has got, 0 → 1, for the cursor. */
+  dwellProgress = 0;
+
+  private updateDwell(now: number, handOn: boolean): void {
+    const s = get();
+    const st = this.engine.state;
+    const hover = s.hover;
+    const on =
+      settings().dwellSelect &&
+      handOn &&
+      s.mode === 'edit' &&
+      this.cursor.overApp &&
+      !!hover &&
+      !st.pinching &&
+      !st.dragging &&
+      (st.pose === 'point' || st.pose === 'other') &&
+      !s.pins.length &&
+      hover.id !== s.selection?.id;
+    if (!on || !hover) {
+      this.dwell = null;
+      this.dwellProgress = 0;
+      return;
+    }
+    if (this.dwell?.id !== hover.id) this.dwell = { id: hover.id, since: now, done: false };
+    const DWELL_MS = 1000;
+    this.dwellProgress = this.dwell.done ? 0 : Math.min(1, Math.max(0, (now - this.dwell.since - 200) / (DWELL_MS - 200)));
+    if (!this.dwell.done && now - this.dwell.since >= DWELL_MS) {
+      this.dwell.done = true;
+      this.dwellProgress = 0;
+      this.ripples.push({ x: this.cursor.x, y: this.cursor.y, t: now, kind: 'tap' });
+      play('tap');
+      this.select(hover);
+    }
+  }
+
+  /** Where the element is written, as the server traces it (`guessed` when it was found by searching the code). */
+  private traceEl(el: ElementInfo): Promise<{ result: InspectResult | null }> {
+    return api.post<{ result: InspectResult | null }>('/inspect', { ref: { src: el.src, frames: el.frames, hint: el.hint, tag: el.tag, text: el.text }, pageUrl: get().app.url });
+  }
+
+  async loadInspect(el: ElementInfo, quiet = false): Promise<void> {
+    if (!quiet) set({ inspectLoading: true });
+    try {
+      const { result } = await this.traceEl(el);
+      if (get().selection?.id === el.id) set({ inspect: result });
+    } catch {
+      /* the inspector just stays empty */
+    } finally {
+      if (!quiet) set({ inspectLoading: false });
+    }
+  }
+
+  async setProp(prop: string, value: string): Promise<void> {
+    const sel = get().selection;
+    if (!sel?.src) return;
+    try {
+      const res = await api.post<IntentResult>('/props', { src: sel.src, prop, value });
+      this.applyResult(res, `${prop}: ${value}`, [sel]);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  async openInEditor(el?: ElementInfo | null): Promise<void> {
+    const target = el ?? get().selection ?? get().hover;
+    if (!target) return this.notify('Point at or select something from your app first.', 'info');
+    const insp = get().inspect;
+    let info = insp && target.id === get().selection?.id ? insp : null;
+    if (!info) {
+      try {
+        info = (await this.traceEl(target)).result;
+      } catch {
+        info = null;
+      }
+    }
+    if (!info) return this.notify('Couldn’t find that element’s source file.', 'warn');
+    await this.openFile(info.absPath, info.line, info.col);
+  }
+
+  async openFile(absPath: string, line = 1, col = 1): Promise<void> {
+    const where = `${absPath.split('/').slice(-2).join('/')}:${line}`;
+    const res = await fetch(`/__open-in-editor?file=${encodeURIComponent(`${absPath}:${line}:${col}`)}`, { method: 'POST' }).catch(() => null);
+    if (res?.ok) return this.notify(`Opening ${where} in your editor…`, 'info');
+    const why = ((await res?.json().catch(() => null)) as { error?: string } | null)?.error;
+    this.notify(why ?? `Couldn’t open ${where} in your editor.`, 'warn');
+  }
+
+  /** Paths in answers are relative to the app's folder. */
+  openRelative(rel: string, line = 1): void {
+    const root = get().status?.target.root;
+    if (!root) return;
+    void this.openFile(`${root.replace(/\/$/, '')}/${rel}`, line, 1);
+  }
+
+  async copyLocator(el: ElementInfo): Promise<void> {
+    const loc = await this.bridge.locator(el.id);
+    if (!loc) return this.notify('Couldn’t build a locator for that element.', 'warn');
+    await navigator.clipboard?.writeText(loc.locator.code).catch(() => undefined);
+    this.notify(`Copied ${loc.locator.code}`, 'ok');
+  }
+
+  // ───────────────────────────── modes ─────────────────────────────
+
+  setMode(mode: Mode): void {
+    const prev = get().mode;
+    if (prev === mode) return;
+    this.mouse = null;
+    this.appMouse = null;
+    this.wake();
+    set({ mode, hover: null });
+    this.bridge.trackMouse(mode !== 'edit');
+    this.bridge.record(mode === 'record');
+    if (mode === 'record') {
+      const r = get().recorder;
+      if (!r.steps.length && !r.expectations.length) set({ recorder: { ...initialRecorder, startUrl: get().app.url || get().status?.target.url || null } });
+      settings().setUi({ panelOpen: true, panelTab: 'test' });
+    }
+  }
+
+  newRecording(): void {
+    set({ recorder: { ...initialRecorder, startUrl: get().app.url || null } });
+  }
+
+  removeStep(i: number): void {
+    const r = get().recorder;
+    set({ recorder: { ...r, steps: r.steps.filter((_, j) => j !== i) } });
+  }
+
+  removeExpectation(i: number): void {
+    const r = get().recorder;
+    set({ recorder: { ...r, expectations: r.expectations.filter((_, j) => j !== i) } });
+  }
+
+  reloadApp(): void {
+    set({ app: { ...get().app, connected: false, reloadKey: get().app.reloadKey + 1 }, hover: null });
+  }
+
+  // ───────────────────────────── voice ─────────────────────────────
+
+  private applyVoiceSettings(): void {
+    const v = settings().voice;
+    this.voice.engine = v.engine;
+    this.voice.lang = v.lang;
+    this.voice.autoStopMs = v.autoStopMs;
+    set({ voice: { ...get().voice, supported: this.voice.supported } });
+  }
+
+  private wireVoice(): void {
+    const v = this.voice;
+    v.asr.onChange = (model, modelError) => set({ voice: { ...get().voice, model, modelError } });
+    v.onState = (state) => {
+      const was = get().voice.state;
+      set({ voice: { ...get().voice, state, ...(state === 'idle' ? { trigger: null, words: [], bindings: [] } : {}) } });
+      // The cue says the microphone is really on: talk now.
+      if (state === 'listening' && was !== 'listening') play('listen');
+    };
+    v.onWords = (words, aligned) => {
+      set({ voice: { ...get().voice, words: words.map((w) => w.text), bindings: this.bind(words, aligned) } });
+    };
+    v.onFinal = (final) => {
+      const last = { text: final.text, source: final.source, browser: final.browser, browserError: final.browserError, device: final.device, loudness: final.loudness, ms: final.ms };
+      set({ voice: { ...get().voice, last } });
+      const listening = this.talking();
+      if (this.dryRun) {
+        if (!listening && get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+        return this.dryRun(final.text, final);
+      }
+      if (!final.text.trim()) {
+        if (!listening && get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+        return;
+      }
+      play('send');
+      const spoken: Spoken = { words: final.words, aligned: final.aligned, span: final.span };
+      if (settings().voice.review) return this.draftSpoken(final, spoken);
+      void this.handleUtterance(final.text, spoken, 'voice');
+    };
+    v.onError = (_code, message) => {
+      set({ voice: { ...get().voice, error: message } });
+      play('error');
+      this.notify(message, 'error');
+    };
+    v.onNothing = () => this.notify('Didn’t hear anything. Try again, a little closer to the mic.', 'info');
+  }
+
+  private bind(words: Word[], aligned = false): Binding[] {
+    const s = get();
+    // Recognisers report words a little after they are said; audio-aligned words need no correction.
+    const lagMs = aligned ? 0 : DEFAULT_FUSION.lagMs;
+    return resolveDeictics(words, this.track, { ...DEFAULT_FUSION, lagMs, pins: s.pins, selection: s.selection }).map((r) => ({ index: r.index, word: r.word, el: r.el, via: r.via }));
+  }
+
+  /** Review mode: what you said goes to the command bar, to fix if needed and send with Enter. */
+  private draftSpoken(final: VoiceFinal, spoken: Spoken): void {
+    this.drafted = spoken;
+    const alternatives = [...new Set([...final.browser, final.device])].filter((t) => t && t !== final.text).slice(0, 3);
+    if (get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+    set({ draft: { text: final.text, alternatives, n: (get().draft?.n ?? 0) + 1 } });
+  }
+
+  /** The command bar was submitted. A reviewed voice request keeps its timing, so “this” still means what you pointed at. */
+  submitText(text: string): void {
+    const t = text.trim();
+    const spoken = this.drafted;
+    this.clearDraft();
+    if (!t) return;
+    if (spoken) return void this.handleUtterance(t, { ...spoken, words: alignWords(t, spoken.span.start, spoken.span.end), aligned: true }, 'voice');
+    void this.handleUtterance(t, null, 'typed');
+  }
+
+  clearDraft(): void {
+    this.drafted = null;
+    if (get().draft) set({ draft: null });
+  }
+
+  startTalk(trigger: 'hold' | 'toggle'): void {
+    if (!this.voice.supported) {
+      this.notify('Voice needs a microphone and Chrome, Edge or Safari. Type your request instead.', 'warn');
+      set({ focusInput: get().focusInput + 1 });
+      return;
+    }
+    if (this.talking()) return;
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    this.applyVoiceSettings();
+    set({ voice: { ...get().voice, trigger, words: [], bindings: [], error: null }, island: { kind: 'listening' } });
+    void this.voice.start({ handsFree: trigger === 'toggle' });
+  }
+
+  stopTalk(): void {
+    this.voice.stop();
+  }
+
+  cancelTalk(note?: string): void {
+    this.voice.cancel();
+    set({ voice: { ...get().voice, state: 'idle', trigger: null, words: [], bindings: [] } });
+    if (note) this.notify(note, 'info');
+    else if (get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+  }
+
+  private talking(): boolean {
+    const state = get().voice.state;
+    return state === 'starting' || state === 'listening';
+  }
+
+  toggleTalk(): void {
+    if (this.talking()) this.stopTalk();
+    else this.startTalk('toggle');
+  }
+
+  /** Space or the mic button went down: hold to talk, tap for hands-free, press again to send. */
+  pressTalk(): void {
+    this.spaceDownAt = performance.now();
+    if (this.talking() && get().voice.trigger === 'toggle') {
+      this.spaceConsumed = true;
+      this.stopTalk();
+      return;
+    }
+    this.spaceConsumed = false;
+    this.startTalk('hold');
+  }
+
+  releaseTalk(): void {
+    if (!this.spaceDownAt) return;
+    const held = performance.now() - this.spaceDownAt;
+    this.spaceDownAt = 0;
+    if (this.spaceConsumed) {
+      this.spaceConsumed = false;
+      return;
+    }
+    const v = get().voice;
+    if (!this.talking() || v.trigger !== 'hold') return;
+    if (held < 280) {
+      // A quick tap switches to hands-free: it stops by itself when you pause.
+      set({ voice: { ...v, trigger: 'toggle' } });
+      this.voice.setHandsFree(true);
+      return;
+    }
+    this.stopTalk();
+  }
+
+  // ───────────────────────────── keyboard ─────────────────────────────
+
+  private onKeyDown(e: KeyboardEvent): void {
+    // A menu or dialog took the key (Escape closing it): it was for that layer alone.
+    if (e.defaultPrevented) return;
+    const s = get();
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      set({ overlay: s.overlay === 'palette' ? null : 'palette' });
+      return;
+    }
+    // The setup tour and the voice test in Settings let you try push-to-talk (unless Space is for a focused control).
+    if ((s.overlay || modalOpen()) && !(e.code === 'Space' && this.dryRun && !isControl(e.target))) return;
+    if (isTyping(e.target)) return;
+    if (e.code === 'Space' && !mod && !e.altKey) {
+      e.preventDefault();
+      if (!e.repeat) this.pressTalk();
+      return;
+    }
+    if (e.repeat) return;
+    if (e.key === 'Escape') return this.stop('key');
+    if (e.key === 'Enter' && !mod && previews(s).length) {
+      e.preventDefault();
+      return void this.keep('key');
+    }
+    if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+      if (previews(s).length) {
+        e.preventDefault();
+        void this.undo('key');
+      }
+      return;
+    }
+    if (mod || e.altKey) return;
+    switch (e.key) {
+      case '/':
+        e.preventDefault();
+        set({ focusInput: s.focusInput + 1 });
+        return;
+      case '?':
+        set({ overlay: 'help' });
+        return;
+      case 'e':
+      case 'E':
+        return this.setMode('edit');
+      case 'u':
+      case 'U':
+        return this.setMode('use');
+      case 'r':
+      case 'R':
+        return this.setMode('record');
+      case 'c':
+      case 'C':
+        return handLab() ? this.toggleCamera() : undefined;
+      case 'm':
+      case 'M':
+        if (sessions.recording) sessions.mark('', 'key');
+        return;
+      case '\\':
+        settings().setUi({ panelOpen: !settings().ui.panelOpen });
+        return;
+      case 'ArrowUp':
+      case 'ArrowDown':
+      case 'ArrowLeft':
+      case 'ArrowRight':
+        // Move the selection: out, in, previous, next (not while a report is open over the app).
+        if (s.selection && !useSessions.getState().open) {
+          e.preventDefault();
+          void this.step(({ ArrowUp: 'parent', ArrowDown: 'child', ArrowLeft: 'prev', ArrowRight: 'next' } as const)[e.key]);
+        }
+        return;
+      case 'o':
+      case 'O':
+        if (s.selection) void this.openInEditor(s.selection);
+        return;
+    }
+  }
+
+  private onKeyUp(e: KeyboardEvent): void {
+    if (e.code !== 'Space' || !this.spaceDownAt) return;
+    e.preventDefault();
+    this.releaseTalk();
+  }
+
+  // ───────────────────────────── commands ─────────────────────────────
+
+  /** Something was said or typed. */
+  async handleUtterance(text: string, spoken: Spoken | null, input: 'voice' | 'typed'): Promise<void> {
+    const t = text.trim();
+    if (!t) return;
+    // Clicked and asked at once: the request is about what was clicked.
+    if (this.picking) await this.picking;
+    if (this.dryRun) {
+      if (get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+      return this.dryRun(t);
+    }
+    const s = get();
+    set({ history: [t, ...s.history.filter((h) => h !== t)].slice(0, 40) });
+    // Said in Arabic: the studio's own command when it is one ("كبّر هذا" → "make this bigger"); otherwise Claude gets the Arabic as said.
+    const arabic = arabicCommand(t);
+    const said = arabic?.text ?? t;
+    if (sessions.recording && (arabic?.kind === 'session' || /^(?:mark|flag|bookmark)(?: (?:this|that|it|here|the moment|this moment))?[.!]?$/i.test(t))) {
+      if (get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+      sessions.mark(t, 'voice');
+      return this.notify('Marked this moment.', 'ok');
+    }
+    const cmd = parseClientCommand(said, { hasFailingTest: s.recorder.run?.status === 'failed' && !!s.recorder.spec });
+    sessions.command(t, input, cmd ? cmd.kind : arabic ? arabic.kind : 'request');
+    if (cmd) {
+      if (get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+      return this.runCommand(cmd, spoken);
+    }
+    if (s.mode === 'record') {
+      const exp = parseExpectation(said);
+      if (exp) return this.addExpectation(exp, spoken);
+    }
+    return this.sendIntent(said, spoken, input);
+  }
+
+  /** What “this” meant as you said it (not what is already selected), or what you pointed at meanwhile, or what is under the pointer. */
+  private pointedAt(spoken: Spoken | null): ElementInfo | null {
+    if (spoken?.words.length) {
+      const lagMs = spoken.aligned ? 0 : DEFAULT_FUSION.lagMs;
+      const bound = resolveDeictics(spoken.words, this.track, { ...DEFAULT_FUSION, lagMs, pins: [], selection: null }).find((r) => r.el);
+      if (bound?.el) return bound.el;
+      const dwell = this.pointedWhile(spoken);
+      if (dwell) return dwell;
+    }
+    return get().hover;
+  }
+
+  /** What you pointed at while talking (from the start of speech until shortly after it ended). */
+  private pointedWhile(spoken: Spoken): ElementInfo | null {
+    return this.track.dwellWinner(spoken.span.start - 300, spoken.span.end + 150);
+  }
+
+  private targetFrom(spoken: Spoken | null): ElementInfo | null {
+    const s = get();
+    if (spoken?.words.length) {
+      const bound = this.bind(spoken.words, spoken.aligned).find((b) => b.el);
+      if (bound?.el) return bound.el;
+      const dwell = this.pointedWhile(spoken);
+      if (dwell) return dwell;
+    }
+    if (s.selection) return s.selection;
+    if (s.hover) return s.hover;
+    // Typed in Record mode: what the mouse rested on just before.
+    if (s.mode === 'record') {
+      const recent = this.track.dwellWinner(performance.now() - 5000, performance.now());
+      if (recent) return recent;
+    }
+    return s.pins[0] ?? null;
+  }
+
+  private async runCommand(cmd: ClientCommand, spoken: Spoken | null): Promise<void> {
+    switch (cmd.kind) {
+      case 'keep':
+        return this.keep('voice');
+      case 'undo':
+        return this.undo('voice');
+      case 'cancel':
+        return this.stop('voice');
+      case 'parent':
+        return this.selectParent();
+      case 'nav':
+        return this.step(cmd.to);
+      case 'find': {
+        const s = get();
+        return this.selectCalled(cmd.what, cmd.where, s.selection ?? (spoken?.words.length ? this.pointedWhile(spoken) : null) ?? s.hover);
+      }
+      case 'clear':
+        this.clearTargets();
+        return this.notify('Nothing selected.', 'info');
+      case 'mode':
+        this.setMode(cmd.mode);
+        return this.notify(cmd.mode === 'record' ? 'Recording. Use the app, then point at what’s wrong and say what it should show.' : `${cmd.mode === 'edit' ? 'Edit' : 'Use'} mode.`, 'info');
+      case 'generate':
+        return this.generateTest();
+      case 'run':
+        return this.runTest();
+      case 'fix':
+        return this.fix(spoken ? 'voice' : 'typed');
+      case 'click': {
+        const el = this.targetFrom(spoken);
+        if (!el) return this.notify('Point at what to click while you say it.', 'info');
+        await this.bridge.click(el.rect.x + el.rect.w / 2, el.rect.y + el.rect.h / 2);
+        return;
+      }
+      case 'type': {
+        const r = await this.bridge.type(cmd.text, cmd.submit);
+        if (!r.ok) this.notify('Click a text field in the app first, then say “type …”.', 'info');
+        return;
+      }
+      case 'scroll': {
+        const g = this.geom();
+        if (!g) return;
+        const cx = g.w / g.scale / 2;
+        const cy = g.h / g.scale / 2;
+        const page = (g.h / g.scale) * 0.7;
+        const dy = cmd.dir === 'down' ? page : cmd.dir === 'up' ? -page : cmd.dir === 'top' ? -1e6 : 1e6;
+        this.bridge.scroll(cx, cy, 0, dy);
+        return;
+      }
+      case 'reload':
+        return this.reloadApp();
+      case 'help':
+        set({ overlay: 'help' });
+        return;
+      case 'open':
+        return this.openInEditor(this.targetFrom(spoken));
+      case 'select': {
+        const el = this.pointedAt(spoken);
+        if (el) this.select(el);
+        else this.notify('Point at what to select while you say it.', 'info');
+        return;
+      }
+      case 'add': {
+        const el = this.pointedAt(spoken);
+        if (el) this.toggleSelected(el);
+        else this.notify('Point at what to add while you say it.', 'info');
+        return;
+      }
+    }
+  }
+
+  /** Elements the request refers to, in the order the user mentioned them. */
+  private refsFor(spoken: Spoken | null): { refs: RefInfo[]; els: ElementInfo[] } {
+    const s = get();
+    let picked: { el: ElementInfo; role: string }[] = [];
+    if (spoken?.words.length) {
+      picked = this.bind(spoken.words, spoken.aligned)
+        .filter((b) => b.el)
+        .map((b) => ({ el: b.el!, role: b.via === 'pin' ? `pin:${b.word}` : b.word }));
+    }
+    if (!picked.length) {
+      // Spoken: what you pointed at while talking. Typed: what is under the pointer right now (e.g. after pressing /).
+      const pointed = spoken?.words.length ? this.pointedWhile(spoken) : s.hover;
+      const implicit = implicitTargets(s.pins, s.selection, pointed);
+      picked = implicit.map((el, i) => ({ el, role: s.pins.length ? `pin ${i + 1}` : s.selection ? 'selection' : 'pointed' }));
+    }
+    const seen = new Set<number>();
+    const unique = picked.filter((p) => (seen.has(p.el.id) && p.role === 'it' ? false : (seen.add(p.el.id), true)));
+    return {
+      refs: unique.map(({ el, role }) => ({ role, src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames })),
+      els: unique.map((p) => p.el),
+    };
+  }
+
+  private pointerKind(): 'hand' | 'mouse' | 'none' {
+    if (get().camera.status === 'on' && performance.now() - this.engine.state.lastSeen < 3000) return 'hand';
+    return performance.now() - this.lastMouseAt < 5000 ? 'mouse' : 'none';
+  }
+
+  // Requests go one at a time: one asked while another runs waits its turn, shown in the island (core/requests.ts).
+  private readonly requests = new RequestQueue({
+    started: (request, fresh) => set({ request, ...(fresh ? { island: { kind: 'thinking' as const } } : {}) }),
+    stopping: (id) => {
+      const r = get().request;
+      if (r?.id === id) set({ request: { ...r, step: 'Stopping', detail: undefined } });
+    },
+    ended: (id) => {
+      if (get().request?.id === id) set({ request: null });
+    },
+    waiting: (waiting) => set({ waiting }),
+    cancel: (id) => api.post('/cancel', { requestId: id }).catch(() => undefined),
+    fail: (err) => this.fail(err),
+  });
+  /** Bumped when another app opens: what a request for the last one returns isn't shown here. */
+  private appEpoch = 0;
+
+  private ask(job: RequestJob): Promise<void> {
+    const asked = this.requests.ask(job);
+    if (asked) return asked;
+    this.notify(`${MAX_WAITING} requests are already waiting. Let them finish, or press Esc to stop them.`, 'info');
+    return Promise.resolve();
+  }
+
+  sendIntent(text: string, spoken: Spoken | null, input: 'voice' | 'typed'): Promise<void> {
+    const { refs, els } = this.refsFor(spoken);
+    return this.intent({ text, refs, els, input, pointer: this.pointerKind(), pageUrl: get().app.url });
+  }
+
+  /** What it is about is taken when it is asked, not when its turn comes. */
+  private intent(req: IntentAsk): Promise<void> {
+    const epoch = this.appEpoch;
+    return this.ask({
+      text: req.text,
+      kind: 'intent',
+      step: 'Working',
+      run: async (id, stopped) => {
+        try {
+          const res = await api.post<IntentResult>('/intent', { text: req.text, refs: req.refs, requestId: id, input: req.input, pointer: req.pointer, pageUrl: req.pageUrl, ...(req.ai ? { ai: true } : {}) });
+          this.settle(id, res, req.text, req.els, { stopped: stopped(), epoch, again: () => void this.intent({ ...req, ai: true }) });
+        } finally {
+          void this.refreshSummary();
+        }
+      },
+    });
+  }
+
+  /**
+   * A request's result. A change is in the files now, so it is always shown, even when the request was stopped
+   * meanwhile; an answer or a message only while it is still wanted. Returns whether it was a change.
+   */
+  private settle(id: string, res: IntentResult, said: string, els: ElementInfo[], how: { stopped: boolean; epoch: number; again?: () => void }): boolean {
+    if (get().request?.id === id) set({ request: null });
+    // Another app is open now: its change waits in that app's list, shown when it is opened again.
+    if (how.epoch !== this.appEpoch) return false;
+    if (res.kind === 'change') {
+      this.applyResult(res, said, els);
+      if (how.stopped) this.notify(`It was done before it could stop: “${res.change.title}” is a preview now. Keep or undo it.`, 'info');
+      return true;
+    }
+    if (!how.stopped) this.applyResult(res, said, els, how.again);
+    return false;
+  }
+
+  private applyResult(res: IntentResult, said: string, els: ElementInfo[], again?: () => void): void {
+    switch (res.kind) {
+      case 'change': {
+        this.upsertChange(res.change);
+        const pts = els.map((el) => ({ changeId: res.change.id, el }));
+        set({ previewTargets: [...get().previewTargets, ...pts].slice(-8), island: { kind: 'idle' } });
+        this.refreshAfterEdit();
+        return;
+      }
+      case 'answer':
+        set({ island: { kind: 'answer', text: res.text, said, model: res.model, latencyMs: res.latencyMs } });
+        return;
+      case 'message':
+        if (res.tone === 'error') play('error');
+        return this.notify(res.text, res.tone === 'error' ? 'error' : res.tone === 'warn' ? 'warn' : 'info', this.nextActions(res.next, again));
+      case 'needs-key':
+        set({ island: { kind: 'needs-key', text: res.text, actions: this.nextActions(res.next, again) } });
+        return;
+    }
+  }
+
+  /** The way forward a refusal offers, as the island's buttons. */
+  private nextActions(next: NextStep[] | undefined, again?: () => void): IslandAction[] | undefined {
+    const actions = (next ?? []).flatMap((n): IslandAction[] => {
+      switch (n.kind) {
+        case 'ask-ai': {
+          const who = aiName(get().status?.ai.who);
+          return again ? [{ label: who === 'AI' ? 'Ask the AI anyway' : `Ask ${who} anyway`, primary: true, run: () => (this.dismissIsland(), again()) }] : [];
+        }
+        case 'connect-ai':
+          return [{ label: 'Connect an AI', primary: true, run: () => set({ overlay: 'settings', settingsTab: 'ai', island: { kind: 'idle' } }) }];
+        case 'link-folder':
+          return [{ label: 'Link its folder…', primary: true, run: () => (this.dismissIsland(), apps.show('folder')) }];
+        case 'open': {
+          const at = /^(.+?):(\d+)(?::\d+)?$/.exec(n.src);
+          if (!at || !get().status?.target.root) return [];
+          return [{ label: at[2] === '1' ? `Open ${fileName(at[1])}` : `Open ${fileName(at[1])}:${at[2]}`, run: () => this.openRelative(at[1], Number(at[2])) }];
+        }
+      }
+    });
+    return actions.length ? actions : undefined;
+  }
+
+  private upsertChange(c: Change): void {
+    const list = get().changes.filter((x) => x.id !== c.id);
+    set({ changes: [c, ...list] });
+  }
+
+  /** Keep what waits: every preview, or (from the Changes tab) one change with the older ones it builds on. */
+  async keep(via: string, id?: string): Promise<void> {
+    if (!id && !previews(get()).length) return this.notify('Nothing is waiting to be kept.', 'info');
+    try {
+      const r = await api.post<{ kept: Change[]; committed: boolean; commitError?: string }>('/changes/keep', { id, via, commit: settings().ui.commitOnKeep });
+      play('keep');
+      await this.decided(r.kept);
+      const what = r.kept.length === 1 ? r.kept[0].title : `${r.kept.length} changes`;
+      if (r.commitError) this.notify(`Kept: ${what}, but not committed. Git said: ${r.commitError}`, 'warn');
+      else this.notify(`Kept: ${what}${r.committed ? ' (committed)' : ''}`, 'ok');
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  /** Undo the newest preview, or (from the Changes tab) one change with the newer ones built on it. */
+  async undo(via: string, force = false, id?: string): Promise<void> {
+    if (!id && !previews(get()).length) return this.notify('Nothing to undo.', 'info');
+    try {
+      const r = await api.post<{ undone: Change[] }>('/changes/undo', { id, via, force });
+      play('undo');
+      await this.decided(r.undone);
+      this.notify(r.undone.length === 1 ? `Undone: ${r.undone[0].title}` : `Undid ${r.undone.length} changes.`, 'info');
+      this.refreshAfterEdit();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'conflict') {
+        play('error');
+        set({
+          island: {
+            kind: 'message',
+            tone: 'warn',
+            text: err.message,
+            sticky: true,
+            actions: [
+              { label: 'Undo anyway', run: () => void this.undo(via, true, id) },
+              { label: 'Leave it', run: () => set({ island: { kind: 'idle' } }) },
+            ],
+          },
+        });
+        return;
+      }
+      this.fail(err);
+    }
+  }
+
+  /** What was kept or undone is no longer boxed as a preview, and the change list and the stats catch up. */
+  private async decided(changes: Change[]): Promise<void> {
+    const ids = new Set(changes.map((c) => c.id));
+    set({ previewTargets: get().previewTargets.filter((p) => !ids.has(p.changeId)), recorder: { ...get().recorder, verifying: false } });
+    await this.refreshChanges();
+    void this.refreshSummary();
+  }
+
+  undoChange(id: string): Promise<void> {
+    return this.undo('panel', false, id);
+  }
+
+  keepChange(id: string): Promise<void> {
+    return this.keep('panel', id);
+  }
+
+  /** Open palm, Escape, "cancel": stop whatever is happening, one layer at a time. */
+  stop(_via: string): void {
+    const s = get();
+    if (this.replayer.running) return this.replayer.stop();
+    if (this.autopilot.running) return this.autopilot.stop();
+    if (s.voice.state !== 'idle') return this.cancelTalk();
+    if (s.request) return void this.cancelRequest();
+    if (s.island.kind !== 'idle') return set({ island: { kind: 'idle' } });
+    if (s.selection || s.pins.length) return this.clearTargets();
+  }
+
+  /** Stop the running request; the ones waiting after it aren't sent. */
+  async cancelRequest(): Promise<void> {
+    const dropped = this.requests.stop();
+    if (dropped === null) return;
+    this.notify(dropped ? `Stopped. ${dropped === 1 ? 'The request waiting after it wasn’t sent.' : `The ${dropped} requests waiting after it weren’t sent.`}` : 'Stopped.', 'info');
+  }
+
+  dismissIsland(): void {
+    set({ island: { kind: 'idle' } });
+  }
+
+  notify(text: string, tone: Tone = 'info', actions?: IslandAction[]): void {
+    if (this.noticeTimer) clearTimeout(this.noticeTimer);
+    const island = { kind: 'message' as const, text, tone, actions };
+    set({ island });
+    if (!actions?.length) {
+      this.noticeTimer = setTimeout(() => {
+        if (get().island === island) set({ island: { kind: 'idle' } });
+      }, tone === 'error' ? 7000 : tone === 'warn' ? 6000 : 3800);
+    }
+  }
+
+  private fail(err: unknown): void {
+    play('error');
+    this.notify(err instanceof Error ? err.message : String(err), 'error');
+  }
+
+  // ───────────────────────────── narrate a bug → test ─────────────────────────────
+
+  private async addExpectation(exp: SpokenExpectation, spoken: Spoken | null): Promise<void> {
+    const el = this.targetFrom(spoken);
+    if (!el) return this.notify('Point at the element that shows the wrong value while you say it.', 'warn');
+    const loc = await this.bridge.locator(el.id);
+    if (!loc) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
+    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected: exp.expected, actual: loc.locator.text };
+    const r = get().recorder;
+    set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
+    play('keep');
+    this.notify(`Check added: ${e.description} should show “${e.expected}”${e.actual ? `, it shows “${focusOn(e.actual, e.expected)?.slice(0, 40)}”` : ''}.`, 'ok', [
+      { label: 'Generate test', primary: true, run: () => void this.generateTest() },
+      { label: 'Add another', run: () => this.dismissIsland() },
+    ]);
+  }
+
+  /** From the Test tab: add a check for the selected element. */
+  async addExpectationFor(el: ElementInfo, expected: string): Promise<void> {
+    const loc = await this.bridge.locator(el.id);
+    if (!loc) return this.notify('Couldn’t build a locator for that element.', 'warn');
+    const r = get().recorder;
+    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected, actual: loc.locator.text };
+    set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
+  }
+
+  // ───────────────────────────── from a session report ─────────────────────────────
+
+  /** The elements a finding is about: what was pointed at while it was said, or where it happened. */
+  private findingTargets(items: TimelineItem[], a: SessionAnalysis): SessionTarget[] {
+    const out: SessionTarget[] = [];
+    for (const it of items) {
+      const seg = it.kind === 'speech' ? a.transcript.find((s) => s.start === it.t) : null;
+      const issue = it.issue ? a.issues.find((g) => g.id === it.issue) : null;
+      const el = seg?.el ?? issue?.el;
+      if (el && !out.some((o) => o.src === el.src && o.label === el.label)) out.push(el);
+    }
+    return out.slice(0, 4);
+  }
+
+  /** "Fix with Claude" on a finding: ask for the change with the session's evidence, then show it as a preview. */
+  async fixFromReport(f: ReportFinding, items: TimelineItem[], a: SessionAnalysis): Promise<void> {
+    const targets = this.findingTargets(items, a);
+    const refs: RefInfo[] = targets.map((el) => ({ role: 'finding', src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint }));
+    const text = [`Fix this problem found in a test session: ${f.title}.`, ...findingBrief(f, items)].join('\n');
+    settings().setUi({ panelOpen: true, panelTab: 'changes' });
+    const epoch = this.appEpoch;
+    await this.ask({
+      text: `Fix: ${f.title}`,
+      kind: 'fix',
+      step: 'Working',
+      run: async (id, stopped) => {
+        const res = await api.post<IntentResult>('/intent', { text: text.slice(0, 1990), refs, requestId: id, input: 'typed', pointer: 'none', pageUrl: get().app.url });
+        this.settle(id, res, f.title, [], { stopped: stopped(), epoch });
+      },
+    });
+  }
+
+  /**
+   * “Fix all” in a report: every finding the tester didn't set aside, in one
+   * request, each with its evidence, so related problems get fixed together.
+   */
+  async fixFindings(findings: { f: ReportFinding; items: TimelineItem[] }[], a: SessionAnalysis): Promise<void> {
+    if (!findings.length) return;
+    const refs: RefInfo[] = [];
+    const brief = findings
+      .map(({ f, items }, i) => {
+        for (const el of this.findingTargets(items, a)) if (refs.length < 8 && !refs.some((r) => (r.src ?? r.label) === (el.src ?? el.label))) refs.push({ role: 'finding', src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint });
+        return [`${i + 1}. [${f.severity}] ${f.title}`, ...findingBrief(f, items).map((l) => `   ${l}`)].join('\n');
+      })
+      .join('\n\n');
+    const n = findings.length;
+    await this.reportTask(`Fix ${n === 1 ? 'this problem' : `these ${n} problems`} found in a test session.`, brief, refs, n === 1 ? `Fix: ${findings[0].f.title}` : `Fix ${n} findings`);
+  }
+
+  /** The suggestions the tester picked from a report, implemented in one request. */
+  async implementSuggestions(picked: ReportSuggestion[], report: SessionReport): Promise<void> {
+    if (!picked.length) return;
+    const brief = [
+      `The session: ${report.title}. ${report.summary}`,
+      '',
+      ...picked.map((x, i) => `${i + 1}. (${x.kind}, ${x.effort} effort) ${x.title}: ${x.why}`),
+    ].join('\n');
+    const n = picked.length;
+    await this.reportTask(`Implement ${n === 1 ? 'this suggestion' : `these ${n} suggestions`} from a test session report.`, brief, [], n === 1 ? picked[0].title : `${n} suggestions`);
+  }
+
+  /** Select an element an expert's finding is about, scrolled into view. */
+  async reveal(el: ElementInfo): Promise<ElementInfo | null> {
+    if (get().mode !== 'edit') this.setMode('edit');
+    const fresh = await this.bridge.reveal(el.id, el.src, el.index);
+    if (fresh) this.select(fresh);
+    return fresh;
+  }
+
+  /** Fix an expert's findings together: one request with each finding's evidence and the elements it is about. */
+  async fixReview(items: { rule: string; title: string; what: string; fix: string; els?: ElementInfo[]; rewrite?: { before: string; after: string } }[], expert: string): Promise<void> {
+    if (!items.length) return;
+    const refs: RefInfo[] = [];
+    for (const it of items) for (const el of it.els ?? []) if (refs.length < 8 && !refs.some((r) => (r.src ?? r.label) === (el.src ?? el.label))) refs.push({ role: 'finding', src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames });
+    const brief = items
+      .map((it, i) => `${i + 1}. [${it.rule}] ${it.title}\n   Found: ${it.what}\n   Fix: ${it.fix}${it.rewrite ? `\n   Change the text “${it.rewrite.before}” to “${it.rewrite.after}”.` : ''}`)
+      .join('\n');
+    const label = items.length === 1 ? `Fix: ${items[0].title}` : `Fix ${items.length} ${expert} findings`;
+    // At the root: one design token or shared style that fails fixes every element using it, not just those named.
+    await this.reportTask(
+      `Fix these ${expert} findings from the studio's page review. Fix each at its root: when the elements share a design token, style or component (one colour, one size), change that once so every use is fixed; the elements named are examples. Otherwise make the smallest change that satisfies the rule.`,
+      brief,
+      refs,
+      label,
+    );
+  }
+
+  private async reportTask(text: string, brief: string, refs: RefInfo[], label: string): Promise<void> {
+    settings().setUi({ panelOpen: true, panelTab: 'changes' });
+    const epoch = this.appEpoch;
+    await this.ask({
+      text: label,
+      kind: 'fix',
+      step: 'Working',
+      run: async (id, stopped) => {
+        const res = await api.post<IntentResult>('/intent', { text, brief: brief.slice(0, 16_000), refs, requestId: id, input: 'typed', pointer: 'none', pageUrl: get().app.url });
+        this.settle(id, res, label, [], { stopped: stopped(), epoch });
+      },
+    });
+  }
+
+  /** Autopilot: the AI uses the app and says what is wrong, in a test session of its own that ends in a report. */
+  async startAutopilot(opts: AutopilotOptions): Promise<void> {
+    if (this.autopilot.running || this.replayer.running) return;
+    if (!get().app.connected) return this.notify('Open your app first: Autopilot uses it here, in the studio.', 'info');
+    if (!get().status?.ai.ready) {
+      return this.notify('Autopilot needs an AI to decide what to try.', 'info', [{ label: 'Connect an AI', primary: true, run: () => set({ overlay: 'settings', settingsTab: 'ai', island: { kind: 'idle' } }) }]);
+    }
+    sessions.closeReport();
+    if (sessions.recording) await sessions.stop();
+    await this.autopilot.run(opts);
+  }
+
+  /** Replay & verify: play the session's steps again in the app (back on the stage), then compare. */
+  async verifySession(d: SessionDetail): Promise<void> {
+    if (this.replayer.running) return;
+    if (!d.analysis?.steps.some((s) => s.kind !== 'navigate' && s.locator)) return this.notify('This session has no steps to replay.', 'info');
+    sessions.closeReport();
+    if (sessions.recording) await sessions.stop();
+    await this.replayer.run(d);
+  }
+
+  /** "Create test" on a finding: the session's steps up to that moment, plus the expected value when one was said. */
+  async testFromReport(f: ReportFinding, items: TimelineItem[], a: SessionAnalysis, appUrl: string): Promise<void> {
+    const steps = stepsOf(a, items.length ? items[items.length - 1].t + 1000 : Infinity);
+    const startUrl = a.steps.find((s) => s.kind === 'navigate')?.url ?? appUrl;
+    const expectations: Expectation[] = [];
+    // The value as the replay checks it: from the words said about an element, on that element.
+    const check = findingCheck(f, a);
+    if (check) expectations.push({ locator: check.locator, description: check.el.description ?? check.el.label, expected: check.expected, actual: check.el.text });
+    set({ recorder: { ...initialRecorder, startUrl, steps, expectations } });
+    settings().setUi({ panelOpen: true, panelTab: 'test' });
+    if (expectations.length) await this.generateTest();
+    else this.notify(`Loaded ${steps.length} steps from the session. Now point at the value that is wrong and say what it should show, or add a check in the Test tab.`, 'info');
+  }
+
+  /** "Add a check" on a report: the session's steps, recording, ready for “this should show …” on a value that must be right. */
+  checkSession(a: SessionAnalysis, appUrl: string): void {
+    const steps = stepsOf(a);
+    set({ recorder: { ...initialRecorder, startUrl: a.steps.find((s) => s.kind === 'navigate')?.url ?? appUrl, steps } });
+    this.setMode('record');
+    settings().setUi({ panelOpen: true, panelTab: 'test' });
+    this.notify(`Loaded ${steps.length} steps from the session. Point at a value that must be right, like a total, and say what it should show.`, 'info', [{ label: 'Got it', run: () => this.dismissIsland() }]);
+  }
+
+  async generateTest(): Promise<void> {
+    const r = get().recorder;
+    if (!r.expectations.length) {
+      settings().setUi({ panelOpen: true, panelTab: 'test' });
+      return this.notify('First say what you expected: point at the wrong value and say “this should show …”.', 'info');
+    }
+    try {
+      const spec = await api.post<{ path: string; code: string }>('/tests/generate', {
+        startUrl: r.startUrl ?? get().app.url,
+        steps: r.steps,
+        expectations: r.expectations,
+      });
+      set({ recorder: { ...get().recorder, spec, run: null } });
+      settings().setUi({ panelOpen: true, panelTab: 'test' });
+      this.notify(`Test saved to ${spec.path}.`, 'ok', [{ label: 'Run it', primary: true, run: () => void this.runTest() }]);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  async runTest(): Promise<void> {
+    let spec = get().recorder.spec;
+    if (!spec) {
+      if (!get().recorder.expectations.length) return this.notify('Record a bug first: switch to Record mode, use the app, then say what you expected.', 'info');
+      await this.generateTest();
+      spec = get().recorder.spec;
+      if (!spec) return;
+    }
+    if (get().recorder.running || this.requests.has('test')) return;
+    const path = spec.path;
+    await this.ask({ text: `Run ${path}`, kind: 'test', step: 'Running the test', run: (id) => this.testRun(id, path) });
+  }
+
+  private async testRun(id: string, path: string): Promise<void> {
+    set({ recorder: { ...get().recorder, running: true } });
+    let res: TestRunResult;
+    try {
+      res = await api.post<TestRunResult>('/tests/run', { path });
+    } catch (err) {
+      res = { status: 'error', durationMs: 0, message: err instanceof Error ? err.message : String(err) };
+    }
+    const verifying = get().recorder.verifying;
+    set({ recorder: { ...get().recorder, running: false, run: { ...res, at: Date.now() } } });
+    if (get().request?.id === id) set({ request: null });
+    void this.refreshSummary();
+    switch (res.status) {
+      case 'passed':
+        play('keep');
+        if (verifying && previews(get()).length) {
+          set({
+            island: {
+              kind: 'message',
+              tone: 'ok',
+              sticky: true,
+              text: 'The test passes with this fix. Keep it?',
+              actions: [
+                { label: 'Keep fix', primary: true, run: () => void this.keep('test') },
+                { label: 'Undo', run: () => void this.undo('test') },
+              ],
+            },
+          });
+        } else this.notify(`Test passed in ${(res.durationMs / 1000).toFixed(1)} s.`, 'ok');
+        return;
+      case 'failed':
+        play('error');
+        set({ recorder: { ...get().recorder, verifying: false } });
+        set({
+          island: {
+            kind: 'message',
+            tone: 'error',
+            sticky: true,
+            text: res.expected || res.received ? `Test failed: expected “${res.expected ?? '?'}”, got “${res.received ?? '?'}”.` : `Test failed. ${res.message?.split('\n')[0] ?? ''}`,
+            actions: [
+              { label: `Fix with ${aiName(get().status?.ai.who)}`, primary: true, run: () => void this.fix() },
+              { label: 'Details', run: () => (settings().setUi({ panelOpen: true, panelTab: 'test' }), this.dismissIsland()) },
+            ],
+          },
+        });
+        return;
+      case 'setup-needed':
+        set({
+          island: {
+            kind: 'message',
+            tone: 'warn',
+            sticky: true,
+            text: res.message ?? 'Playwright needs a one-time setup.',
+            actions: [{ label: 'Install test browser', primary: true, run: () => void this.installBrowser() }],
+          },
+        });
+        return;
+      default:
+        play('error');
+        this.notify(res.message ?? 'The test couldn’t run.', 'error');
+    }
+  }
+
+  /** Ask the AI to fix what the failing test shows: by voice, typed, or (no `input`) with a button. */
+  async fix(input?: 'voice' | 'typed'): Promise<void> {
+    const r = get().recorder;
+    if (!r.spec || r.run?.status !== 'failed') return this.notify('Run a failing test first, then ask for a fix.', 'info');
+    const body = { path: r.spec.path, failure: r.run.message ?? '', input };
+    const epoch = this.appEpoch;
+    await this.ask({
+      text: 'Fix the bug this test shows',
+      kind: 'fix',
+      step: 'Reading the failing test',
+      run: async (id, stopped) => {
+        const res = await api.post<IntentResult>('/fix', { ...body, requestId: id });
+        if (!this.settle(id, res, 'fix it', [], { stopped: stopped(), epoch }) || stopped()) return;
+        set({ recorder: { ...get().recorder, verifying: true } });
+        // Check the fix against the test straight away.
+        setTimeout(() => void this.runTest(), 500);
+      },
+    });
+  }
+
+  async installBrowser(): Promise<void> {
+    set({ recorder: { ...get().recorder, installing: true, installLog: [] }, island: { kind: 'idle' } });
+    settings().setUi({ panelOpen: true, panelTab: 'test' });
+    try {
+      const { ok } = await api.post<{ ok: boolean }>('/tests/install');
+      this.notify(ok ? 'Test browser installed. Run the test again.' : 'The install failed. See the log in the Test tab.', ok ? 'ok' : 'error', ok ? [{ label: 'Run test', primary: true, run: () => void this.runTest() }] : undefined);
+    } catch (err) {
+      this.fail(err);
+    } finally {
+      set({ recorder: { ...get().recorder, installing: false } });
+    }
+  }
+
+  // ───────────────────────────── server state ─────────────────────────────
+
+  /** Another app (or address) is open now: nothing shown for the last one still applies. */
+  private appSwitched(): void {
+    // Requests made for the last app: the running one stops, the waiting ones aren't sent.
+    this.appEpoch++;
+    this.requests.stop();
+    set({ selection: null, pins: [], hover: null, previewTargets: [], inspect: null, recorder: initialRecorder, changes: [], replay: null });
+    void this.refreshStatus();
+    void this.refreshChanges().then(() => this.announceWaiting());
+    void sessions.refreshList();
+  }
+
+  /** Previews left from before (the studio was restarted, or this app was open earlier) are still on disk: say so. */
+  private announceWaiting(): void {
+    const n = get().changes.filter((c) => c.status === 'preview').length;
+    if (n) this.notify(n === 1 ? 'A change from before is still a preview in your code. Keep it or undo it.' : `${n} changes from before are still previews in your code. Keep or undo them.`, 'info');
+  }
+
+  async refreshStatus(): Promise<StatusResponse | null> {
+    try {
+      const status = await api.get<StatusResponse>('/status');
+      set({ status, statusError: null });
+      return status;
+    } catch (err) {
+      set({ statusError: err instanceof Error ? err.message : String(err) });
+      setTimeout(() => void this.refreshStatus(), 2000);
+      return null;
+    }
+  }
+
+  async refreshChanges(): Promise<void> {
+    try {
+      const { changes } = await api.get<{ changes: Change[] }>('/changes');
+      set({ changes });
+    } catch {
+      /* keep what we have */
+    }
+  }
+
+  async refreshSummary(): Promise<void> {
+    try {
+      set({ summary: await api.get<MetricsSummary>('/metrics/summary') });
+    } catch {
+      /* optional */
+    }
+  }
+
+  /** What the person points at, for AI apps connected over MCP (they ask the studio, not the page). */
+  private pushContext = (() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let last = '';
+    return () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const s = get();
+        const ref = (el: ElementInfo, role: string): RefInfo => ({ role, src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames });
+        const body = { pageUrl: s.app.url || null, selection: s.selection ? [ref(s.selection, 'selection')] : [], pins: s.pins.map((p) => ref(p, 'pin')) };
+        const key = JSON.stringify(body);
+        if (key === last) return;
+        last = key;
+        void api.put('/context', body).catch(() => undefined);
+      }, 400);
+    };
+  })();
+}
+
+/** A session's steps a test can play, up to a moment. */
+function stepsOf(a: SessionAnalysis, until = Infinity): RecordedStep[] {
+  return a.steps
+    .filter((s) => s.t <= until && s.kind !== 'navigate' && s.locator)
+    .map((s) => ({ kind: s.kind === 'fill' ? 'fill' : s.kind === 'press' ? 'press' : 'click', locator: s.locator, value: s.value, checked: s.checked, key: s.key, description: s.description }));
+}
+
+function withAlpha(color: string, alpha: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/** Click a studio control on the hand's behalf, the way a real pointer would (Radix listens to pointerdown). */
+function activate(el: HTMLElement, x: number, y: number): void {
+  const base = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
+  const pointer = { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    el.focus();
+    return;
+  }
+  el.dispatchEvent(new PointerEvent('pointerdown', { ...pointer, buttons: 1 }));
+  el.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons: 1 }));
+  el.dispatchEvent(new PointerEvent('pointerup', { ...pointer, buttons: 0 }));
+  el.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0 }));
+  el.dispatchEvent(new MouseEvent('click', { ...base, buttons: 0 }));
+}
+
+export const controller = new Controller();
+if (import.meta.env.DEV) Object.assign(window, { __saywright: controller, __saywrightStore: { get, set }, __saywrightSettings: useSettings });
+import.meta.hot?.dispose(() => controller.dispose());

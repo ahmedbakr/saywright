@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.vite/
+*.log
+.DS_Store
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# Local secrets and machine state
+.env.local
+.env.*.local
+.saywright
+
+# Downloaded at install time
+apps/studio/public/models
+
+# End-to-end tests run against a throwaway copy of the sample app
+apps/studio/tests/.e2e-shop/
+apps/studio/tests/.e2e-home/

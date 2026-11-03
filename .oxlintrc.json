@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // `npm run lint`. Errors fail it (and CI); warnings are shown but don't.
+  "plugins": ["typescript", "react", "react-hooks", "unicorn", "import"],
+  "categories": { "correctness": "error" },
+  "rules": {
+    "react-hooks/rules-of-hooks": "error",
+    // Each one needs a look at when its effect should run: adding a dependency blindly can make it loop.
+    "react-hooks/exhaustive-deps": "warn",
+    // `== null` covers undefined too; anything else compares strictly.
+    "eqeqeq": ["error", "smart"],
+    // These assume the React Compiler, which the studio doesn't use: reading a ref while rendering a measured
+    // list, resetting state when a prop changes, and Date.now() for "a minute ago" are intended here.
+    "react/refs": "off",
+    "react/set-state-in-effect": "off",
+    "react/purity": "off",
+    // The recorder patches console, fetch, XHR and history: its wrappers need the caller's `this` and its own.
+    "typescript/no-this-alias": "off",
+    // Style only: a regex reads as well, and sits beside others that need one.
+    "unicorn/prefer-string-starts-ends-with": "off"
+  },
+  "overrides": [
+    {
+      // Playwright fixtures call `use`, which is not React's hook.
+      "files": ["apps/studio/tests/e2e/**"],
+      "rules": { "react-hooks/rules-of-hooks": "off" }
+    }
+  ],
+  "ignorePatterns": ["**/dist/**", "apps/studio/tests/.e2e-shop/**", "apps/studio/tests/.e2e-home/**", "apps/studio/test-results/**", ".saywright/**"]
+}

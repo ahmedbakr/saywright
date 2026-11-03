@@ -1,0 +1,68 @@
+{
+  "name": "Tidewell shop",
+  "components": {
+    "Button": {
+      "file": "src/ds/Button.tsx",
+      "text": "children",
+      "props": {
+        "variant": { "values": ["primary", "secondary", "ghost", "link", "danger"], "default": "primary" },
+        "size": { "values": ["sm", "md", "lg"], "default": "md", "ordered": true }
+      }
+    },
+    "SummaryRow": {
+      "file": "src/ds/SummaryRow.tsx",
+      "text": "label",
+      "props": {
+        "size": { "values": ["sm", "md", "lg"], "default": "md", "ordered": true },
+        "emphasis": { "values": ["regular", "strong"], "default": "regular" },
+        "tone": { "values": ["default", "success", "danger"], "default": "default" }
+      }
+    },
+    "Card": {
+      "file": "src/ds/Card.tsx",
+      "text": "title",
+      "props": {
+        "padding": { "values": ["sm", "md", "lg"], "default": "md", "ordered": true },
+        "tone": { "values": ["default", "muted", "brand"], "default": "default" }
+      }
+    },
+    "Badge": {
+      "file": "src/ds/Badge.tsx",
+      "text": "children",
+      "props": {
+        "tone": { "values": ["neutral", "success", "danger", "brand"], "default": "neutral" }
+      }
+    },
+    "Heading": {
+      "file": "src/ds/Heading.tsx",
+      "text": "children",
+      "props": {
+        "size": { "values": ["sm", "md", "lg", "xl"], "default": "lg", "ordered": true }
+      }
+    },
+    "ProductGrid": {
+      "file": "src/ds/ProductGrid.tsx",
+      "props": {
+        "columns": { "values": ["2", "3", "4"], "default": "3", "ordered": true },
+        "gap": { "values": ["sm", "md", "lg", "xl"], "default": "md", "ordered": true }
+      }
+    }
+  },
+  "synonyms": {
+    "red": ["danger"],
+    "green": ["success", "primary", "brand"],
+    "brand": ["brand", "primary"],
+    "outline": ["secondary"],
+    "outlined": ["secondary"],
+    "subtle": ["ghost", "muted"],
+    "plain": ["ghost", "link", "regular", "default"],
+    "bold": ["strong"],
+    "emphasized": ["strong"],
+    "normal": ["regular", "default", "neutral"],
+    "gray": ["neutral", "muted"],
+    "grey": ["neutral", "muted"],
+    "tight": ["sm"],
+    "roomy": ["lg"]
+  },
+  "guidelines": "Change UI through design-system components and their props. Never hardcode colors or pixel values; use the CSS variables in src/styles.css. Money math lives in src/lib/pricing.ts."
+}

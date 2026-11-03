@@ -1,0 +1,43 @@
+{
+  "name": "saywright-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Saywright: point at your running app, say what to change, and keep or undo what the AI does. Hand, voice or mouse.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.mjs",
+    "dev": "node scripts/dev.mjs",
+    "connect": "node scripts/saywright.mjs connect",
+    "setup": "node scripts/saywright.mjs setup",
+    "doctor": "node scripts/saywright.mjs doctor",
+    "build": "npm run build -w saywright",
+    "start": "node apps/studio/bin/saywright.mjs",
+    "reset:sample": "git checkout -- apps/shop && git clean -fdq -- apps/shop/tests/saywright",
+    "build:plugin": "npm run build -w @saywright/vite",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "oxlint",
+    "test": "vitest run --project unit",
+    "test:speech": "vitest run --project speech",
+    "test:watch": "vitest --project unit",
+    "test:e2e": "playwright test -c apps/studio/playwright.config.ts",
+    "eval:speech": "node scripts/speech-eval.mjs",
+    "media:demo": "node scripts/demo/record.mjs",
+    "media:screenshots": "node scripts/demo/screenshots.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run test:speech && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.5",
+    "oxlint": "^1.89.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
+  }
+}

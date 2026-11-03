@@ -1,0 +1,251 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Two accents carry meaning everywhere: amber is you (cursor, pins, your words),
+ * cyan is the AI (previews, diffs, answers). Everything else stays neutral.
+ * Every colour used for text (fg-2, fg-3, the -fg accents, ok, bad, warn) reads
+ * at 4.5:1 or more on each surface and soft tint it sits on, in both themes.
+ */
+:root {
+  --bg: #f4f4f5;
+  --canvas: #ebebed;
+  --canvas-dot: rgba(16, 18, 24, 0.07);
+  --panel: #ffffff;
+  --raised: #ffffff;
+  --sunken: #f1f1f3;
+  --hover: rgba(16, 18, 24, 0.045);
+  --active: rgba(16, 18, 24, 0.08);
+  --line: rgba(16, 18, 24, 0.085);
+  --line-strong: rgba(16, 18, 24, 0.14);
+  --fg: #15161a;
+  --fg-2: #575b64;
+  --fg-3: #62666f;
+  --inverse: #ffffff;
+
+  --human: #f29a0b;
+  --human-fg: #945800;
+  --human-soft: rgba(242, 154, 11, 0.13);
+  --human-line: rgba(242, 154, 11, 0.55);
+  --ai: #0c9ec2;
+  --ai-fg: #077089;
+  --ai-soft: rgba(12, 158, 194, 0.11);
+  --ai-line: rgba(12, 158, 194, 0.5);
+  --ok: #0f7340;
+  --ok-soft: rgba(24, 160, 88, 0.12);
+  --bad: #c23137;
+  --bad-soft: rgba(221, 63, 69, 0.1);
+  --warn: #a84d08;
+  --warn-soft: rgba(212, 98, 10, 0.1);
+
+  --glass: rgba(255, 255, 255, 0.78);
+  --glass-line: rgba(16, 18, 24, 0.1);
+  --shadow-float: 0 0 0 1px var(--glass-line), 0 8px 20px -10px rgba(16, 18, 24, 0.3), 0 2px 6px -2px rgba(16, 18, 24, 0.1);
+  --shadow-frame: 0 0 0 1px var(--line), 0 24px 60px -30px rgba(16, 18, 24, 0.35);
+  --shadow-pop: 0 0 0 1px var(--line-strong), 0 16px 40px -14px rgba(16, 18, 24, 0.3);
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #09090b;
+  --canvas: #0d0e11;
+  --canvas-dot: rgba(255, 255, 255, 0.045);
+  --panel: #111216;
+  --raised: #17181d;
+  --sunken: #0c0d10;
+  --hover: rgba(255, 255, 255, 0.05);
+  --active: rgba(255, 255, 255, 0.085);
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --fg: #ececef;
+  --fg-2: #a0a3ab;
+  --fg-3: #91959f;
+  --inverse: #0b0b0d;
+
+  --human: #ffb224;
+  --human-fg: #ffc35a;
+  --human-soft: rgba(255, 178, 36, 0.13);
+  --human-line: rgba(255, 178, 36, 0.6);
+  --ai: #3cc8e8;
+  --ai-fg: #74d9f0;
+  --ai-soft: rgba(60, 200, 232, 0.12);
+  --ai-line: rgba(60, 200, 232, 0.55);
+  --ok: #3dd68c;
+  --ok-soft: rgba(61, 214, 140, 0.12);
+  --bad: #ff6369;
+  --bad-soft: rgba(255, 99, 105, 0.12);
+  --warn: #ff8b3e;
+  --warn-soft: rgba(255, 139, 62, 0.12);
+
+  --glass: rgba(22, 23, 28, 0.74);
+  --glass-line: rgba(255, 255, 255, 0.1);
+  --shadow-float: 0 0 0 1px var(--glass-line), 0 10px 24px -12px rgba(0, 0, 0, 0.7), 0 2px 8px -2px rgba(0, 0, 0, 0.45);
+  --shadow-frame: 0 0 0 1px var(--line-strong), 0 30px 80px -30px rgba(0, 0, 0, 0.9);
+  --shadow-pop: 0 0 0 1px var(--line-strong), 0 18px 48px -14px rgba(0, 0, 0, 0.8);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-canvas: var(--canvas);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-inverse: var(--inverse);
+  --color-human: var(--human);
+  --color-human-fg: var(--human-fg);
+  --color-human-soft: var(--human-soft);
+  --color-human-line: var(--human-line);
+  --color-ai: var(--ai);
+  --color-ai-fg: var(--ai-fg);
+  --color-ai-soft: var(--ai-soft);
+  --color-ai-line: var(--ai-line);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-glass: var(--glass);
+  --color-glass-line: var(--glass-line);
+  --shadow-float: var(--shadow-float);
+  --shadow-frame: var(--shadow-frame);
+  --shadow-pop: var(--shadow-pop);
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
+  --ease-snap: cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'ss01', 'cv01';
+  }
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  ::selection {
+    background: var(--human-soft);
+  }
+  :focus-visible {
+    outline: 2px solid var(--human-line);
+    outline-offset: 1px;
+  }
+  /* The active tab or segment already shows where you are. */
+  [role='tab'][data-state='active']:focus-visible,
+  [role='radio'][data-state='on']:focus-visible {
+    outline: none;
+  }
+  button {
+    cursor: default;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+  kbd,
+  code,
+  pre {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  .canvas-grid {
+    background-color: var(--canvas);
+    background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1.2px);
+    background-size: 18px 18px;
+    background-position: -9px -9px;
+  }
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(1.6);
+    -webkit-backdrop-filter: blur(22px) saturate(1.6);
+    box-shadow: var(--shadow-float);
+  }
+  /* Studio controls the hand cursor is over. */
+  [data-hand-hover] {
+    outline: 2px solid var(--human) !important;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 6px var(--human-soft);
+    transition: outline-color 120ms;
+  }
+  .shimmer-text {
+    background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 35%, var(--ai-fg) 50%, var(--fg-2) 65%, var(--fg-2) 100%);
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer 1.8s linear infinite;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 125% 0;
+  }
+  to {
+    background-position: -125% 0;
+  }
+}
+
+/* The countdown before a recording: the ring empties as the seconds go (its length is 2π × 46). */
+@keyframes countdown-ring {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 289.03;
+  }
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

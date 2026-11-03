@@ -1,0 +1,23 @@
+{
+  "name": "@saywright/shop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sample React app for trying Saywright. Contains a deliberate checkout bug.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@saywright/vite": "*",
+    "@playwright/test": "^1.64.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2"
+  }
+}

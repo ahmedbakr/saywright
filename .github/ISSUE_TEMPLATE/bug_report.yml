@@ -1,0 +1,29 @@
+name: Bug report
+description: Something doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. Link a Vite app
+        2. Point at the header and say “make this bigger”
+        3. …
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `npx saywright doctor`
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Saywright version, browser and operating system
+      placeholder: 0.1.0, Chrome 141, macOS 26

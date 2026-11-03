@@ -1,0 +1,238 @@
+import { CircleCheck, CircleX, CornerDownLeft, Download, FlaskConical, MousePointerClick, Play, Plus, RotateCcw, Sparkles, Trash2, Type, Wand2 } from 'lucide-react';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Kbd } from '@/components/ui/kbd';
+import { Badge, SectionTitle, Spinner } from '@/components/ui/misc';
+import { controller } from '@/core/controller';
+import { useStudio } from '@/core/store';
+import { cn } from '@/lib/cn';
+import { shortUrl } from '@/lib/format';
+import { focusOn } from '@shared/text';
+import { CodeBlock } from './DiffView';
+import { useAiName } from '@/lib/ai-name';
+
+const STEP_ICON = { click: <MousePointerClick />, fill: <Type />, press: <CornerDownLeft />, goto: <Play />, note: <Plus /> };
+
+export function TestTab() {
+  const mode = useStudio((s) => s.mode);
+  const rec = useStudio((s) => s.recorder);
+  const selection = useStudio((s) => s.selection);
+  const [expected, setExpected] = useState('');
+  const recording = mode === 'record';
+  const empty = !rec.steps.length && !rec.expectations.length;
+
+  return (
+    <div className="space-y-4 p-3">
+      <div className={cn('rounded-[10px] p-3 ring-1 ring-inset', recording ? 'bg-bad-soft ring-bad/25' : 'bg-raised ring-line')}>
+        <div className="flex items-center gap-2.5">
+          <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-[8px]', recording ? 'bg-bad/15 text-bad' : 'bg-sunken text-fg-3 ring-1 ring-inset ring-line')}>
+            {recording ? <span className="size-2.5 rounded-full bg-bad" style={{ animation: 'rec-pulse 1.4s ease-in-out infinite' }} /> : <FlaskConical className="size-4" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium text-fg">{recording ? 'Recording your steps' : 'Narrate a bug, get a test'}</div>
+            <div className="truncate text-[11.5px] text-fg-3">{recording ? `From ${shortUrl(rec.startUrl ?? '')}` : 'Use the app, then say what you expected.'}</div>
+          </div>
+          {recording ? (
+            <Button size="sm" onClick={() => controller.setMode('edit')}>
+              Stop
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" onClick={() => controller.setMode('record')} kbd={<Kbd tone="onDark">R</Kbd>}>
+              Write test
+            </Button>
+          )}
+        </div>
+        {recording && empty && (
+          <ol className="mt-3 space-y-1.5 text-[12px] leading-relaxed text-fg-2">
+            <li>1. Click and type in your app as usual. Each action becomes a step.</li>
+            <li>2. Point at the wrong value and say “this should show …”.</li>
+            <li>3. Say “generate test”, then “run test”.</li>
+          </ol>
+        )}
+      </div>
+
+      {(rec.steps.length > 0 || recording) && (
+        <div>
+          <SectionTitle
+            action={
+              !empty && (
+                <button data-hand className="flex items-center gap-1 text-[11.5px] text-fg-3 hover:text-fg" onClick={() => controller.newRecording()}>
+                  <RotateCcw className="size-3" /> Start over
+                </button>
+              )
+            }
+          >
+            Steps
+          </SectionTitle>
+          {rec.steps.length ? (
+            <ol className="space-y-1">
+              {rec.steps.map((s, i) => (
+                <li key={i} className="group flex items-center gap-2 rounded-[8px] bg-raised px-2 py-1.5 text-[12.5px] ring-1 ring-inset ring-line">
+                  <span className="w-4 text-right font-mono text-[11px] text-fg-3">{i + 1}</span>
+                  <span className="text-fg-3 [&_svg]:size-[13px]">{STEP_ICON[s.kind]}</span>
+                  <span className="min-w-0 flex-1 truncate text-fg-2" title={s.description}>
+                    {s.description}
+                  </span>
+                  <button data-hand className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeStep(i)} aria-label="Remove step">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="px-1 text-[12px] text-fg-3">No steps yet. Click around in your app.</p>
+          )}
+        </div>
+      )}
+
+      {(rec.expectations.length > 0 || recording) && (
+        <div>
+          <SectionTitle>Checks</SectionTitle>
+          <div className="space-y-1">
+            {rec.expectations.map((e, i) => {
+              const passed = rec.run?.status === 'passed';
+              const failed = rec.run?.status === 'failed';
+              return (
+                <div key={i} className="group flex items-start gap-2 rounded-[8px] bg-raised px-2 py-1.5 text-[12.5px] ring-1 ring-inset ring-line">
+                  <span className="mt-0.5 [&_svg]:size-[14px]">{passed ? <CircleCheck className="text-ok" /> : failed ? <CircleX className="text-bad" /> : <CircleCheck className="text-fg-3" />}</span>
+                  <span className="min-w-0 flex-1 text-fg-2">
+                    <span className="text-fg">{e.description}</span> should show <span className="font-mono text-human-fg">“{e.expected}”</span>
+                    {e.actual && <span className="block truncate text-[11.5px] text-fg-3">It showed “{focusOn(e.actual, e.expected)}”</span>}
+                  </span>
+                  <button data-hand className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeExpectation(i)} aria-label="Remove check">
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+            {recording && !selection && (
+              <p className="px-1 pt-1 text-[12px] leading-relaxed text-fg-3">
+                Point at a value in your app and say “this should show …”, or type it in the box below.
+              </p>
+            )}
+            {recording && selection && (
+              <form
+                className="flex items-center gap-1.5 pt-1"
+                onSubmit={(ev) => {
+                  ev.preventDefault();
+                  if (!expected.trim()) return;
+                  void controller.addExpectationFor(selection, expected.trim());
+                  setExpected('');
+                }}
+              >
+                <input
+                  data-hand
+                  value={expected}
+                  onChange={(e) => setExpected(e.target.value)}
+                  placeholder={`${selection.name} should show…`}
+                  className="h-7 min-w-0 flex-1 rounded-[7px] bg-sunken px-2 text-[12.5px] text-fg ring-1 ring-inset ring-line outline-none placeholder:text-fg-3 focus:ring-human-line disabled:opacity-60"
+                />
+                <Button size="sm" type="submit" disabled={!expected.trim()}>
+                  Add
+                </Button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {rec.expectations.length > 0 && (
+        <div className="flex gap-1.5">
+          <Button size="sm" icon={<Wand2 />} onClick={() => void controller.generateTest()}>
+            {rec.spec ? 'Regenerate' : 'Generate test'}
+          </Button>
+          <Button size="sm" variant="primary" icon={rec.running ? <Spinner className="size-3" /> : <Play />} disabled={rec.running} onClick={() => void controller.runTest()}>
+            {rec.running ? 'Running…' : 'Run test'}
+          </Button>
+        </div>
+      )}
+
+      {rec.run && <RunResult />}
+
+      {rec.spec && (
+        <div>
+          <SectionTitle
+            action={
+              <button
+                data-hand
+                className="ml-3 min-w-0 truncate font-mono text-[11.5px] text-fg-3 hover:text-fg"
+                title={`Open ${rec.spec.path}`}
+                onClick={() => controller.openRelative(rec.spec!.path, 1)}
+              >
+                {rec.spec.path.split('/').pop()}
+              </button>
+            }
+          >
+            Playwright test
+          </SectionTitle>
+          <CodeBlock code={rec.spec.code} language="typescript" />
+        </div>
+      )}
+
+      {(rec.installing || rec.installLog.length > 0) && (
+        <div>
+          <SectionTitle>{rec.installing ? 'Installing the test browser…' : 'Install log'}</SectionTitle>
+          <pre tabIndex={0} role="region" aria-label="Install output" className="max-h-[160px] overflow-auto rounded-[8px] bg-sunken p-2 font-mono text-[11px] leading-relaxed text-fg-3 ring-1 ring-inset ring-line">{rec.installLog.join('\n') || '…'}</pre>
+        </div>
+      )}
+
+      {!recording && empty && !rec.spec && (
+        <div className="rounded-[10px] border border-dashed border-line-strong p-3 text-[12px] leading-relaxed text-fg-3">
+          <div className="mb-1 flex items-center gap-1.5 font-medium text-fg-2">
+            <Download className="size-3.5" /> Tests are saved in your app
+          </div>
+          Generated specs go to <span className="font-mono text-fg-2">tests/saywright/</span> and run with your project’s own Playwright.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunResult() {
+  const run = useStudio((s) => s.recorder.run)!;
+  const verifying = useStudio((s) => s.recorder.verifying);
+  const ai = useAiName();
+  if (run.status === 'passed')
+    return (
+      <div className="flex items-center gap-2.5 rounded-[10px] bg-ok-soft p-3 ring-1 ring-inset ring-ok/25">
+        <CircleCheck className="size-4 text-ok" />
+        <div className="text-[12.5px] text-fg">
+          Passed in {(run.durationMs / 1000).toFixed(1)} s{verifying ? ' with the fix applied' : ''}.
+        </div>
+      </div>
+    );
+  if (run.status === 'failed')
+    return (
+      <div className="space-y-2 rounded-[10px] bg-bad-soft p-3 ring-1 ring-inset ring-bad/25">
+        <div className="flex items-center gap-2">
+          <CircleX className="size-4 text-bad" />
+          <span className="text-[12.5px] font-medium text-fg">The test fails, so it reproduces the bug</span>
+        </div>
+        {(run.expected || run.received) && (
+          <div className="grid grid-cols-[70px_1fr] gap-x-2 gap-y-0.5 font-mono text-[11.5px]">
+            <span className="text-fg-3">Expected</span>
+            <span className="text-ok">{run.expected}</span>
+            <span className="text-fg-3">Received</span>
+            <span className="text-bad">{run.received}</span>
+          </div>
+        )}
+        <Button size="sm" variant="ai" icon={<Sparkles />} onClick={() => void controller.fix()}>
+          Fix with {ai}
+        </Button>
+      </div>
+    );
+  if (run.status === 'setup-needed')
+    return (
+      <div className="space-y-2 rounded-[10px] bg-warn-soft p-3 ring-1 ring-inset ring-warn/25">
+        <div className="text-[12.5px] text-fg">{run.message}</div>
+        <Button size="sm" onClick={() => void controller.installBrowser()}>
+          Install test browser
+        </Button>
+      </div>
+    );
+  return (
+    <div className="rounded-[10px] bg-bad-soft p-3 text-[12px] text-fg ring-1 ring-inset ring-bad/25">
+      <Badge tone="bad">Error</Badge> <span className="ml-1">{run.message}</span>
+    </div>
+  );
+}

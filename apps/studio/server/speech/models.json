@@ -1,0 +1,38 @@
+[
+  {
+    "id": "omnilingual-300m",
+    "label": "Omnilingual ASR 300M (Arabic, English and 1,600 more)",
+    "langs": ["ar", "en"],
+    "archive": "sherpa-onnx-omnilingual-asr-1600-languages-300M-ctc-int8-2025-11-12",
+    "sha256": "cdcd0559c7c73efed54209a926e321afc914d046c5fdbf3665f00dc78180e5ed",
+    "sizeMb": 279,
+    "files": ["model.int8.onnx", "tokens.txt"],
+    "maxSeconds": 20,
+    "default": true,
+    "wordErrors": { "ar": 16, "en": 21 }
+  },
+  {
+    "id": "parakeet-en",
+    "label": "Parakeet TDT 0.6B v2 (English)",
+    "langs": ["en"],
+    "archive": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+    "sha256": "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad",
+    "sizeMb": 460,
+    "files": ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+    "maxSeconds": 30,
+    "default": true,
+    "wordErrors": { "en": 6 }
+  },
+  {
+    "id": "cohere-transcribe",
+    "label": "Cohere Transcribe 2B (most accurate; Arabic, English and 12 more)",
+    "langs": ["ar", "en"],
+    "archive": "sherpa-onnx-cohere-transcribe-14-lang-int8-2026-04-01",
+    "sha256": "bd582588d50685a795dcd2807ab77e11361b8312d96c53884682def45ab4206d",
+    "sizeMb": 1621,
+    "files": ["encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt"],
+    "maxSeconds": 12,
+    "default": false,
+    "wordErrors": { "ar": 9, "en": 6 }
+  }
+]
