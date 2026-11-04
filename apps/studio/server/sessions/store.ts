@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { scrubEvent, type SessionBatch, type SessionEvent } from '@saywright/vite/protocol';
+import { maskSecrets, redactUrl, scrubEvent, type SessionBatch, type SessionEvent } from '@saywright/vite/protocol';
 import { EMPTY_COUNTS, NO_DECISIONS, type ReportDecisions, type SessionAnalysis, type SessionLang, type SessionMeta, type SessionReport, type SessionShot, type SessionVerification, type TranscriptSegment, type VideoPart } from '../../shared/session.ts';
 import { writeFileAtomic } from '../fsx.ts';
 import { HttpError } from '../http.ts';
@@ -126,7 +126,8 @@ export class SessionStore {
     const meta: SessionMeta = {
       id,
       name: input.name?.trim() || `Session ${new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`,
-      appUrl: input.appUrl,
+      // As the events keep it: a reset link's token is not kept with the session (an older plugin sends it as it is).
+      appUrl: redactUrl(input.appUrl),
       source: input.source,
       ...(input.replayOf ? { replayOf: input.replayOf } : {}),
       lang: input.lang,
@@ -512,7 +513,7 @@ export class SessionStore {
   /** The report in the language spoken; a new one replaces its translation too. */
   saveReport(id: string, r: SessionReport): void {
     const dir = this.dir(id);
-    writeFileAtomic(path.join(dir, 'report.json'), JSON.stringify(r, null, 1));
+    writeFileAtomic(path.join(dir, 'report.json'), masked(r));
     for (const lang of ['en', 'ar']) fs.rmSync(path.join(dir, `report-${lang}.json`), { force: true });
   }
 
@@ -525,7 +526,7 @@ export class SessionStore {
   }
 
   saveTranslation(id: string, r: SessionReport): void {
-    writeFileAtomic(path.join(this.dir(id), `report-${r.lang}.json`), JSON.stringify(r, null, 1));
+    writeFileAtomic(path.join(this.dir(id), `report-${r.lang}.json`), masked(r));
   }
 
   /** The report in the other language, once written. */
@@ -579,4 +580,12 @@ export class SessionStore {
       this.open.delete(id);
     }
   }
+}
+
+/**
+ * A report as it is kept: what the AI wrote may repeat a key or a card number it saw (an older plugin's screenshot,
+ * a response body), and every text in it is masked before it is saved, shown, exported or sent anywhere.
+ */
+function masked(r: SessionReport): string {
+  return JSON.stringify(r, (_key, value: unknown) => (typeof value === 'string' ? maskSecrets(value) : value), 1);
 }

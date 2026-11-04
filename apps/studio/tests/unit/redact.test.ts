@@ -80,6 +80,33 @@ describe('secret values, by their look', () => {
   });
 });
 
+describe('more secrets, by their name and shape', () => {
+  it.each(['Wallet recovery phrase', 'Seed phrase', 'Security question: your first pet’s name', 'Security answer', 'Memorable word', 'Mother’s maiden name'])('a field called %s is secret', (hint) => {
+    expect(isSecretHint(hint)).toBe(true);
+  });
+
+  it.each([
+    ['whsec_ab12CD34ef56GH78ij90KL12', '•••'],
+    ['SG.abcdefghijklmnop.qrstuvwxyzABCDEF12', '•••'],
+    ['aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'aws_secret_access_key=•••'],
+    ['"clientSecret": "Zq7harborLanternSecret"', '"clientSecret": "•••"'],
+    ['postgres://ledger_admin:T5DbPassw0rd-Ocelot@db.local:5432/ledger', 'postgres://ledger_admin:•••@db.local:5432/ledger'],
+    ['reset with rst_T5ResetToken4f3e2d1c0b9a8877 now', 'reset with ••• now'],
+  ])('masks %s', (text, masked) => {
+    expect(maskSecrets(text)).toBe(masked);
+  });
+
+  it.each(['my_variable_name', 'user_profile_settings', 'SAVE20', 'order BR-1042 shipped', 'https://example.com/docs/getting-started'])('leaves %s as it is', (text) => {
+    expect(maskSecrets(text)).toBe(text);
+  });
+
+  it('masks a token that is part of an address’s path, not a page’s name', () => {
+    expect(redactUrl('http://localhost:7453/invite/k3JqP9xV2mLwR8sT4nYbZ6cD1fGh')).toBe('http://localhost:7453/invite/•••');
+    expect(redactUrl('http://localhost:7453/products/blue-ceramic-mug-large')).toBe('http://localhost:7453/products/blue-ceramic-mug-large');
+    expect(redactUrl('http://localhost:7453/orders/BR-1042')).toBe('http://localhost:7453/orders/BR-1042');
+  });
+});
+
 describe('card numbers, as they are written', () => {
   it.each([
     ['Card 4242 4242 4242 4242', 'Card •••• 4242'],

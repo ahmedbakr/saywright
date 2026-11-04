@@ -7,6 +7,7 @@
  *   Alt+Shift+R  start / stop      Alt+Shift+M  mark this moment      Alt+Shift+D  show / hide
  */
 import { SessionClient, type ClientState, type Countdown, type NarrationLang } from '../client';
+import { redactUrl } from '../protocol';
 import type { SessionRecorder } from './session';
 
 const HIDE_KEY = 'saywright.widget.hidden';
@@ -202,7 +203,7 @@ export class Widget {
         endpoint: this.endpoint,
         name: this.name || undefined,
         lang: this.prefs.lang,
-        appUrl: location.href,
+        appUrl: redactUrl(location.href),
         source: 'app',
         mic: this.prefs.mic,
         screen: this.prefs.screen,

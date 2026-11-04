@@ -13,7 +13,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { MASK, secretEnvName } from '@saywright/vite/protocol';
+import { MASK, maskSecrets, secretEnvName } from '@saywright/vite/protocol';
 import type { RunStep, TestRunResult } from '../../shared/api.ts';
 import { focusOn } from '../../shared/text.ts';
 import { spawnProgram } from '../program.ts';
@@ -106,9 +106,10 @@ export function marksOf(code: string): string[] {
 export const hashOf = (code: string): string => createHash('sha256').update(code).digest('hex').slice(0, 16);
 
 /** The values of secrets, masked out of what a run says (its errors and output). */
+/** What a run says, without the saved secrets' values, and without any key or card number the page showed (it goes to the AI with Fix with …). */
 function masker(values: string[]): (text: string | undefined) => string | undefined {
   const all = values.filter((v) => v.length >= 3).sort((a, b) => b.length - a.length);
-  return (text) => (text === undefined ? text : all.reduce((t, v) => t.split(v).join(MASK), text));
+  return (text) => (text === undefined ? text : maskSecrets(all.reduce((t, v) => t.split(v).join(MASK), text)));
 }
 
 /**

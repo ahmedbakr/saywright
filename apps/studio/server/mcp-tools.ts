@@ -4,7 +4,7 @@
  * it), read and search the code, propose a change the person keeps or undoes
  * in the studio, and read the reports of test sessions.
  */
-import { parseSrc } from '@saywright/vite/protocol';
+import { maskSecrets, parseSrc, redactUrl } from '@saywright/vite/protocol';
 import type { RefInfo } from '../shared/api.ts';
 import { ProposeChange } from './ai/agent.ts';
 import { jsonSchemaOf } from './ai/llm/types.ts';
@@ -60,7 +60,7 @@ export function mcpTools(deps: Deps): McpTool[] {
         const w = open();
         const c = deps.context.app === w.app.id ? deps.context : null;
         const lines = [`App: ${w.app.name} (${w.env.label}: ${w.env.url})`, w.project.hasCode ? `Code: ${w.project.root}` : 'Code: not on this computer (linked by address only)'];
-        if (c?.pageUrl) lines.push(`Page: ${c.pageUrl}`);
+        if (c?.pageUrl) lines.push(`Page: ${redactUrl(c.pageUrl)}`);
         const refs = c ? [...c.selection.map((r) => ({ ...r, role: 'selected' })), ...c.pins.map((r) => ({ ...r, role: 'pinned' }))] : [];
         if (!refs.length) {
           lines.push('', 'Nothing is selected in the studio right now. Ask the person to point at what they mean (or select it), then call get_context again.');
@@ -70,7 +70,7 @@ export function mcpTools(deps: Deps): McpTool[] {
         const mapped = await deps.mapRefs(refs, c?.pageUrl ?? undefined);
         mapped.forEach((r, i) => {
           const where = r.src ? ` at ${r.src}${r.guessed ? ' (a guess: found by searching the code for its text, not reported by the app; check it)' : ''}` : ' (not traced to a file)';
-          lines.push(`${i + 1}. ${refs[i].role}: ${r.label || r.name}${r.text ? ` showing “${r.text.slice(0, 80)}”` : ''}${where}`);
+          lines.push(`${i + 1}. ${refs[i].role}: ${maskSecrets(r.label || r.name)}${r.text ? ` showing “${maskSecrets(r.text).slice(0, 80)}”` : ''}${where}`);
           const at = r.src ? parseSrc(r.src) : null;
           if (at && w.project.hasCode && w.project.exists(at.file)) {
             const text = w.project.read(at.file).split('\n');

@@ -232,20 +232,21 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
     const at = Math.max(0, Math.min(input.steps.length, e.after ?? input.steps.length));
     checksAt.set(at, [...(checksAt.get(at) ?? []), e]);
   }
+  // What the page showed goes into the file only masked: a key or a card number on screen is no part of a test.
   const check = (e: Expectation) => {
-    step(`check ${++k}`, `${e.description.replace(/^./, (c) => c.toUpperCase())} should show ${e.expected}`, [
-      `// ${jsComment(`You said ${e.description} should show ${e.expected} (it showed ${e.actual || 'nothing'}).`)}`,
+    step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} should show ${e.expected}`), [
+      `// ${jsComment(maskSecrets(`You said ${e.description} should show ${e.expected} (it showed ${e.actual || 'nothing'}).`))}`,
       checkCode(e),
     ]);
   };
   input.steps.forEach((s, i) => {
     for (const e of checksAt.get(i) ?? []) check(e);
     if (s.kind === 'note') {
-      lines.push(`  // ${jsComment(s.description)}`);
+      lines.push(`  // ${jsComment(maskSecrets(s.description))}`);
       return;
     }
     const code = stepCode(s);
-    if (code) step(String(++n), s.description, [code]);
+    if (code) step(String(++n), maskSecrets(s.description), [code]);
   });
   for (const e of checksAt.get(input.steps.length) ?? []) check(e);
   lines.push('});', '');

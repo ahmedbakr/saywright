@@ -73,6 +73,11 @@ const SECRET_WORDS = new RegExp(
       'national ?id',
       'passports?',
       'pins?(?: ?codes?)?',
+      '(?:recovery|seed|secret|backup|mnemonic) ?(?:phrases?|words?)',
+      'mnemonics?',
+      '(?:security|secret) ?(?:questions?|answers?)',
+      'memorable ?(?:words?|information|info)',
+      'mother s maiden name',
     ].join('|') +
     ')\\b',
 );
@@ -135,6 +140,13 @@ const TOKENS: RegExp[] = [
   /\bnpm_[A-Za-z0-9]{30,}/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bAIza[0-9A-Za-z_-]{35}/g,
+  // Stripe's webhook signing secrets, and SendGrid's keys.
+  /\bwhsec_[A-Za-z0-9]{16,}/g,
+  /\bSG\.[\w-]{16,}\.[\w-]{16,}/g,
+  // An AWS secret access key, or any other secret, given after its name (aws_secret_access_key=…, "clientSecret": "…").
+  /(?<=\b(?:aws_?secret_?access_?key|secret_?access_?key|client_?secret|api_?secret|private_?key|access_?token|refresh_?token|auth_?token|password|passwd)["']?\s*[:=]\s*["']?)[^\s"',;}{]{8,}/gi,
+  // A random token after a short prefix of its kind (rt_…, rst_…, pk_live_…): letters in both cases and digits.
+  /\b[a-z]{2,8}_(?:(?:live|test)_)?(?=[A-Za-z0-9]{20,}\b)(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])[A-Za-z0-9]{20,}\b/g,
   // A bearer token in a header someone printed, and a private key.
   /\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*/g,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
@@ -178,6 +190,8 @@ function maskCard(run: string): string {
 export function maskSecrets(text: string): string {
   if (!text) return text;
   let out = text.replace(CARD, maskCard);
+  // The password in an address that carries one: postgres://ledger:password@db.local/ledger.
+  out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)@/gi, (_m, head: string) => `${head}${MASK}@`);
   for (const re of TOKENS) out = out.replace(re, (m) => (m.startsWith('Bearer') ? `Bearer ${MASK}` : MASK));
   return out;
 }
@@ -257,7 +271,8 @@ export function redactUrl(url: string): string {
   const q = base.indexOf('?');
   const path = q < 0 ? base : base.slice(0, q);
   const authPath = AUTH_PATH.test(path);
-  let out = maskSecrets(path);
+  // A part of the path that is a token (/invite/k3Jq…, /reset/…): long, random, letters in both cases and digits.
+  let out = maskSecrets(path).replace(/(?<=\/)[A-Za-z0-9_-]{24,}(?=\/|$)/g, (part) => (/\d/.test(part) && /[a-z]/.test(part) && /[A-Z]/.test(part) ? MASK : part));
   if (q >= 0) out += `?${maskParams(base.slice(q + 1), authPath)}`;
   if (hash !== null) {
     // A hash router's route (#/orders?tab=1), or parameters (#access_token=…&token_type=bearer).

@@ -188,6 +188,20 @@ function codeField(el: HTMLInputElement | HTMLTextAreaElement, hint: string): bo
 
 /** What a test calls a secret field's value: PASSWORD, CARD_NUMBER… (from its label, else its name). */
 export function secretNameOf(el: Element): string {
+  const name = ownSecretName(el);
+  // “Confirm password” in a form that sets a new one is the new one, typed again: NEW_PASSWORD, not the sign-in's.
+  if (name === 'PASSWORD' && /\b(?:confirm|repeat|retype|re-?enter|again|verify)\b/i.test(fieldHint(el))) {
+    const form = el.closest('form') ?? el.parentElement?.closest('section, fieldset, div');
+    for (const other of Array.from(form?.querySelectorAll('input') ?? [])) {
+      if (other === el || !isSecretField(other)) continue;
+      const theirs = ownSecretName(other);
+      if (theirs !== 'PASSWORD' && /PASSWORD$/.test(theirs)) return theirs;
+    }
+  }
+  return name;
+}
+
+function ownSecretName(el: Element): string {
   if (el instanceof HTMLInputElement && el.type === 'password' && !isSecretHint(labelText(el) || el.getAttribute('placeholder') || el.getAttribute('name') || '')) return 'PASSWORD';
   if (isField(el) && !(el instanceof HTMLSelectElement) && !isSecretHint(fieldHint(el)) && codeField(el, fieldHint(el))) return 'ONE_TIME_CODE';
   return secretName(labelText(el) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('autocomplete') || el.getAttribute('name') || el.id || '');

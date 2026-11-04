@@ -1,4 +1,4 @@
-import { parseSrc } from '@saywright/vite/protocol';
+import { maskSecrets, parseSrc, redactUrl } from '@saywright/vite/protocol';
 import type { Project } from '../project.ts';
 import type { AgentInput } from './types.ts';
 
@@ -52,12 +52,13 @@ function numbered(lines: string[], start: number, end: number): string {
 export function userMessage(input: AgentInput, project: Project): string {
   const parts: string[] = [];
   parts.push(`Said: "${input.text.trim()}"`);
-  if (input.pageUrl) parts.push(`Page: ${input.pageUrl}`);
+  // The page's address and what elements show, as anything sent to an AI: a token in the address or a key on screen masked.
+  if (input.pageUrl) parts.push(`Page: ${redactUrl(input.pageUrl)}`);
 
   if (input.refs.length) {
     parts.push('\nReferenced elements:');
     input.refs.forEach((r, i) => {
-      const text = r.text ? ` showing “${r.text.slice(0, 60)}”` : '';
+      const text = r.text ? ` showing “${maskSecrets(r.text).slice(0, 60)}”` : '';
       parts.push(`${i + 1}. ${r.role} → ${r.name}${text}${r.src ? ` at ${r.src}${r.guessed ? ' (a guess, found by searching the code for its text)' : ''}` : ' (not mapped to source)'}`);
     });
   } else {
