@@ -5,11 +5,13 @@
  * before the site's scripts run. A site on this computer that calls another
  * port of it (its API at http://localhost:5010) has those requests go through
  * the proxy too: from the proxy's address they would meet the API's CORS
- * rules as a stranger. Cookies are kept under the site's own prefix in the
+ * rules as a stranger. The proxy applies those rules as the browser would
+ * (each request says whether it carries the page's credentials). Cookies are kept under the site's own prefix in the
  * browser (cookies ignore ports, and other apps share localhost): the site's
  * scripts see their own names. Service workers are kept off, so an old cached
  * page never hides the studio.
  */
+import { PROXY_CREDENTIALS_HEADER } from '../protocol';
 
 interface ProxyConfig {
   /** The real site, e.g. https://example.com */
@@ -32,7 +34,7 @@ const portOf = (u: URL) => u.port || (u.protocol === 'https:' || u.protocol === 
  * site is on this computer: another port of it → the proxy's path for that port, /__saywright/<http|https>/<host:port>/…,
  * so the request leaves from the site's own address, as it does outside the studio. Anything else stays as it is.
  */
-export function viaProxy(input: string, base: string, c: Pick<ProxyConfig, 'upstream' | 'proxy' | 'studio'>, requests: boolean): string {
+export function viaProxy(input: string, base: string, c: Pick<ProxyConfig, 'upstream' | 'proxy' | 'studio'>, requests: boolean, credentials = false): string {
   try {
     const u = new URL(input, base);
     const up = new URL(c.upstream);
@@ -46,7 +48,8 @@ export function viaProxy(input: string, base: string, c: Pick<ProxyConfig, 'upst
     // Already the proxy, or the studio itself: as it is.
     if (portOf(u) === portOf(proxy)) return input;
     if (c.studio && portOf(u) === portOf(new URL(c.studio))) return input;
-    const scheme = u.protocol === 'https:' || u.protocol === 'wss:' ? 'https' : 'http';
+    // `+cred`: sent with the page's credentials, so the proxy sends the site's cookies with it (as the browser does).
+    const scheme = (u.protocol === 'https:' || u.protocol === 'wss:' ? 'https' : 'http') + (credentials ? '+cred' : '');
     const via = `${u.protocol.startsWith('ws') ? 'ws:' : proxy.protocol}//${proxy.host}/__saywright/${scheme}/${u.hostname}:${portOf(u)}`;
     return via + u.pathname + u.search + u.hash;
   } catch {
@@ -68,28 +71,43 @@ export function proxyConfig(): ProxyConfig | null {
 export function installProxyRewrites(c: ProxyConfig): void {
   /** Navigations, workers, history: the site's own address only. */
   const to = (input: string): string => viaProxy(input, location.href, c, false);
-  /** Requests: its API on another port of this computer too. */
-  const toRequest = (input: string): string => viaProxy(input, location.href, c, true);
+  /** Requests: its API on another port of this computer too, saying whether they carry the page's credentials. */
+  const toRequest = (input: string, credentials = false): string => viaProxy(input, location.href, c, true, credentials);
   const mapped =
     (fn: (s: string) => string) =>
     <T>(url: T): T =>
       typeof url === 'string' ? (fn(url) as T) : url instanceof URL ? (new URL(fn(url.href)) as T) : url;
   const toAny = mapped(to);
-  const requestAny = mapped(toRequest);
+  const requestAny = mapped((u) => toRequest(u));
+  /** Sockets and beacons always carry the site's cookies. */
+  const requestWithCredentials = mapped((u) => toRequest(u, true));
 
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    // Cookies go to another origin only with credentials: 'include', as outside the studio.
+    const credentials = (init?.credentials ?? (input instanceof Request ? input.credentials : 'same-origin')) === 'include';
     if (input instanceof Request) {
-      const next = toRequest(input.url);
+      const next = toRequest(input.url, credentials);
       return nativeFetch(next === input.url ? input : new Request(next, input), init);
     }
-    return nativeFetch(requestAny(input), init);
+    const url = typeof input === 'string' ? toRequest(input, credentials) : new URL(toRequest(input.href, credentials));
+    return nativeFetch(url, init);
   };
 
+  // An XMLHttpRequest says it carries the page's credentials as it is sent: withCredentials is set after open.
+  const proxied = new WeakSet<XMLHttpRequest>();
   const open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: unknown[]) {
-    return (open as (...a: unknown[]) => void).call(this, method, requestAny(url), ...rest);
+    const next = requestAny(url);
+    if (String(next).includes('/__saywright/')) proxied.add(this);
+    else proxied.delete(this);
+    return (open as (...a: unknown[]) => void).call(this, method, next, ...rest);
   } as typeof XMLHttpRequest.prototype.open;
+  const send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
+    if (proxied.has(this) && this.withCredentials) this.setRequestHeader(PROXY_CREDENTIALS_HEADER, 'include');
+    return send.call(this, body);
+  };
 
   const wrap = <C extends new (...args: never[]) => object>(Native: C, map: <T>(url: T) => T): C =>
     new Proxy(Native, {
@@ -99,13 +117,22 @@ export function installProxyRewrites(c: ProxyConfig): void {
       },
     });
   const w = window as unknown as Record<string, (new (...a: never[]) => object) | undefined>;
-  for (const [name, map] of [['WebSocket', requestAny], ['EventSource', requestAny], ['Worker', toAny], ['SharedWorker', toAny]] as const) {
+  for (const [name, map] of [['WebSocket', requestWithCredentials], ['Worker', toAny], ['SharedWorker', toAny]] as const) {
     const Native = w[name];
     if (Native) w[name] = wrap(Native, map);
   }
+  // An event stream carries the page's credentials when it was opened withCredentials.
+  if (w.EventSource) {
+    w.EventSource = new Proxy(w.EventSource, {
+      construct(target, args: unknown[]) {
+        if (args.length) args[0] = (args[1] as EventSourceInit | undefined)?.withCredentials ? requestWithCredentials(args[0]) : requestAny(args[0]);
+        return Reflect.construct(target, args);
+      },
+    });
+  }
   if (navigator.sendBeacon) {
     const beacon = navigator.sendBeacon.bind(navigator);
-    navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => beacon(requestAny(url), data);
+    navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => beacon(requestWithCredentials(url), data);
   }
 
   for (const name of ['pushState', 'replaceState'] as const) {

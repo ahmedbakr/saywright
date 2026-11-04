@@ -29,6 +29,7 @@ import path from 'node:path';
 import { pipeline, Transform } from 'node:stream';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
+import { PROXY_CREDENTIALS_HEADER as CREDENTIALS_HEADER } from '@saywright/vite/protocol';
 import { freePort } from './runner.ts';
 
 interface ProxyOptions {
@@ -275,8 +276,11 @@ export function upstreamUrl(raw: string | undefined, upstream: URL): URL | null 
 
 /** This computer's own names. */
 const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])$/;
-/** The proxy's path for another port of this computer: /__saywright/<http|https>/<host>:<port><path>. */
-const VIA = /^\/__saywright\/(https?)\/(localhost|127\.0\.0\.1|\[::1\]):(\d{1,5})(\/.*)?$/s;
+/**
+ * The proxy's path for another port of this computer: /__saywright/<http|https>[+cred]/<host>:<port><path>. `+cred`:
+ * the page sent the request with its credentials (fetch's credentials: 'include', an event stream's withCredentials).
+ */
+const VIA = /^\/__saywright\/(https?)(\+cred)?\/(localhost|127\.0\.0\.1|\[::1\]):(\d{1,5})(\/.*)?$/s;
 
 /**
  * The address on this computer that a request to the proxy's path for another port stands for (the site's API), or
@@ -284,12 +288,51 @@ const VIA = /^\/__saywright\/(https?)\/(localhost|127\.0\.0\.1|\[::1\]):(\d{1,5}
  * own ports, the studio's).
  */
 export function viaUrl(raw: string | undefined, upstream: URL, refused: ReadonlySet<number>): URL | null {
+  return viaRequest(raw, upstream, refused)?.url ?? null;
+}
+
+/** The same, and whether the page sent it with its credentials (see VIA). */
+export function viaRequest(raw: string | undefined, upstream: URL, refused: ReadonlySet<number>): { url: URL; credentials: boolean } | null {
   const m = VIA.exec(raw ?? '');
   if (!m || !LOOPBACK.test(upstream.hostname)) return null;
-  const port = Number(m[3]);
-  const rest = m[4] ?? '/';
+  const port = Number(m[4]);
+  const rest = m[5] ?? '/';
   if (!port || port > 65535 || refused.has(port) || rest.startsWith('//') || rest.startsWith('/\\')) return null;
-  return new URL(`${m[1]}://${m[2]}:${port}${rest}`);
+  return { url: new URL(`${m[1]}://${m[3]}:${port}${rest}`), credentials: !!m[2] };
+}
+
+/** Request headers the browser sets itself, or a page may not: none of them asks the API's leave first. */
+const BROWSER_SET = new Set(['accept-charset', 'accept-encoding', 'access-control-request-headers', 'access-control-request-method', 'connection', 'content-length', 'cookie', 'cookie2', 'date', 'dnt', 'expect', 'host', 'keep-alive', 'origin', 'referer', 'set-cookie', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'via', 'user-agent', 'priority', 'pragma', 'cache-control', CREDENTIALS_HEADER]);
+const SIMPLE_TYPE = /^(?:application\/x-www-form-urlencoded|multipart\/form-data|text\/plain)\s*(?:;|$)/i;
+
+/**
+ * What a request the page made to another origin must have its API allow before it is sent (the browser's
+ * preflight), as the browser decides: a method other than GET, HEAD or POST, or a header of the page's own beyond
+ * the few any page may send. Null: a simple request, sent as it is.
+ */
+export function preflightFor(method: string, headers: IncomingHttpHeaders): { method: string; headers: string[] } | null {
+  const own = Object.keys(headers)
+    .filter((h) => !BROWSER_SET.has(h) && !h.startsWith('sec-') && !h.startsWith('proxy-'))
+    .filter((h) => !['accept', 'accept-language', 'content-language', 'content-type'].includes(h) || (h === 'content-type' && !SIMPLE_TYPE.test(String(headers[h]))))
+    .sort();
+  return ['GET', 'HEAD', 'POST'].includes(method) && !own.length ? null : { method, headers: own };
+}
+
+/** Whether an API's answer may be read by a page of `origin`, by its CORS headers, as the browser decides. */
+export function corsAllows(headers: IncomingHttpHeaders, origin: string, credentials: boolean): boolean {
+  const allow = headers['access-control-allow-origin'];
+  if (allow === origin) return !credentials || headers['access-control-allow-credentials'] === 'true';
+  return allow === '*' && !credentials;
+}
+
+/** Whether an API's answer to a preflight lets the request through. */
+export function preflightAllows(status: number, headers: IncomingHttpHeaders, want: { method: string; headers: string[] }, origin: string, credentials: boolean): boolean {
+  if (status < 200 || status > 299 || !corsAllows(headers, origin, credentials)) return false;
+  const list = (h: string | string[] | undefined) => String(h ?? '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  const methods = list(headers['access-control-allow-methods']);
+  const allowed = list(headers['access-control-allow-headers']);
+  const method = ['GET', 'HEAD', 'POST'].includes(want.method) || methods.includes(want.method.toLowerCase()) || (!credentials && methods.includes('*'));
+  return method && want.headers.every((h) => allowed.includes(h) || (!credentials && allowed.includes('*') && h !== 'authorization'));
 }
 
 /**
@@ -487,23 +530,43 @@ export class AppProxy {
    * fails rather than getting an error page.
    */
   private via(target: Target, req: IncomingMessage, res: ServerResponse, proxyOrigin: string): void {
-    const url = viaUrl(req.url, target.upstream, this.refused());
-    if (!url || !fromPage(req.headers, proxyOrigin)) {
+    const found = viaRequest(req.url, target.upstream, this.refused());
+    if (!found || !fromPage(req.headers, proxyOrigin)) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       return void res.end('This proxy passes requests on to another port of this computer for the page it shows, and only for it.');
     }
+    const { url } = found;
+    const credentials = found.credentials || req.headers[CREDENTIALS_HEADER] === 'include';
+    const origin = target.upstream.origin;
     const headers = this.requestHeaders(req, target, proxyOrigin);
     headers.host = url.host;
+    delete headers[CREDENTIALS_HEADER];
+    // As the browser sends a request to another origin: from the site's own address, a site of the same computer,
+    // and with the site's cookies only when the page sent its credentials.
+    headers.origin = origin;
+    headers['sec-fetch-site'] = 'same-site';
+    if (!credentials) delete headers.cookie;
     // Its answer goes to the browser as it comes: in an encoding the browser asked for.
     if (req.headers['accept-encoding']) headers['accept-encoding'] = req.headers['accept-encoding'];
     else delete headers['accept-encoding'];
     const secure = url.protocol === 'https:';
     const lib = secure ? https : http;
-    const upstreamReq = lib.request(
-      url,
-      // This computer's own API often has a self-signed development certificate; the connection never leaves the computer.
-      { method: req.method, headers, timeout: 30_000, ...(secure ? { rejectUnauthorized: false, servername: url.hostname === 'localhost' ? 'localhost' : undefined } : {}) },
-      (up) => {
+    // This computer's own API often has a self-signed development certificate; the connection never leaves the computer.
+    const tlsOptions = secure ? { rejectUnauthorized: false, servername: url.hostname === 'localhost' ? 'localhost' : undefined } : {};
+    // What the API's CORS rules don't let a page of the site read, the page doesn't get: as in the site's own tab.
+    const blocked = (why: string) => {
+      if (res.headersSent) return void res.destroy();
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Saywright-Blocked': 'cors' });
+      res.end(`Blocked as the browser blocks it outside the studio: ${why}`);
+    };
+    // A beacon (no-cors): its answer is never read by the page, so it isn't held back.
+    const opaque = req.headers['sec-fetch-mode'] === 'no-cors';
+    const send = () => {
+      const upstreamReq = lib.request(url, { method: req.method, headers, timeout: 30_000, ...tlsOptions }, (up) => {
+        if (!opaque && !corsAllows(up.headers, origin, credentials)) {
+          up.resume();
+          return blocked(`${url.host} doesn’t let pages of ${origin} read what it answers${credentials ? ' with their cookies' : ''} (CORS).`);
+        }
         const out: Record<string, string | string[]> = {};
         for (const [k, v] of Object.entries(up.headers)) {
           if (v === undefined || HOP.has(k) || DROP_RESPONSE.has(k)) continue;
@@ -513,11 +576,25 @@ export class AppProxy {
         }
         res.writeHead(up.statusCode ?? 502, out);
         up.pipe(res);
-      },
-    );
-    upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('timed out')));
-    upstreamReq.on('error', () => res.destroy());
-    req.pipe(upstreamReq);
+      });
+      upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('timed out')));
+      upstreamReq.on('error', () => res.destroy());
+      req.pipe(upstreamReq);
+    };
+    const want = opaque ? null : preflightFor(req.method ?? 'GET', req.headers);
+    if (!want) return send();
+    // Asked first, as the browser asks: the request is sent only if the API allows it.
+    const ask: IncomingHttpHeaders = { host: url.host, origin, 'access-control-request-method': want.method, 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site' };
+    if (want.headers.length) ask['access-control-request-headers'] = want.headers.join(',');
+    if (req.headers['user-agent']) ask['user-agent'] = req.headers['user-agent'];
+    const pre = lib.request(url, { method: 'OPTIONS', headers: ask, timeout: 30_000, ...tlsOptions }, (up) => {
+      up.resume();
+      if (preflightAllows(up.statusCode ?? 0, up.headers, want, origin, credentials)) send();
+      else blocked(`${url.host} doesn’t allow a ${want.method} request${want.headers.length ? ` with ${want.headers.join(', ')}` : ''} from ${origin} (CORS).`);
+    });
+    pre.on('timeout', () => pre.destroy(new Error('timed out')));
+    pre.on('error', () => res.destroy());
+    pre.end();
   }
 
   /** A redirect from the API: to itself, it stays on its path in the proxy; to the site, in the proxy; elsewhere, as sent. */

@@ -27,6 +27,11 @@ export function outdated(studio: { v: number; oldest?: number }, bridge: { v: nu
 
 /** Where the studio runs unless told otherwise. Not 5173: that is Vite's own default, where your app likely runs. */
 export const STUDIO_PORT = 7357;
+/**
+ * Through the studio's proxy, a page's XMLHttpRequest to another port of this computer says with this header that it
+ * was sent with its credentials (withCredentials, set after open): the proxy then sends the site's cookies with it.
+ */
+export const PROXY_CREDENTIALS_HEADER = 'x-saywright-credentials';
 export const STUDIO_URL = `http://localhost:${STUDIO_PORT}`;
 
 /** Attribute names injected by the Vite plugin at compile time. */

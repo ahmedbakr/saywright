@@ -97,11 +97,13 @@ test.afterEach(async () => {
 
 test('an app shown through the proxy reaches its own API on another port, from its own address', async ({ page: tab, browser }) => {
   // In its own tab, as the API's CORS rules expect.
+  seen.length = 0;
   await tab.goto(appOrigin);
   await tab.getByTestId('login').click();
   await expect(tab.getByTestId('out')).toHaveText('Signed in: admin');
   await tab.getByTestId('me').click();
   await expect(tab.getByTestId('out')).toHaveText('Me: admin');
+  const ownTab = [...seen];
 
   // In the studio: linked by its address, so it is shown through the proxy, at another address.
   const { probe } = await call<{ probe: unknown }>('POST', '/apps/probe', { url: `${appOrigin}/` });
@@ -119,7 +121,8 @@ test('an app shown through the proxy reaches its own API on another port, from i
   // The cookie the API set comes back to it, through XHR as through fetch.
   await shown.getByTestId('me').click();
   await expect(shown.getByTestId('out')).toHaveText('Me: admin');
-  // The API saw the app's own address, never the proxy's.
-  expect(seen).toEqual([`POST /v1/auth/login from ${appOrigin}`, 'GET /v1/me from the page itself']);
+  // The API saw what it sees from the app's own tab: the app's own address, never the proxy's.
+  expect(seen).toEqual(ownTab);
+  expect(seen).toContain(`POST /v1/auth/login from ${appOrigin}`);
   await studio.close();
 });

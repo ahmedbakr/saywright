@@ -15,7 +15,7 @@ import path from 'node:path';
 import net from 'node:net';
 import zlib from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AppProxy, fromPage, PageRewriter, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaUrl } from '../../server/apps/proxy';
+import { AppProxy, corsAllows, fromPage, PageRewriter, preflightAllows, preflightFor, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaRequest, viaUrl } from '../../server/apps/proxy';
 
 let upstream: http.Server;
 let upstreamUrl = '';
@@ -277,18 +277,23 @@ describe('the app’s API on another port of this computer', () => {
   const seen: { method?: string; url?: string; host?: string; origin: string | null; cookie: string | null }[] = [];
 
   beforeAll(async () => {
-    // An API that allows only the site's own address, as development APIs do.
+    // An API that allows only the site's own address, with its cookies, as development APIs do.
     api = http.createServer((req, res) => {
       seen.push({ method: req.method, url: req.url, host: req.headers.host, origin: req.headers.origin ?? null, cookie: req.headers.cookie ?? null });
+      const cors: Record<string, string> = req.headers.origin === upstreamUrl ? { 'Access-Control-Allow-Origin': upstreamUrl, 'Access-Control-Allow-Credentials': 'true', Vary: 'Origin' } : {};
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, { ...cors, 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'content-type' });
+        return res.end();
+      }
       if (req.url === '/v1/auth/login') {
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': ['refresh=r1; Path=/v1/auth; HttpOnly; Secure; SameSite=None', 'session=s1; Path=/'], 'Clear-Site-Data': '"cookies"' });
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json', 'Set-Cookie': ['refresh=r1; Path=/v1/auth; HttpOnly; Secure; SameSite=None', 'session=s1; Path=/'], 'Clear-Site-Data': '"cookies"' });
         return res.end('{"ok":true}');
       }
       if (req.url === '/v1/old') {
-        res.writeHead(302, { Location: '/v1/new' });
+        res.writeHead(302, { ...cors, Location: '/v1/new' });
         return res.end();
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ path: req.url }));
     });
     api.on('upgrade', (req, socket) => {
@@ -301,23 +306,51 @@ describe('the app’s API on another port of this computer', () => {
   afterAll(() => api.close());
 
   const route = (rest: string, port = apiPort) => `/__saywright/http/127.0.0.1:${port}${rest}`;
+  /** A request the page sent with its credentials (fetch's credentials: 'include'). */
+  const withCredentials = (rest: string, port = apiPort) => `/__saywright/http+cred/127.0.0.1:${port}${rest}`;
   const fromThePage = { 'sec-fetch-site': 'same-origin' };
 
-  it('passes the page’s requests on from the site’s own address, with the site’s cookies', async () => {
+  it('passes the page’s requests on from the site’s own address, with the site’s cookies when it sent its credentials', async () => {
     const proxyOrigin = new URL(frame).origin;
     const port = new URL(frame).port;
-    const r = await send('POST', route('/v1/auth/login'), { ...fromThePage, origin: proxyOrigin, cookie: `ds${port}~session=s0; ds1~x=nope`, 'content-type': 'application/json' }, '{"email":"a@b.c"}');
+    const r = await send('POST', withCredentials('/v1/auth/login'), { ...fromThePage, origin: proxyOrigin, cookie: `ds${port}~session=s0; ds1~x=nope`, 'content-type': 'application/json' }, '{"email":"a@b.c"}');
     expect(r.status).toBe(200);
     expect(r.body).toBe('{"ok":true}');
-    // Where the API is concerned, the site itself asked: its CORS rules apply as they do outside the studio.
+    // Where the API is concerned, the site itself asked: its CORS rules apply as they do outside the studio (a JSON
+    // body is asked about first).
+    expect(seen.at(-2)).toMatchObject({ method: 'OPTIONS', url: '/v1/auth/login', origin: upstreamUrl, cookie: null });
     expect(seen.at(-1)).toEqual({ method: 'POST', url: '/v1/auth/login', host: `127.0.0.1:${apiPort}`, origin: upstreamUrl, cookie: 'session=s0' });
     // Its cookies join the site's: one for a path of the API stays under it, one for / is the whole site's.
     expect(r.headers['set-cookie']).toEqual([`ds${port}~refresh=r1; Path=${route('/v1/auth')}; HttpOnly; SameSite=Lax`, `ds${port}~session=s1; Path=/`]);
     // Nothing from the API can clear the studio's data.
     expect(r.headers['clear-site-data']).toBeUndefined();
-    // A page's own GET: no origin, the query kept.
-    expect(JSON.parse((await send('GET', route('/v1/me?x=1'), fromThePage)).body)).toEqual({ path: '/v1/me?x=1' });
-    expect(seen.at(-1)?.origin).toBeNull();
+    // A page's GET without its credentials: from the site's address, the query kept, and no cookies.
+    expect(JSON.parse((await send('GET', route('/v1/me?x=1'), { ...fromThePage, cookie: `ds${port}~session=s0` })).body)).toEqual({ path: '/v1/me?x=1' });
+    expect(seen.at(-1)).toMatchObject({ origin: upstreamUrl, cookie: null });
+  });
+
+  it('gives the page nothing from a service of this computer that doesn’t allow the site (CORS), as in its own tab', async () => {
+    const asked: string[] = [];
+    // An internal service with no CORS headers: other sites on this computer can't read it.
+    const internal = http.createServer((req, res) => {
+      asked.push(`${req.method} ${req.url}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"secret":"internal-admin-token"}');
+    });
+    await new Promise<void>((r) => internal.listen(0, '127.0.0.1', () => r()));
+    const port = (internal.address() as net.AddressInfo).port;
+    try {
+      const read = await send('GET', route('/admin', port), fromThePage);
+      expect(read.status).toBe(403);
+      expect(read.headers['x-saywright-blocked']).toBe('cors');
+      expect(read.body).not.toContain('internal-admin-token');
+      // A request the browser would ask about first is never sent when the service doesn't allow it.
+      const post = await send('POST', withCredentials('/admin/users', port), { ...fromThePage, 'content-type': 'application/json' }, '{"role":"admin"}');
+      expect(post.status).toBe(403);
+      expect(asked).toEqual(['GET /admin', 'OPTIONS /admin/users']);
+    } finally {
+      internal.close();
+    }
   });
 
   it('keeps the API’s redirects to itself on its path in the proxy', async () => {
@@ -346,6 +379,37 @@ describe('the app’s API on another port of this computer', () => {
     expect(fromPage({ 'sec-fetch-site': 'same-origin' }, proxyOrigin)).toBe(true);
     expect(fromPage({ origin: proxyOrigin }, proxyOrigin)).toBe(true);
     expect(fromPage({}, proxyOrigin)).toBe(false);
+  });
+
+  it('applies the API’s CORS rules as the browser does: who may read, with cookies or not, and what must be asked first', () => {
+    const app = 'http://localhost:5173';
+    // The page says whether it sent its credentials: fetch's credentials: 'include', an event stream's withCredentials.
+    expect(viaRequest('/__saywright/http+cred/localhost:5011/v1/me', new URL(app), new Set())).toMatchObject({ credentials: true });
+    expect(viaRequest('/__saywright/http/localhost:5011/v1/me', new URL(app), new Set())).toMatchObject({ credentials: false });
+    // Reading the answer: the API names the site (with cookies, it says so too), or anyone, without cookies.
+    expect(corsAllows({ 'access-control-allow-origin': app }, app, false)).toBe(true);
+    expect(corsAllows({ 'access-control-allow-origin': app, 'access-control-allow-credentials': 'true' }, app, true)).toBe(true);
+    expect(corsAllows({ 'access-control-allow-origin': app }, app, true)).toBe(false);
+    expect(corsAllows({ 'access-control-allow-origin': '*' }, app, false)).toBe(true);
+    expect(corsAllows({ 'access-control-allow-origin': '*' }, app, true)).toBe(false);
+    // An internal service that says nothing of CORS: the page reads nothing from it, as in its own tab.
+    expect(corsAllows({}, app, false)).toBe(false);
+    expect(corsAllows({ 'access-control-allow-origin': 'http://localhost:9999' }, app, false)).toBe(false);
+    // Simple requests go as they are; a JSON body, a header of the page's own or another method is asked first.
+    expect(preflightFor('GET', { accept: 'application/json', 'sec-fetch-mode': 'cors', cookie: 'a=1', 'user-agent': 'x' })).toBeNull();
+    expect(preflightFor('POST', { 'content-type': 'text/plain;charset=UTF-8' })).toBeNull();
+    expect(preflightFor('POST', { 'content-type': 'application/json' })).toEqual({ method: 'POST', headers: ['content-type'] });
+    expect(preflightFor('GET', { authorization: 'Bearer x', 'x-requested-with': 'XMLHttpRequest' })).toEqual({ method: 'GET', headers: ['authorization', 'x-requested-with'] });
+    expect(preflightFor('DELETE', {})).toEqual({ method: 'DELETE', headers: [] });
+    const ok = { 'access-control-allow-origin': app, 'access-control-allow-credentials': 'true', 'access-control-allow-methods': 'GET, POST, DELETE', 'access-control-allow-headers': 'content-type, authorization' };
+    expect(preflightAllows(204, ok, { method: 'DELETE', headers: ['authorization'] }, app, true)).toBe(true);
+    expect(preflightAllows(204, ok, { method: 'PUT', headers: [] }, app, true)).toBe(false);
+    expect(preflightAllows(204, ok, { method: 'POST', headers: ['x-tenant'] }, app, true)).toBe(false);
+    expect(preflightAllows(403, ok, { method: 'POST', headers: ['content-type'] }, app, true)).toBe(false);
+    // A wildcard allows any header but authorization, and only without cookies.
+    const any = { 'access-control-allow-origin': '*', 'access-control-allow-methods': '*', 'access-control-allow-headers': '*' };
+    expect(preflightAllows(200, any, { method: 'PATCH', headers: ['x-tenant'] }, app, false)).toBe(true);
+    expect(preflightAllows(200, any, { method: 'GET', headers: ['authorization'] }, app, false)).toBe(false);
   });
 
   it('fails the way the browser would when nothing answers on that port', async () => {
