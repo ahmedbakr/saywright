@@ -186,13 +186,6 @@
     -webkit-backdrop-filter: blur(22px) saturate(1.6);
     box-shadow: var(--shadow-float);
   }
-  /* Studio controls the hand cursor is over. */
-  [data-hand-hover] {
-    outline: 2px solid var(--human) !important;
-    outline-offset: 2px;
-    box-shadow: 0 0 0 6px var(--human-soft);
-    transition: outline-color 120ms;
-  }
   .shimmer-text {
     background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 35%, var(--ai-fg) 50%, var(--fg-2) 65%, var(--fg-2) 100%);
     background-size: 250% 100%;

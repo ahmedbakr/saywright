@@ -63,7 +63,7 @@ We aim to answer within three working days, and to fix confirmed problems in the
 
 ### Downloads
 
-- Every model the studio downloads is checked against a pinned SHA-256 sum before it is used: the on-device voice model, the hand model, the speech models and the voice-activity model narration uses.
+- Every model the studio downloads is checked against a pinned SHA-256 sum before it is used: the on-device voice model, the speech models and the voice-activity model narration uses.
 - Speech models come over HTTPS from the [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) releases on GitHub. Before an archive is unpacked, every entry is checked: only plain files and folders that land inside the models folder; links, devices and paths that leave it are refused. Archives are unpacked without their stored ownership.
 
 ### Secrets
@@ -86,8 +86,8 @@ Saywright itself sends no telemetry. Data leaves your computer only in these cas
 | You connect Google data | Requests for your page's public address to Google's APIs. |
 | An expert review of a public page | The page, its `robots.txt` and its sitemap are fetched from your computer, as a browser would. |
 | You link an address, or clone a repository | The proxy fetches that site; git or the GitHub CLI clones from GitHub. |
-| You download extras | The npm registry (voice model), GitHub (speech models), Google's storage (hand model); hand control in an npm install also loads MediaPipe's runtime from jsDelivr. |
+| You download extras | The npm registry (voice model) and GitHub (speech models). |
 
-Hand control (Labs) processes camera images in your browser. MediaPipe, Google's hand-tracking library, has usage logging to Google built in (`odml.pa.googleapis.com`), with no option to turn it off: the studio blocks those requests while hand control runs.
+The studio never uses your camera.
 
 Everything else stays on your computer: your sessions (recordings, audio, transcripts, screenshots, video), changes, reviews, usage log and settings, in the folders listed in [docs/configuration.md](docs/configuration.md#data-folders). Typed passwords and card numbers are never recorded.

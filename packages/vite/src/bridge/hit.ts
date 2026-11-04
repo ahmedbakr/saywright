@@ -117,10 +117,10 @@ export function probe(x: number, y: number, radius: number, deep = false): { el:
 let held: Element | null = null;
 
 /**
- * For a hand: the highlight stays on what it is on until the point clearly
- * leaves it (a few pixels past its edge) or moves onto something inside it.
- * A fingertip wobbles; without this the highlight flickers between
- * neighbours, and a pinch selects whichever one it happened to be on.
+ * For an unsteady pointer (an older studio's hand control asks for it): the
+ * highlight stays on what it is on until the point clearly leaves it (a few
+ * pixels past its edge) or moves onto something inside it. Without this the
+ * highlight flickers between neighbours.
  */
 export function probeSticky(x: number, y: number, radius: number, deep = false): { el: Element; info: ElementInfo; snapped: boolean } | null {
   const hit = probe(x, y, radius, deep);

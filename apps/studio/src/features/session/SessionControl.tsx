@@ -45,7 +45,6 @@ export function SessionControl() {
     return (
       <Tip label={live.status === 'starting' ? 'Cancel: don’t record after all' : 'Stop and write the report'}>
         <button
-          data-hand
           onClick={() => void sessions.stop()}
           disabled={live.status === 'stopping'}
           className="inline-flex h-7 items-center gap-2 rounded-[7px] bg-bad-soft pl-2.5 pr-2 text-[12px] font-semibold text-bad ring-1 ring-inset ring-bad/30 transition-colors hover:bg-bad/15"
@@ -62,7 +61,7 @@ export function SessionControl() {
   if (live.status === 'processing' && live.id) {
     report = (
       <Tip label={live.stage || 'Writing the report'}>
-        <button data-hand onClick={() => sessions.openReport(live.id!)} className="inline-flex h-7 items-center gap-2 rounded-[7px] bg-ai-soft px-2.5 text-[12px] font-medium text-ai-fg ring-1 ring-inset ring-ai-line/40">
+        <button onClick={() => sessions.openReport(live.id!)} className="inline-flex h-7 items-center gap-2 rounded-[7px] bg-ai-soft px-2.5 text-[12px] font-medium text-ai-fg ring-1 ring-inset ring-ai-line/40">
           <Spinner className="size-3" />
           Writing report…
         </button>
@@ -71,7 +70,6 @@ export function SessionControl() {
   } else if (live.status === 'ready' && live.id) {
     report = (
       <button
-        data-hand
         onClick={() => sessions.openReport(live.id!)}
         className="inline-flex h-7 items-center gap-1.5 rounded-[7px] bg-ai px-2.5 text-[12px] font-semibold text-[#021a20] shadow-[0_0_0_3px_var(--ai-soft)]"
       >
@@ -82,7 +80,7 @@ export function SessionControl() {
   } else if (live.status === 'failed' && live.id) {
     report = (
       <Tip label={live.error || 'The report couldn’t be written'}>
-        <button data-hand onClick={() => sessions.openReport(live.id!)} className="inline-flex h-7 items-center gap-1.5 rounded-[7px] bg-bad-soft px-2.5 text-[12px] font-medium text-bad ring-1 ring-inset ring-bad/30">
+        <button onClick={() => sessions.openReport(live.id!)} className="inline-flex h-7 items-center gap-1.5 rounded-[7px] bg-bad-soft px-2.5 text-[12px] font-medium text-bad ring-1 ring-inset ring-bad/30">
           <FileText className="size-3.5" />
           Report failed
         </button>
@@ -106,7 +104,6 @@ function NewSession({ setup, compact }: { setup: boolean; compact: boolean }) {
       <Tip label={replaying ? 'Wait for the replay to finish' : 'Record session: use your app and talk, then get a report with what went wrong'}>
         <Popover.Trigger asChild>
           <button
-            data-hand
             data-tour="record"
             disabled={replaying}
             className={cn(

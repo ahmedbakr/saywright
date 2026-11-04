@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ElementInfo } from '@saywright/vite/protocol';
-import { afterHold, afterTap, MAX_PICKED, picked, pinchMeaning, replaced, selectedOf, type Picked } from '../../src/core/selection';
+import { afterHold, afterTap, MAX_PICKED, picked, clickMeaning, replaced, selectedOf, type Picked } from '../../src/core/selection';
 
 const el = (id: number, name = `El${id}`): ElementInfo => ({ id, src: `src/App.tsx:${id}:1`, name, tag: 'div', label: name, text: '', role: null, rect: { x: 0, y: 0, w: 10, h: 10 }, index: 0 });
 const A = el(1, 'Pay');
@@ -67,12 +67,12 @@ describe('holding the pinch (or ⇧ click)', () => {
 
 describe('what a pinch would do, for the hint under the highlight', () => {
   it('names the tap and the hold', () => {
-    expect(pinchMeaning(A, [])).toEqual({ tap: 'select', hold: 'none' });
-    expect(pinchMeaning(B, [A])).toEqual({ tap: 'select', hold: 'add' });
-    expect(pinchMeaning(A, [A])).toEqual({ tap: 'deselect', hold: 'none' });
-    expect(pinchMeaning(A, [A, B])).toEqual({ tap: 'only', hold: 'remove' });
-    expect(pinchMeaning(null, [A])).toEqual({ tap: 'clear', hold: 'none' });
-    expect(pinchMeaning(null, [])).toEqual({ tap: 'none', hold: 'none' });
+    expect(clickMeaning(A, [])).toEqual({ tap: 'select', hold: 'none' });
+    expect(clickMeaning(B, [A])).toEqual({ tap: 'select', hold: 'add' });
+    expect(clickMeaning(A, [A])).toEqual({ tap: 'deselect', hold: 'none' });
+    expect(clickMeaning(A, [A, B])).toEqual({ tap: 'only', hold: 'remove' });
+    expect(clickMeaning(null, [A])).toEqual({ tap: 'clear', hold: 'none' });
+    expect(clickMeaning(null, [])).toEqual({ tap: 'none', hold: 'none' });
   });
 });
 

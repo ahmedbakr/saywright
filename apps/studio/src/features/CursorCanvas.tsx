@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { controller } from '@/core/controller';
 
-/** The hand cursor, drawn by the controller every frame above everything else. */
+/** The cursor a replay or Autopilot moves through the app, drawn by the controller above everything else. */
 export function CursorCanvas() {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {

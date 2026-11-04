@@ -105,7 +105,6 @@ export const Media = forwardRef<
                 key={p.file}
                 role="tab"
                 aria-selected={i === index}
-                data-hand
                 onClick={() => {
                   pending.current = { at: 0, play: false };
                   setPart(i);
@@ -138,7 +137,7 @@ export const Media = forwardRef<
   const go = (i: number) => onTime(shots[Math.max(0, Math.min(shots.length - 1, i))].t);
   return (
     <div className="space-y-2">
-      <button data-hand onClick={() => onZoom(shot.name)} className="relative block w-full overflow-hidden rounded-[12px] bg-sunken ring-1 ring-line">
+      <button onClick={() => onZoom(shot.name)} className="relative block w-full overflow-hidden rounded-[12px] bg-sunken ring-1 ring-line">
         <img src={`/api/sessions/${id}/shots/${shot.name}`} alt={`Screen at ${fmtClock(shot.t - start)}`} className="aspect-video w-full object-contain" />
         <span className="tabular absolute bottom-2 start-2 rounded-[6px] bg-black/60 px-1.5 py-0.5 text-[11px] text-white">
           {fmtClock(shot.t - start)} · {shot.reason}
@@ -150,7 +149,7 @@ export const Media = forwardRef<
         </IconButton>
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto py-0.5">
           {shots.map((s, i) => (
-            <button key={s.name} data-hand onClick={() => onTime(s.t)} className={`h-9 w-14 shrink-0 overflow-hidden rounded-[5px] ring-1 ${i === idx ? 'ring-2 ring-ai' : 'ring-line opacity-70 hover:opacity-100'}`}>
+            <button key={s.name} onClick={() => onTime(s.t)} className={`h-9 w-14 shrink-0 overflow-hidden rounded-[5px] ring-1 ${i === idx ? 'ring-2 ring-ai' : 'ring-line opacity-70 hover:opacity-100'}`}>
               <img src={`/api/sessions/${id}/shots/${s.name}`} alt="" loading="lazy" className="h-full w-full object-cover object-top" />
             </button>
           ))}

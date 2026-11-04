@@ -6,7 +6,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, CircleCheck, CircleX, Info, KeyRound, MousePointerClick, Sparkles, SquareDashedMousePointer, TriangleAlert, Undo2, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { PeaceGlyph } from '@/components/ui/gestures';
 import { Button, IconButton } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
 import { Badge, Spinner } from '@/components/ui/misc';
@@ -88,7 +87,6 @@ function Idle() {
   const mode = useStudio((s) => s.mode);
   const selection = useStudio((s) => s.selection);
   const pins = useStudio((s) => s.pins.length);
-  const handOn = useStudio((s) => s.camera.status === 'on');
   const rec = useStudio((s) => s.recorder);
 
   let icon: ReactNode = <SquareDashedMousePointer />;
@@ -132,11 +130,6 @@ function Idle() {
     <div className="flex h-[38px] items-center gap-2.5 whitespace-nowrap pl-3.5 pr-4 text-[12.5px] text-fg-2 [&_svg]:size-[14px] [&_svg]:text-fg-3">
       {icon}
       <span className="flex items-center gap-1.5">{text}</span>
-      {handOn && mode !== 'record' && (
-        <span className="hidden items-center gap-1 border-l border-line-strong pl-2.5 text-fg-3 md:flex">
-          <PeaceGlyph className="!size-[14px]" /> talk
-        </span>
-      )}
     </div>
   );
 }
@@ -433,7 +426,6 @@ function RichText({ text }: { text: string }) {
       parts.push(
         <button
           key={`${i}-${m.index}`}
-          data-hand
           onClick={() => controller.openRelative(file, Number(line))}
           className="rounded-[4px] bg-ai-soft px-1 py-px font-mono text-[12px] text-ai-fg hover:underline"
           title="Open in editor"

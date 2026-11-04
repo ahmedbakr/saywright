@@ -50,7 +50,6 @@ export function SidePanel() {
               <Tabs.Trigger
                 key={t.id}
                 value={t.id}
-                data-hand
                 data-tab={t.id}
                 title={t.icon ? t.label : undefined}
                 aria-label={t.icon ? t.label : undefined}

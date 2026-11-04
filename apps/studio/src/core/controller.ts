@@ -1,10 +1,9 @@
 /**
- * The studio's conductor. Connects camera → hand tracking → gestures, the
- * microphone → speech → fusion, the app inside the iframe (bridge) and the
- * local API, and turns all of it into a few clear actions: select, ask,
- * keep, undo, test.
+ * The studio's conductor. Connects the mouse and the microphone → speech →
+ * fusion, the app inside the iframe (bridge) and the local API, and turns all
+ * of it into a few clear actions: select, ask, keep, undo, test.
  *
- * It runs outside React: per-frame work (cursor, probes) stays imperative,
+ * It runs outside React: per-frame work (probes, the replay's cursor) stays imperative,
  * and React only sees discrete state through the store.
  */
 import type { ElementInfo, Rect } from '@saywright/vite/protocol';
@@ -16,20 +15,17 @@ import { apps } from './apps';
 import { fileName } from '@/lib/format';
 import { focusOn } from '@shared/text';
 import { BridgeClient } from './bridge';
-import { CameraError, openCamera, stopStream } from './camera';
 import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
 import { findingBrief } from './evidence';
 import { DEFAULT_FUSION, PointerTrack, implicitTargets, resolveDeictics } from './fusion';
-import { GestureEngine, type HandEvent, type HandFrame } from './hand/engine';
-import { afterHold, afterTap, picked, pinchMeaning, replaced, selectedOf, type HoldMeaning, type Picked } from './selection';
+import { afterHold, afterTap, picked, replaced, selectedOf, type Picked } from './selection';
 import { Autopilot, type AutopilotOptions } from './autopilot';
 import { Replayer, findingCheck } from './replay';
 import { MAX_WAITING, RequestQueue, type RequestJob } from './requests';
-import { HandTracker } from './hand/tracker';
 import { modalOpen } from './layers';
 import { sessions, useSessions, type SpeechStatus } from './sessions';
 import { arabicCommand } from '@shared/arabic-commands';
-import { applyTheme, handLab, useSettings } from './settings';
+import { applyTheme, useSettings } from './settings';
 import { play, setSoundsEnabled } from './sound';
 import { get, initialRecorder, previews, sameEl, set, useStudio, type Binding, type InspectResult, type IslandAction, type MetricsSummary, type Tone } from './store';
 import { alignWords } from './voice/choose';
@@ -39,15 +35,10 @@ import { aiName } from '@/lib/ai-name';
 
 const settings = () => useSettings.getState();
 
-const INTERACTIVE =
-  '[data-hand], button, a[href], input, textarea, select, summary, label[for], [role="button"], [role="tab"], [role="switch"], [role="menuitem"], [role="menuitemradio"], [role="option"], [role="radio"], [role="slider"], [role="checkbox"], [contenteditable="true"]';
-
 const isControl = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest('button, select, [role="switch"], [role="tab"], [role="combobox"], [role="option"], [role="slider"], [role="radio"]');
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) && !(t as HTMLInputElement).readOnly;
-
-type StudioHit = { kind: 'app' } | { kind: 'studio'; el: HTMLElement } | { kind: 'none' };
 
 /** A spoken request: its words with timings, and when it was said. */
 interface Spoken {
@@ -63,7 +54,7 @@ interface IntentAsk {
   refs: RefInfo[];
   els: ElementInfo[];
   input: 'voice' | 'typed';
-  pointer: 'hand' | 'mouse' | 'none';
+  pointer: 'mouse' | 'none';
   pageUrl: string;
   /** Straight to the AI, past the quick edits (“Ask the AI anyway”). */
   ai?: boolean;
@@ -72,7 +63,7 @@ interface IntentAsk {
 interface Pointer {
   x: number;
   y: number;
-  source: 'hand' | 'mouse';
+  source: 'mouse';
   radius: number;
   deep: boolean;
   inApp: boolean;
@@ -89,8 +80,6 @@ const trackedKey = (s: { selection: ElementInfo | null; pins: ElementInfo[]; pre
 
 class Controller {
   readonly bridge = new BridgeClient();
-  readonly tracker = new HandTracker();
-  readonly engine: GestureEngine;
   readonly voice = new VoiceInput();
   readonly track = new PointerTrack();
   /** Replay & verify: a session's steps played again in the app, after fixes. */
@@ -145,32 +134,19 @@ class Controller {
   /** Times the app's bridge has said it is ready (each page load). */
   private appLoads = 0;
 
-  /** Smoothed hand cursor, window coordinates. */
-  readonly cursor = { x: 0, y: 0, alpha: 0, overApp: false };
-  readonly ripples: { x: number; y: number; t: number; kind: 'tap' | 'pin' | 'replay' }[] = [];
-  stream: MediaStream | null = null;
-  /** Calibration reads raw landmarks and hides the cursor meanwhile. */
-  calibrating = false;
+  readonly ripples: { x: number; y: number; t: number; kind: 'replay' }[] = [];
   /** While set (the setup tour, the voice test in Settings), speech is shown but not acted on. */
   dryRun: ((text: string, heard?: VoiceFinal) => void) | null = null;
-  readonly frameListeners = new Set<(f: HandFrame) => void>();
-  readonly streamListeners = new Set<(s: MediaStream | null) => void>();
 
   private started = false;
   private frame: HTMLIFrameElement | null = null;
-  private overlay: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private scale = 1;
   private mouse: { x: number; y: number; alt: boolean } | null = null;
   private appMouse: { x: number; y: number } | null = null;
-  private handTarget: HTMLElement | null = null;
-  private video: HTMLVideoElement | null = null;
-  /** Counts the camera's starts and stops: a start that is no longer the latest gives up. */
-  private cameraRun = 0;
   private raf = 0;
   /** The frame loop, asleep, comes back for another look at the app then (a resting pointer, boxes to follow). */
   private later: ReturnType<typeof setTimeout> | null = null;
-  private lastTick = 0;
   private frames = 0;
   private clearedProbe = false;
   private lastProbe: { x: number; y: number; t: number; deep: boolean } | null = null;
@@ -178,7 +154,6 @@ class Controller {
   private trackedAt = 0;
   /** The cursor canvas has something on it (else it is hidden). */
   private painted = false;
-  private dragging: 'app' | null = null;
   private spaceDownAt = 0;
   private spaceConsumed = false;
   private noticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -188,10 +163,6 @@ class Controller {
   private resolving = new Set<number>();
   private colors: Record<string, string> = {};
   private cleanups: (() => void)[] = [];
-
-  constructor() {
-    this.engine = new GestureEngine(settings().engine, () => ({ w: window.innerWidth, h: window.innerHeight }));
-  }
 
   // ───────────────────────────── lifecycle ─────────────────────────────
 
@@ -209,10 +180,6 @@ class Controller {
 
     this.cleanups.push(
       useSettings.subscribe((now, prev) => {
-        if (now.engine !== prev.engine) {
-          this.engine.configure(now.engine);
-          void this.tracker.setNumHands(now.engine.hand === 'any' ? 1 : 2);
-        }
         if (now.theme !== prev.theme) {
           applyTheme(now.theme);
           requestAnimationFrame(() => this.readColors());
@@ -317,24 +284,20 @@ class Controller {
     apps.init(() => this.appSwitched());
     void this.refreshStatus();
     void this.refreshChanges().then(() => this.announceWaiting());
-    // Boxes to keep up with, or the camera on: the frame loop has work again.
+    // Boxes to keep up with: the frame loop has work again.
     this.cleanups.push(
       useStudio.subscribe((st, prev) => {
         const boxes = (st.selection !== prev.selection || st.pins !== prev.pins || st.previewTargets !== prev.previewTargets) && trackedKey(st) !== trackedKey(prev);
-        if (boxes || st.camera.status !== prev.camera.status) this.wake();
+        if (boxes) this.wake();
       }),
     );
     this.wake();
-    if (s.camera.enabled && s.onboarded && s.labs.hand) void this.startCamera();
-    // Hand control turned off in Labs: the camera goes with it.
-    this.cleanups.push(useSettings.subscribe((n, p) => n.labs.hand !== p.labs.hand && !n.labs.hand && get().camera.status !== 'off' && this.stopCamera(false)));
   }
 
   dispose(): void {
     this.started = false;
     this.rest();
     for (const fn of this.cleanups.splice(0)) fn();
-    this.stopCamera(false);
     this.bridge.detach();
   }
 
@@ -359,10 +322,6 @@ class Controller {
   frameLoaded(): void {
     set({ app: { ...get().app, connected: false } });
     this.bridge.sayHello();
-  }
-
-  attachOverlay(el: HTMLElement | null): void {
-    this.overlay = el;
   }
 
   attachCanvas(el: HTMLCanvasElement | null): void {
@@ -406,11 +365,9 @@ class Controller {
     b.onProbe = (m) => {
       const s = get();
       if (!sameEl(s.hover, m.hit) || s.snapped !== m.snapped) set({ hover: m.hit, snapped: m.snapped });
-      if (s.hover?.id !== m.hit?.id) sessions.pointed(m.hit, s.pointer === 'hand' ? 'hand' : 'mouse');
-      // “This” binds to deliberate pointing: the mouse, or the hand with the index finger out (not mid-gesture).
-      const pose = this.engine.state.pose;
-      const deliberate = s.pointer !== 'hand' || pose === 'point' || pose === 'pinch';
-      this.track.push(performance.now(), deliberate ? m.hit : null);
+      if (s.hover?.id !== m.hit?.id) sessions.pointed(m.hit, 'mouse');
+      // “This” binds to what the mouse was on while it was said.
+      this.track.push(performance.now(), m.hit);
       this.applyTracked(m.tracked);
     };
     b.onMouse = (pos) => {
@@ -540,8 +497,8 @@ class Controller {
 
   // ───────────────────────────── frame loop ─────────────────────────────
   //
-  // The hand cursor, what the pointer is on in the app, the boxes that follow what is selected, and the cursor
-  // canvas. The loop runs while something moves or needs following and sleeps otherwise, so an idle studio costs
+  // What the pointer is on in the app, the boxes that follow what is selected, and the canvas the replay's cursor
+  // is drawn on. The loop runs while something moves or needs following and sleeps otherwise, so an idle studio costs
   // nothing; whatever gives it work again wakes it.
 
   private wake = (): void => {
@@ -561,30 +518,11 @@ class Controller {
 
   private loop = (now: number): void => {
     this.raf = 0;
-    const dt = Math.min(64, now - (this.lastTick || now));
-    this.lastTick = now;
     this.frames++;
-    const st = this.engine.state;
-    const handOn = get().camera.status === 'on' && st.present && !this.calibrating;
 
-    // Interpolate the hand cursor between camera frames (30 fps) for a smooth 60–120 Hz display.
-    if (handOn) {
-      if (this.cursor.alpha <= 0.01) {
-        this.cursor.x = st.x;
-        this.cursor.y = st.y;
-      }
-      const k = 1 - Math.exp(-dt / 18);
-      this.cursor.x += (st.x - this.cursor.x) * k;
-      this.cursor.y += (st.y - this.cursor.y) * k;
-      this.cursor.alpha = Math.min(1, this.cursor.alpha + dt / 120);
-    } else {
-      this.cursor.alpha = Math.max(0, this.cursor.alpha - dt / 220);
-    }
-
-    const p = this.pointer(handOn);
+    const p = this.pointer();
     const pointerKind = p ? p.source : null;
     if (get().pointer !== pointerKind) set({ pointer: pointerKind });
-    this.updateDwell(now, handOn);
 
     // Ask the app what is under the pointer; refresh tracked boxes otherwise. A pointer resting still, with
     // no boxes to keep up with, is asked about a few times a second rather than every frame.
@@ -597,7 +535,7 @@ class Controller {
       const last = this.lastProbe;
       resting = !!last && !ids.length && Math.abs(ax - last.x) < 0.75 && Math.abs(ay - last.y) < 0.75 && now - last.t < 200 && last.deep === p.deep;
       if (!resting) {
-        this.bridge.probe(ax, ay, p.radius / g.scale, p.deep, ids, p.source === 'hand');
+        this.bridge.probe(ax, ay, p.radius / g.scale, p.deep, ids);
         this.lastProbe = { x: ax, y: ay, t: now, deep: p.deep };
       }
       this.clearedProbe = false;
@@ -608,26 +546,16 @@ class Controller {
       this.trackedAt = now;
     }
 
-    if (this.frames % 30 === 0 && get().camera.status === 'on' && get().camera.fps !== this.tracker.fps) {
-      set({ camera: { ...get().camera, fps: this.tracker.fps } });
-    }
     this.draw(now);
 
     // Every frame while something moves; a little later while a resting pointer or boxes only need watching.
-    const moving = get().camera.status === 'on' || this.cursor.alpha > 0.01 || this.ripples.length > 0 || (!!this.guide && now - this.guide.at < GUIDE_MS) || (!!p?.inApp && !resting);
+    const moving = this.ripples.length > 0 || (!!this.guide && now - this.guide.at < GUIDE_MS) || (!!p?.inApp && !resting);
     if (moving) this.raf = requestAnimationFrame(this.loop);
     else if (p?.inApp || ids.length) this.later = setTimeout(this.wake, p?.inApp ? 200 : TRACK_MS);
   };
 
-  private pointer(handOn: boolean): Pointer | null {
+  private pointer(): Pointer | null {
     const mode = get().mode;
-    if (handOn) {
-      const hit = this.hitStudio(this.cursor.x, this.cursor.y);
-      this.setHandTarget(hit.kind === 'studio' ? hit.el : null);
-      this.cursor.overApp = hit.kind === 'app';
-      return { x: this.cursor.x, y: this.cursor.y, source: 'hand', radius: settings().aimAssist, deep: false, inApp: hit.kind === 'app' };
-    }
-    this.setHandTarget(null);
     if (mode === 'edit' && this.mouse) return { ...this.mouse, source: 'mouse', radius: 0, deep: this.mouse.alt, inApp: true };
     if (mode !== 'edit' && this.appMouse) {
       const g = this.geom();
@@ -637,35 +565,6 @@ class Controller {
     return null;
   }
 
-  /** What the hand cursor is over: the app, a studio control (with a little aim assist), or nothing. */
-  private hitStudio(x: number, y: number): StudioHit {
-    const at = (px: number, py: number): StudioHit | null => {
-      const el = document.elementFromPoint(px, py) as HTMLElement | null;
-      if (!el) return null;
-      if (el === this.frame || (this.overlay && (el === this.overlay || this.overlay.contains(el)))) return { kind: 'app' };
-      const ctl = el.closest<HTMLElement>(INTERACTIVE);
-      if (ctl && !ctl.closest('[data-hand-ignore]') && !(ctl as HTMLButtonElement).disabled) return { kind: 'studio', el: ctl };
-      return null;
-    };
-    const direct = at(x, y);
-    if (direct) return direct;
-    for (const r of [10, 20]) {
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const h = at(x + Math.cos(a) * r, y + Math.sin(a) * r);
-        if (h?.kind === 'studio') return h;
-      }
-    }
-    return { kind: 'none' };
-  }
-
-  private setHandTarget(el: HTMLElement | null): void {
-    if (el === this.handTarget) return;
-    this.handTarget?.removeAttribute('data-hand-hover');
-    this.handTarget = el;
-    el?.setAttribute('data-hand-hover', '');
-  }
-
   // ───────────────────────────── drawing ─────────────────────────────
 
   private draw(now: number): void {
@@ -673,7 +572,7 @@ class Controller {
     if (!c) return;
     // Nothing to show: cleared once, and hidden. A canvas drawn on over the app makes the browser ask the studio's
     // page where each click in the app lands, and that waits whenever the studio is busy.
-    if (!this.ripples.length && !this.guide && (this.calibrating || this.cursor.alpha <= 0.01)) {
+    if (!this.ripples.length && !this.guide) {
       if (this.painted) {
         c.getContext('2d')?.clearRect(0, 0, c.width, c.height);
         c.style.visibility = 'hidden';
@@ -694,8 +593,6 @@ class Controller {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const human = this.colors.human || '#ffb224';
-
     for (let i = this.ripples.length - 1; i >= 0; i--) {
       const r = this.ripples[i];
       const age = (now - r.t) / 450;
@@ -704,10 +601,10 @@ class Controller {
         continue;
       }
       ctx.globalAlpha = (1 - age) * 0.9;
-      ctx.strokeStyle = r.kind === 'replay' ? this.colors.ai || '#3dd6f5' : human;
+      ctx.strokeStyle = this.colors.ai || '#3dd6f5';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(r.x, r.y, 10 + age * (r.kind === 'pin' ? 34 : 24), 0, Math.PI * 2);
+      ctx.arc(r.x, r.y, 10 + age * 24, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -733,310 +630,7 @@ class Controller {
       ctx.stroke();
     }
 
-    const a = this.calibrating ? 0 : this.cursor.alpha;
-    if (a <= 0.01) {
-      ctx.globalAlpha = 1;
-      return;
-    }
-    const st = this.engine.state;
-    const { x, y } = this.cursor;
-    ctx.globalAlpha = a;
-    ctx.lineWidth = 2;
-
-    if (st.clutched) {
-      ctx.setLineDash([3, 4]);
-      ctx.strokeStyle = this.colors['fg-2'] || '#999';
-      ctx.beginPath();
-      ctx.arc(x, y, 14, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = this.colors['fg-2'] || '#999';
-      ctx.fillRect(x - 4, y - 5, 2.5, 10);
-      ctx.fillRect(x + 1.5, y - 5, 2.5, 10);
-    } else if (st.dragging) {
-      ctx.strokeStyle = human;
-      ctx.fillStyle = withAlpha(human, 0.18);
-      ctx.beginPath();
-      ctx.arc(x, y, 15, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = human;
-      for (const d of [-1, 1]) {
-        ctx.beginPath();
-        ctx.moveTo(x - 4.5, y + d * 3);
-        ctx.lineTo(x, y + d * 8);
-        ctx.lineTo(x + 4.5, y + d * 3);
-        ctx.closePath();
-        ctx.fill();
-      }
-    } else if (st.pinching) {
-      ctx.fillStyle = human;
-      ctx.beginPath();
-      ctx.arc(x, y, 6.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = withAlpha(human, 0.6);
-      ctx.beginPath();
-      ctx.arc(x, y, 11, 0, Math.PI * 2);
-      ctx.stroke();
-    } else {
-      const k = st.pinchAmount;
-      const r = (this.handTarget ? 9 : 15) - (this.handTarget ? 3 : 6) * k;
-      ctx.fillStyle = withAlpha(human, (this.handTarget ? 0.04 : 0.1) + 0.25 * k);
-      ctx.strokeStyle = human;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = human;
-      ctx.beginPath();
-      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    if (st.holdKind && st.holdProgress > 0.03) {
-      const color =
-        st.holdKind === 'thumbUp' ? this.colors.ok : st.holdKind === 'thumbDown' ? this.colors.bad : st.holdKind === 'victory' ? human : this.colors.fg;
-      this.ring(ctx, x, y, st.holdProgress, color || '#fff', { palm: 'Stop', thumbUp: 'Keep', thumbDown: 'Undo', victory: 'Talk' }[st.holdKind]);
-    } else if (st.pinching && !st.dragging && st.pinchHold > 0.03) {
-      // Holding a pinch in Edit mode: when the ring closes, what it is on is added to the selection (or taken out).
-      const meaning = this.pinchHoldMeaning();
-      if (meaning !== 'none') this.ring(ctx, x, y, st.pinchHold, human, meaning === 'add' ? 'Add' : 'Remove');
-    } else if (this.dwellProgress > 0.03) {
-      this.ring(ctx, x, y, this.dwellProgress, human, 'Select');
-    }
     ctx.globalAlpha = 1;
-  }
-
-  /** A progress ring around the cursor, with what happens when it closes. */
-  private ring(ctx: CanvasRenderingContext2D, x: number, y: number, progress: number, color: string, label: string): void {
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = withAlpha(color, 0.2);
-    ctx.beginPath();
-    ctx.arc(x, y, 23, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.strokeStyle = color;
-    ctx.beginPath();
-    ctx.arc(x, y, 23, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-    ctx.font = '600 11px "Geist Variable", system-ui, sans-serif';
-    const tw = ctx.measureText(label).width;
-    const lx = x + 30;
-    const ly = y - 9;
-    ctx.fillStyle = color;
-    roundRect(ctx, lx, ly, tw + 14, 19, 6);
-    ctx.fill();
-    ctx.fillStyle = this.colors.inverse || '#000';
-    ctx.fillText(label, lx + 7, ly + 13.5);
-  }
-
-  // ───────────────────────────── camera & hand ─────────────────────────────
-
-  async startCamera(deviceId?: string | null): Promise<boolean> {
-    if (!handLab()) return false;
-    const s = get();
-    if (s.camera.status === 'starting') return false;
-    if (s.camera.status === 'on' && deviceId === undefined) return true;
-    if (s.camera.status === 'on') this.stopCamera(false);
-    const run = ++this.cameraRun;
-    // Turned off while it started (the setup skipped, hand control switched off): it stays off, and lets go of the
-    // camera it opened. Opening the camera and loading the tracker take seconds on a slow computer.
-    const stopped = () => run !== this.cameraRun || !handLab();
-    set({ camera: { ...get().camera, status: 'starting', error: null } });
-    let stream: MediaStream | null = null;
-    try {
-      stream = await openCamera((deviceId === undefined ? settings().camera.deviceId : deviceId) ?? undefined);
-      if (stopped()) return this.letGoOf(stream, run);
-      this.stream = stream;
-      if (!this.video) {
-        this.video = document.createElement('video');
-        this.video.muted = true;
-        this.video.playsInline = true;
-      }
-      this.video.srcObject = stream;
-      await this.video.play().catch(() => undefined);
-      if (stopped()) return this.letGoOf(stream, run);
-      for (const fn of this.streamListeners) fn(stream);
-      this.tracker.numHands = settings().engine.hand === 'any' ? 1 : 2;
-      await this.tracker.init();
-      if (stopped()) return this.letGoOf(stream, run);
-      this.tracker.onFrame = (f) => this.onFrame(f);
-      this.tracker.start(this.video);
-      set({ camera: { status: 'on', error: null, fps: 0, delegate: this.tracker.delegate } });
-      settings().setCamera({ enabled: true, ...(deviceId !== undefined ? { deviceId } : {}) });
-      return true;
-    } catch (err) {
-      if (stopped()) return this.letGoOf(stream, run);
-      stopStream(this.stream);
-      this.stream = null;
-      for (const fn of this.streamListeners) fn(null);
-      const message = err instanceof CameraError ? err.message : `Hand tracking couldn’t start: ${(err as Error)?.message ?? err}`;
-      set({ camera: { status: 'error', error: message, fps: 0, delegate: null } });
-      this.notify(message, 'error');
-      return false;
-    }
-  }
-
-  /**
-   * What a start that was stopped meanwhile opened, closed; a newer start's camera is left alone. Hand control switched
-   * off with no stop since (still the latest start): stopped now, so the camera reads off rather than starting.
-   */
-  private letGoOf(stream: MediaStream | null, run: number): false {
-    stopStream(stream);
-    if (run === this.cameraRun) this.stopCamera(false);
-    else if (stream && this.stream === stream) {
-      this.stream = null;
-      for (const fn of this.streamListeners) fn(null);
-    }
-    return false;
-  }
-
-  stopCamera(remember = true): void {
-    // A start still on its way ends without turning the camera on.
-    this.cameraRun++;
-    this.tracker.stop();
-    stopStream(this.stream);
-    this.stream = null;
-    for (const fn of this.streamListeners) fn(null);
-    this.engine.update({ t: performance.now() + 10_000, hands: [], aspect: 4 / 3 });
-    this.setHandTarget(null);
-    set({ camera: { status: 'off', error: null, fps: 0, delegate: null }, hand: { ...get().hand, present: false, holdKind: null } });
-    if (remember) settings().setCamera({ enabled: false });
-  }
-
-  toggleCamera(): void {
-    if (get().camera.status === 'on') this.stopCamera();
-    else void this.startCamera();
-  }
-
-  private onFrame(f: HandFrame): void {
-    const events = this.engine.update(f);
-    for (const fn of this.frameListeners) fn(f);
-    for (const e of events) this.onHandEvent(e);
-    const st = this.engine.state;
-    const h = get().hand;
-    if (h.present !== st.present || h.pose !== st.pose || h.holdKind !== st.holdKind || h.clutched !== st.clutched || h.dragging !== st.dragging || h.hand !== st.hand) {
-      set({ hand: { present: st.present, pose: st.pose, holdKind: st.holdKind, clutched: st.clutched, dragging: st.dragging, hand: st.hand } });
-    }
-  }
-
-  private onHandEvent(e: HandEvent): void {
-    if (this.calibrating) return;
-    switch (e.type) {
-      case 'lost':
-        this.dragging = null;
-        this.setHandTarget(null);
-        return;
-      case 'pinchStart':
-        return this.handPinchStart(e.x, e.y);
-      case 'hold':
-        return this.handHold(e.x, e.y);
-      case 'pinchCancel':
-        return this.restorePinch();
-      case 'tap':
-        return this.handTap(e.x, e.y);
-      case 'dragStart':
-        // Pinch and move scrolls, and leaves the selection as it was.
-        this.restorePinch();
-        this.dragging = this.hitStudio(e.x, e.y).kind === 'app' ? 'app' : null;
-        return;
-      case 'drag': {
-        if (this.dragging !== 'app' || this.replayer.running || this.autopilot.running) return;
-        const a = this.toApp(this.cursor.x, this.cursor.y);
-        if (a) this.bridge.scroll(a.x, a.y, (-e.dx * 1.7) / this.scale, (-e.dy * 1.7) / this.scale);
-        return;
-      }
-      case 'dragEnd':
-        this.dragging = null;
-        return;
-      case 'palm':
-        return this.stop('palm');
-      case 'thumbUp':
-        return void this.keep('thumb');
-      case 'thumbDown':
-        return void this.undo('thumb');
-      case 'victory':
-        return this.toggleTalk();
-    }
-  }
-
-  /**
-   * A pinch still closed, in Edit mode: what it is on, and the selection from
-   * before it, to put back if it turns into a scroll.
-   */
-  private pinchPick: { before: Picked; target: ElementInfo | null } | null = null;
-
-  /** What the hand is highlighting at this window point, if the highlight is (almost) there; aim assist may have snapped to a neighbour. */
-  private handTargetAt(x: number, y: number): ElementInfo | null {
-    const hover = get().hover;
-    const a = this.toApp(x, y);
-    if (!hover || !a) return null;
-    const reach = settings().aimAssist / this.scale + 6;
-    const r = hover.rect;
-    return a.x < r.x - reach || a.x > r.x + r.w + reach || a.y < r.y - reach || a.y > r.y + r.h + reach ? null : hover;
-  }
-
-  /**
-   * Edit mode acts the moment the fingers meet, on exactly what was
-   * highlighted: select it, deselect it if it was the only thing selected, or
-   * clear on empty space. Holding adds instead; moving scrolls instead.
-   */
-  private handPinchStart(x: number, y: number): void {
-    this.pinchPick = null;
-    if (get().mode !== 'edit' || this.hitStudio(x, y).kind !== 'app') return;
-    const s = get();
-    const target = this.handTargetAt(x, y);
-    const before: Picked = { selection: s.selection, pins: s.pins };
-    this.pinchPick = { before, target };
-    if (pinchMeaning(target, selectedOf(before)).tap === 'none') return;
-    this.ripples.push({ x, y, t: performance.now(), kind: 'tap' });
-    play('tap');
-    this.setPicked(afterTap(before, target));
-  }
-
-  /** Held still: add what the pinch is on to the selection, or take it out. A scroll after this keeps it. */
-  private handHold(x: number, y: number): void {
-    const p = this.pinchPick;
-    if (!p || get().mode !== 'edit') return;
-    this.pinchPick = null;
-    if (pinchMeaning(p.target, selectedOf(p.before)).hold === 'none') return;
-    this.ripples.push({ x, y, t: performance.now(), kind: 'pin' });
-    play('pick');
-    this.setPicked(afterHold(p.before, p.target));
-  }
-
-  /** The pinch became a scroll, or closed into a fist: the selection goes back to what it was. */
-  private restorePinch(): void {
-    const p = this.pinchPick;
-    this.pinchPick = null;
-    if (p) this.setPicked(p.before);
-  }
-
-  private handTap(x: number, y: number): void {
-    const hit = this.hitStudio(x, y);
-    if (get().mode === 'edit' && hit.kind === 'app') {
-      this.pinchPick = null; // done as the fingers met
-      return;
-    }
-    if (hit.kind === 'none') return;
-    this.ripples.push({ x, y, t: performance.now(), kind: 'tap' });
-    play('tap');
-    if (hit.kind === 'studio') return activate(hit.el, x, y);
-    // Use / Record: click for real, however long the pinch was held. Aim assist may have snapped to a target next to the fingertip.
-    if (this.replayer.running || this.autopilot.running) return;
-    const hover = get().hover;
-    const a = this.toApp(x, y);
-    if (!a) return;
-    const inside = hover && a.x >= hover.rect.x && a.x <= hover.rect.x + hover.rect.w && a.y >= hover.rect.y && a.y <= hover.rect.y + hover.rect.h;
-    const target = !hover || inside ? a : { x: hover.rect.x + hover.rect.w / 2, y: hover.rect.y + hover.rect.h / 2 };
-    void this.bridge.click(target.x, target.y);
-  }
-
-  /** While a pinch is closed in Edit mode: what holding it would do, for the cursor. */
-  pinchHoldMeaning(): HoldMeaning {
-    const p = this.pinchPick;
-    return p ? pinchMeaning(p.target, selectedOf(p.before)).hold : 'none';
   }
 
   // ───────────────────────────── mouse on the stage (Edit mode) ─────────────────────────────
@@ -1052,7 +646,7 @@ class Controller {
     this.wake();
   }
 
-  /** Like a pinch: a click selects, deselects what is the only thing selected, or clears; ⇧ click adds or takes out. */
+  /** A click selects, deselects what is the only thing selected, or clears; ⇧ click adds or takes out. */
   async mouseClick(x: number, y: number, shift: boolean, alt: boolean, count = 1): Promise<void> {
     // A double click selects, like a single one (its second click would deselect again).
     if (count > 1) return;
@@ -1096,7 +690,7 @@ class Controller {
     if (el && (!same || !s.inspect)) void this.loadInspect(el);
   }
 
-  /** Add to the selection, or take out of it: holding a pinch, ⇧ click, “add this”. */
+  /** Add to the selection, or take out of it: ⇧ click, “add this”. */
   toggleSelected(el: ElementInfo): void {
     this.setPicked(afterHold({ selection: get().selection, pins: get().pins }, el));
   }
@@ -1138,44 +732,6 @@ class Controller {
     const s = get();
     if (s.selection && from?.id === s.selection.id) this.setPicked(replaced(s, s.selection, el));
     else this.select(el);
-  }
-
-  /** Dwell select (optional): the pointing hand resting on one element selects it. */
-  private dwell: { id: number; since: number; done: boolean } | null = null;
-
-  /** How far a dwell has got, 0 → 1, for the cursor. */
-  dwellProgress = 0;
-
-  private updateDwell(now: number, handOn: boolean): void {
-    const s = get();
-    const st = this.engine.state;
-    const hover = s.hover;
-    const on =
-      settings().dwellSelect &&
-      handOn &&
-      s.mode === 'edit' &&
-      this.cursor.overApp &&
-      !!hover &&
-      !st.pinching &&
-      !st.dragging &&
-      (st.pose === 'point' || st.pose === 'other') &&
-      !s.pins.length &&
-      hover.id !== s.selection?.id;
-    if (!on || !hover) {
-      this.dwell = null;
-      this.dwellProgress = 0;
-      return;
-    }
-    if (this.dwell?.id !== hover.id) this.dwell = { id: hover.id, since: now, done: false };
-    const DWELL_MS = 1000;
-    this.dwellProgress = this.dwell.done ? 0 : Math.min(1, Math.max(0, (now - this.dwell.since - 200) / (DWELL_MS - 200)));
-    if (!this.dwell.done && now - this.dwell.since >= DWELL_MS) {
-      this.dwell.done = true;
-      this.dwellProgress = 0;
-      this.ripples.push({ x: this.cursor.x, y: this.cursor.y, t: now, kind: 'tap' });
-      play('tap');
-      this.select(hover);
-    }
   }
 
   /** Where the element is written, as the server traces it (`guessed` when it was found by searching the code). */
@@ -1473,9 +1029,6 @@ class Controller {
       case 'r':
       case 'R':
         return this.setMode('record');
-      case 'c':
-      case 'C':
-        return handLab() ? this.toggleCamera() : undefined;
       case 'm':
       case 'M':
         if (sessions.recording) sessions.mark('', 'key');
@@ -1670,8 +1223,7 @@ class Controller {
     };
   }
 
-  private pointerKind(): 'hand' | 'mouse' | 'none' {
-    if (get().camera.status === 'on' && performance.now() - this.engine.state.lastSeen < 3000) return 'hand';
+  private pointerKind(): 'mouse' | 'none' {
     return performance.now() - this.lastMouseAt < 5000 ? 'mouse' : 'none';
   }
 
@@ -2258,38 +1810,6 @@ function stepsOf(a: SessionAnalysis, until = Infinity): RecordedStep[] {
   return a.steps
     .filter((s) => s.t <= until && s.kind !== 'navigate' && s.locator)
     .map((s) => ({ kind: s.kind === 'fill' ? 'fill' : s.kind === 'press' ? 'press' : 'click', locator: s.locator, value: s.value, checked: s.checked, key: s.key, description: s.description }));
-}
-
-function withAlpha(color: string, alpha: number): string {
-  const m = /^#([0-9a-f]{6})$/i.exec(color);
-  if (!m) return color;
-  const n = parseInt(m[1], 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-}
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-
-/** Click a studio control on the hand's behalf, the way a real pointer would (Radix listens to pointerdown). */
-function activate(el: HTMLElement, x: number, y: number): void {
-  const base = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
-  const pointer = { ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true };
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    el.focus();
-    return;
-  }
-  el.dispatchEvent(new PointerEvent('pointerdown', { ...pointer, buttons: 1 }));
-  el.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons: 1 }));
-  el.dispatchEvent(new PointerEvent('pointerup', { ...pointer, buttons: 0 }));
-  el.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0 }));
-  el.dispatchEvent(new MouseEvent('click', { ...base, buttons: 0 }));
 }
 
 export const controller = new Controller();

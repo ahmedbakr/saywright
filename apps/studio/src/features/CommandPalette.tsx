@@ -10,12 +10,10 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpToLine,
-  Camera,
   Check,
   CircleDot,
   CircleHelp,
   Code2,
-  Crosshair,
   Eraser,
   FlaskConical,
   Footprints,
@@ -47,7 +45,7 @@ import { apps, useApps } from '@/core/apps';
 import { controller } from '@/core/controller';
 import { experts } from '@/core/experts';
 import { sessions, useSessions } from '@/core/sessions';
-import { useHandLab, useSettings, type DevicePreset, type PanelTab } from '@/core/settings';
+import { useSettings, type DevicePreset, type PanelTab } from '@/core/settings';
 import { set, useStudio } from '@/core/store';
 import { tour } from '@/core/tour';
 import { shortcut } from '@/lib/format';
@@ -60,7 +58,6 @@ function Item({ icon, children, onSelect, kbd, value, keywords }: { icon: ReactN
       value={value}
       keywords={keywords}
       onSelect={onSelect}
-      data-hand
       className="flex h-9 cursor-default items-center gap-3 rounded-[8px] px-2.5 text-[13px] text-fg-2 data-[selected=true]:bg-hover data-[selected=true]:text-fg [&_svg]:size-[15px] [&_svg]:text-fg-3"
     >
       {icon}
@@ -95,8 +92,6 @@ export function CommandPalette() {
   const hasSelection = useStudio((s) => !!s.selection);
   const appOpen = useStudio((s) => !!s.status?.app);
   const current = useStudio((s) => s.status?.app?.id ?? null);
-  const cam = useStudio((s) => s.camera.status);
-  const handLab = useHandLab();
   const rec = useStudio((s) => s.recorder);
   const recording = useSessions((s) => s.live.status === 'recording');
   const linked = useApps((s) => s.apps);
@@ -221,17 +216,7 @@ export function CommandPalette() {
               </Item>
             </Group>
           )}
-          <Group heading={handLab ? 'Hand and voice' : 'Voice'}>
-            {handLab && (
-              <>
-                <Item icon={<Camera />} kbd="C" onSelect={run(() => controller.toggleCamera())}>
-                  {cam === 'on' ? 'Turn off hand control' : 'Turn on hand control'}
-                </Item>
-                <Item icon={<Crosshair />} onSelect={run(() => set({ overlay: 'calibrate', calibrateReturn: null }))}>
-                  Calibrate reach
-                </Item>
-              </>
-            )}
+          <Group heading="Voice">
             <Item icon={<Mic />} kbd="Space" onSelect={run(() => controller.startTalk('toggle'))}>
               Start talking (hands-free)
             </Item>
@@ -279,7 +264,7 @@ export function CommandPalette() {
               Settings: usage and budget
             </Item>
             <Item icon={<CircleHelp />} kbd="?" onSelect={run(() => set({ overlay: 'help' }))} keywords={['help', 'keys']}>
-              {handLab ? 'Gestures, phrases and shortcuts' : 'Phrases and shortcuts'}
+              Phrases and shortcuts
             </Item>
             <Item icon={<Footprints />} onSelect={run(() => tour.start())} keywords={['tour', 'intro', 'getting started', 'onboarding', 'learn']}>
               Take the quick-start tour
@@ -287,7 +272,7 @@ export function CommandPalette() {
           </Group>
         </Command.List>
         {said && (
-          <button data-hand onClick={send} className="flex h-11 shrink-0 items-center gap-3 border-t border-line px-4 text-start text-[13px] text-fg-2 hover:bg-hover hover:text-fg [&_svg]:size-[15px]" data-send-request>
+          <button onClick={send} className="flex h-11 shrink-0 items-center gap-3 border-t border-line px-4 text-start text-[13px] text-fg-2 hover:bg-hover hover:text-fg [&_svg]:size-[15px]" data-send-request>
             <SendHorizontal className="shrink-0 text-ai-fg" />
             <span className="min-w-0 flex-1 truncate">
               Send as a request: “{said}” <span className="text-fg-3">· a quick edit, or {ai === 'AI' ? 'the AI' : ai}</span>

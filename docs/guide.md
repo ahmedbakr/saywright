@@ -1,6 +1,6 @@
 # Using the studio
 
-How to point, say what to change, and keep or undo the result; the three modes; writing a Playwright test by narrating a bug; the keyboard, voice and hand control. New to Saywright? [Getting started](getting-started.md) walks through all of it on the sample shop, with pictures. For linking apps see [Linking your apps](apps.md); for sessions, Autopilot and the Experts see the [documentation index](README.md).
+How to point, say what to change, and keep or undo the result; the three modes; writing a Playwright test by narrating a bug; the keyboard and voice. New to Saywright? [Getting started](getting-started.md) walks through all of it on the sample shop, with pictures. For linking apps see [Linking your apps](apps.md); for sessions, Autopilot and the Experts see the [documentation index](README.md).
 
 - [The one idea](#the-one-idea)
 - [Previews: keep or undo](#previews-keep-or-undo)
@@ -10,7 +10,6 @@ How to point, say what to change, and keep or undo the result; the three modes; 
 - [The screen](#the-screen)
 - [Keyboard](#keyboard)
 - [Voice](#voice)
-- [Hand control (Labs)](#hand-control-labs)
 - [A five-minute tour of the sample shop](#a-five-minute-tour-of-the-sample-shop)
 
 ## The one idea
@@ -111,7 +110,7 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 
 **The command palette** (<kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>⌘</kbd>+<kbd>K</kbd> on a Mac, [picture](media/guide/palette.png)) lists every action by name. <kbd>Enter</kbd> runs the highlighted one; to send what you typed as a request to the AI instead, choose its own row or press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> (<kbd>⌘</kbd>+<kbd>Enter</kbd> on a Mac).
 
-**Settings**: General (appearance, commit when you keep a change, sounds, the setup tour), Voice, AI, Usage and budget, Other AI apps ([MCP](mcp.md)), Google data ([Experts](experts.md#google-data)), Shortcuts, and Labs. Hand appears once hand control is on in Labs.
+**Settings**: General (appearance, commit when you keep a change, sounds, the setup tour), Voice, AI, Usage and budget, Other AI apps ([MCP](mcp.md)), Google data ([Experts](experts.md#google-data)), and Shortcuts.
 
 ## Keyboard
 
@@ -137,7 +136,6 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 | <kbd>\\</kbd> | Show or hide the side panel |
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd>) | Command palette |
 | <kbd>?</kbd> | Phrases and shortcuts |
-| <kbd>C</kbd> | Hand control on or off (with hand control on in Labs) |
 
 In your app's own tab, the **Record session** button has its own keys: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> starts and stops, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> marks a moment, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> hides the button (<kbd>Option</kbd> for <kbd>Alt</kbd> on a Mac).
 
@@ -180,23 +178,6 @@ Choose an Arabic variant in **Settings → Voice → Language**. What you say is
 | انزل لتحت، اطلع لفوق، اختار الأب | Scroll, select the parent |
 
 Anything else in Arabic goes to your AI as you said it.
-
-## Hand control (Labs)
-
-Hand control lets you point and pinch with your hand, tracked by your webcam, instead of the mouse. It is a Labs feature, off by default: turn it on in **Settings → Labs → Hand control** ([picture](media/guide/settings-labs.png)). A short setup then checks your camera and calibrates your reach. The camera images are processed in your browser by MediaPipe, Google's hand-tracking library, and never leave your computer; the studio blocks the usage logging MediaPipe has built in ([what leaves your computer](../SECURITY.md#what-leaves-your-computer)). `saywright setup --hand` downloads the hand model once; without it, the page loads it from Google.
-
-| Gesture | What it does |
-| --- | --- |
-| Point | Moves the cursor with your index finger |
-| Pinch | Edit mode: selects what is highlighted (pinch it again to deselect, pinch empty space to clear). Use and Write test: clicks. |
-| Pinch and hold | Adds what is highlighted to the selection, or takes it out |
-| Pinch and move | Scrolls the app like a touch screen |
-| Peace sign | Starts talking; pause to send |
-| Thumb up / thumb down (held) | Keep / undo the preview |
-| Open palm (held) | Stop: cancel listening or a request, then clear the selection |
-| Fist | Freezes the cursor while you move your hand back |
-
-**Settings → Hand** (shown once hand control is on): camera, reach (**Calibrate reach**), which hand, steadiness, pinch sensitivity, aim assist, **Select by resting** (point at something for a second to select it), and which gestures are on. Sit about an arm's length from the camera, with light on your face and hand.
 
 ## A five-minute tour of the sample shop
 

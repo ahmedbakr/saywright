@@ -11,7 +11,6 @@ function Tab({ value, children }: { value: string; children: React.ReactNode }) 
   return (
     <Tabs.Trigger
       value={value}
-      data-hand
       className="relative h-8 px-1 text-[12.5px] font-medium text-fg-3 transition-colors hover:text-fg-2 data-[state=active]:text-fg data-[state=active]:after:absolute data-[state=active]:after:inset-x-0 data-[state=active]:after:-bottom-px data-[state=active]:after:h-0.5 data-[state=active]:after:bg-fg"
     >
       {children}
@@ -28,7 +27,7 @@ function useShown<T>(items: T[], t: Strings): { shown: T[]; more: React.ReactNod
   const rest = items.length - count;
   const more =
     rest > 0 ? (
-      <button data-hand onClick={() => setCount(count + PAGE)} className="block w-full rounded-[8px] px-2.5 py-2 text-center text-[12px] font-medium text-fg-2 hover:bg-hover" data-show-more>
+      <button onClick={() => setCount(count + PAGE)} className="block w-full rounded-[8px] px-2.5 py-2 text-center text-[12px] font-medium text-fg-2 hover:bg-hover" data-show-more>
         {t.showMore(Math.min(PAGE, rest))}
       </button>
     ) : null;
@@ -58,7 +57,7 @@ export function Details({ analysis: a, start, onPick, lang, t }: { analysis: Ses
         <Tabs.Content value="errors" className="max-h-[420px] space-y-2 overflow-y-auto p-3 outline-none">
           {!errors.length && <p className="p-4 text-center text-[12.5px] text-fg-3">{t.noErrors}</p>}
           {errorRows.shown.map((g) => (
-            <button key={g.id} data-hand onClick={() => onPick(g.t)} className="block w-full rounded-[10px] bg-sunken p-3 text-start ring-1 ring-inset ring-line hover:ring-line-strong">
+            <button key={g.id} onClick={() => onPick(g.t)} className="block w-full rounded-[10px] bg-sunken p-3 text-start ring-1 ring-inset ring-line hover:ring-line-strong">
               <div className="flex items-center gap-2 text-[12.5px] font-medium text-bad">
                 {lang === 'ar' ? (g.titleAr ?? g.title) : g.title}
                 {g.count > 1 && <span className="rounded-[4px] bg-bad-soft px-1 text-[10.5px]">×{g.count}</span>}
@@ -122,7 +121,7 @@ export function Details({ analysis: a, start, onPick, lang, t }: { analysis: Ses
         </Tabs.Content>
         <Tabs.Content value="pages" className="max-h-[420px] overflow-y-auto p-2 outline-none">
           {pageRows.shown.map((p, i) => (
-            <button key={i} data-hand onClick={() => onPick(p.t)} className="flex w-full items-center gap-3 rounded-[8px] px-2.5 py-2 text-start hover:bg-hover">
+            <button key={i} onClick={() => onPick(p.t)} className="flex w-full items-center gap-3 rounded-[8px] px-2.5 py-2 text-start hover:bg-hover">
               <span className="tabular w-10 text-[11.5px] text-fg-3">{fmtClock(p.t - start)}</span>
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">{p.title || p.url}</span>
               <span className="truncate font-mono text-[11px] text-fg-3" dir="ltr">

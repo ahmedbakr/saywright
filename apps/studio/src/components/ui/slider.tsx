@@ -15,7 +15,6 @@ export function Slider({ value, onChange, min = 0, max = 1, step = 0.01, label }
         <S.Range className="absolute h-full rounded-full bg-human" />
       </S.Track>
       <S.Thumb
-        data-hand
         className="block size-[14px] rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,.15),0_1px_3px_rgba(0,0,0,.35)] outline-none transition-shadow focus-visible:shadow-[0_0_0_4px_var(--human-soft)]"
       />
     </S.Root>

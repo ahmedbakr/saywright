@@ -51,7 +51,6 @@ const VIEWS = {
   settings: later(() => import('@/features/SettingsDialog').then((m) => m.SettingsDialog)),
   palette: later(() => import('@/features/CommandPalette').then((m) => m.CommandPalette)),
   help: later(() => import('@/features/HelpDialog').then((m) => m.HelpDialog)),
-  calibrate: later(() => import('@/features/Calibration').then((m) => m.Calibration)),
   report: later(() => import('@/features/report/ReportView').then((m) => m.ReportView)),
 };
 
@@ -101,9 +100,8 @@ function LaterViews() {
       <Once of={VIEWS.settings} wanted={overlay === 'settings'} frame="Settings" />
       <Once of={VIEWS.palette} wanted={overlay === 'palette'} frame="Command palette" />
       <Once of={VIEWS.help} wanted={overlay === 'help'} frame="Help" />
-      {/* The setup steps (voice check, hand control), opened from Settings, Labs and the tour: small, so not loaded later. */}
+      {/* The voice check, opened from Settings and the tour: small, so not loaded later. */}
       <Onboarding />
-      <Once of={VIEWS.calibrate} wanted={overlay === 'calibrate'} frame="Calibration" />
       <Once of={VIEWS.report} wanted={report} />
     </>
   );

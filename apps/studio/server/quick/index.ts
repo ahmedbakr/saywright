@@ -126,7 +126,7 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
         const b = refs[1];
         const bWhere = locOf(b);
         if (!b || !bWhere) {
-          return { kind: 'message', tone: 'info', text: 'Point at a second thing for “that”, or select both first (hold a pinch, or ⇧ click, on each).' };
+          return { kind: 'message', tone: 'info', text: 'Point at a second thing for “that”, or select both first (⇧ click each).' };
         }
         if (!spec) return null;
         const bCode = bWhere.file === where.file ? code : project.read(bWhere.file);

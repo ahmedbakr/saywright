@@ -1,29 +1,10 @@
-import { Footprints, Grab, Hand, HandFist, ThumbsDown, ThumbsUp, X } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Footprints, X } from 'lucide-react';
 import { Button, IconButton } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
-import { PeaceGlyph, PinchGlyph, PointGlyph } from '@/components/ui/gestures';
 import { Kbd } from '@/components/ui/kbd';
 import { set, useStudio } from '@/core/store';
-import { useHandLab } from '@/core/settings';
 import { tour } from '@/core/tour';
-import { cn } from '@/lib/cn';
 import { shortcutsFor } from './SettingsDialog';
-
-// Icons in a table: they get their keys from the rows they are shown in.
-// oxlint-disable react/jsx-key
-const GESTURES: [ReactNode, string, string][] = [
-  [<PointGlyph />, 'Point', 'Move the cursor with your index finger.'],
-  [<PinchGlyph />, 'Pinch', 'Edit mode: select what is highlighted; pinch it again to deselect; pinch empty space to clear. Use and Write test: click.'],
-  [<PinchGlyph />, 'Pinch and hold', 'Add what is highlighted to the selection (or take it out), for “make this look like that”.'],
-  [<Grab />, 'Pinch and move', 'Scroll the app like a touch screen. The selection stays as it was.'],
-  [<PeaceGlyph />, 'Peace sign', 'Start talking. Pause to send.'],
-  [<ThumbsUp />, 'Thumb up', 'Keep the preview.'],
-  [<ThumbsDown />, 'Thumb down', 'Undo the preview.'],
-  [<Hand />, 'Open palm, held', 'Stop: cancel listening or a request, clear the selection.'],
-  [<HandFist />, 'Fist', 'Freeze the cursor while you reposition your hand.'],
-];
-// oxlint-enable react/jsx-key
 
 const PHRASES: [string, string][] = [
   ['make this bigger', 'Steps the size or padding prop up.'],
@@ -44,14 +25,13 @@ const PHRASES: [string, string][] = [
 export function HelpDialog() {
   const open = useStudio((s) => s.overlay === 'help');
   const appOpen = useStudio((s) => !!s.status?.app);
-  const handLab = useHandLab();
-  const shortcuts = shortcutsFor(handLab);
+  const shortcuts = shortcutsFor();
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => set({ overlay: o ? 'help' : null })}
-      title={handLab ? 'Gestures, phrases and shortcuts' : 'Phrases and shortcuts'}
-      className={handLab ? 'w-[min(980px,calc(100vw-32px))]' : 'w-[min(720px,calc(100vw-32px))]'}
+      title="Phrases and shortcuts"
+      className="w-[min(720px,calc(100vw-32px))]"
     >
       <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
         <div>
@@ -75,23 +55,7 @@ export function HelpDialog() {
           </IconButton>
         </div>
       </div>
-      <div className={cn('grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-5', handLab ? 'md:grid-cols-3' : 'md:grid-cols-2')}>
-        {handLab && (
-        <section>
-          <h3 className="mb-2.5 text-[12px] font-medium text-fg-3">Hand</h3>
-          <ul className="space-y-2.5">
-            {GESTURES.map(([icon, name, does]) => (
-              <li key={name} className="flex gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-human-soft text-human-fg [&_svg]:size-[17px]">{icon}</span>
-                <span>
-                  <span className="block text-[12.5px] font-medium text-fg">{name}</span>
-                  <span className="block text-[12px] leading-snug text-fg-3">{does}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-        )}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-5 md:grid-cols-2">
         <section>
           <h3 className="mb-2.5 text-[12px] font-medium text-fg-3">Say</h3>
           <ul className="space-y-2.5">

@@ -85,7 +85,6 @@ export function Scores({ scores, previous, report, t }: { scores: SessionScores;
           return (
             <button
               key={k}
-              data-hand
               onClick={() => setOpen(expanded ? null : k)}
               className={cn('group flex flex-col rounded-[14px] bg-raised p-3 text-start ring-1 ring-inset ring-line transition-shadow hover:ring-line-strong', expanded && 'ring-line-strong')}
             >

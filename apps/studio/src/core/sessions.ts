@@ -290,7 +290,7 @@ class StudioSessions {
     this.client.moment(reason);
   }
 
-  /** The element under the hand or mouse changed: what someone points at while talking is what they mean. */
+  /** The element under the mouse changed: what someone points at while talking is what they mean. */
   pointed(el: ElementInfo | null, via: 'hand' | 'mouse'): void {
     if (getS().live.status !== 'recording') return;
     const now = Date.now();

@@ -2,7 +2,6 @@ import { ArrowDownToLine, ArrowUpToLine, Code2, Copy, Component, Layers, ScanSea
 import { Button } from '@/components/ui/button';
 import { Badge, Empty, SectionTitle, Spinner } from '@/components/ui/misc';
 import { controller } from '@/core/controller';
-import { useHandLab } from '@/core/settings';
 import { useStudio, type InspectResult } from '@/core/store';
 import { cn } from '@/lib/cn';
 import { shortcut } from '@/lib/format';
@@ -12,14 +11,11 @@ export function InspectTab() {
   const selection = useStudio((s) => s.selection);
   const inspect = useStudio((s) => s.inspect);
   const loading = useStudio((s) => s.inspectLoading);
-  const handLab = useHandLab();
 
   if (!selection)
     return (
       <Empty icon={<ScanSearch />} title="Nothing selected">
-        {handLab
-          ? `In Edit mode, click an element in your app (or pinch it) to see its component, props and source. Pinch it again to deselect; hold the pinch (or ${shortcut('shift+click')}) to select several.`
-          : `In Edit mode, click an element in your app to see its component, props and source. Click it again to deselect; ${shortcut('shift+click')} selects several.`}
+        {`In Edit mode, click an element in your app to see its component, props and source. Click it again to deselect; ${shortcut('shift+click')} selects several.`}
       </Empty>
     );
 
@@ -40,7 +36,6 @@ export function InspectTab() {
             </div>
             {where ? (
               <button
-                data-hand
                 onClick={() => void controller.openInEditor(selection)}
                 className="mt-0.5 block max-w-full truncate font-mono text-[11.5px] text-fg-3 hover:text-fg-2 hover:underline"
                 title="Open in editor"
@@ -95,7 +90,7 @@ export function InspectTab() {
         <div>
           <SectionTitle
             action={
-              <button data-hand className="text-[11.5px] text-fg-3 hover:text-fg" onClick={() => controller.openFile(inspect.absPath, inspect.line, inspect.col)}>
+              <button className="text-[11.5px] text-fg-3 hover:text-fg" onClick={() => controller.openFile(inspect.absPath, inspect.line, inspect.col)}>
                 {inspect.file.split('/').pop()}:{inspect.line}
               </button>
             }
@@ -128,7 +123,6 @@ function Props({ inspect }: { inspect: InspectResult }) {
                 {p.options.map((o) => (
                   <button
                     key={o}
-                    data-hand
                     onClick={() => o !== p.value && void controller.setProp(p.name, o)}
                     className={cn(
                       'h-[24px] rounded-[6px] px-2 font-mono text-[11.5px] transition-colors',

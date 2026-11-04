@@ -50,7 +50,6 @@ If a studio already answers on the port, the command opens it instead of startin
 | `--no-speech` | Skips the speech models (Arabic and English, about 740 MB). |
 | `--best-arabic` | Adds the most accurate Arabic model without asking (1.6 GB more). |
 | `--no-best-arabic` | Doesn't add it, and doesn't ask. |
-| `--hand` | Adds the hand model (7.8 MB), for hand control in **Settings → Labs**. |
 
 What it downloads, once:
 
@@ -59,7 +58,6 @@ What it downloads, once:
 | On-device voice model (Moonshine tiny, English) | 28 MB | the npm registry | Voice commands checked on your computer. Without it, the browser's recogniser works alone. |
 | Speech models: Omnilingual (Arabic, English and more), Parakeet (English) | 279 MB + 460 MB | sherpa-onnx releases on GitHub | Session narration transcribed on your computer, and Arabic voice commands. |
 | Cohere Transcribe (optional) | 1.6 GB | sherpa-onnx releases on GitHub | The most accurate Arabic ([measured](speech-accuracy.md)). Asked in a terminal; skipped without one. |
-| Hand model (`--hand` only) | 7.8 MB | Google's MediaPipe models | Hand control. Without it, the studio's page loads it from Google. |
 | Test browser (in a checkout only) | | Playwright | Running the sample shop's generated tests. |
 
 You can also install speech models later in **Settings → Voice**, and the voice model from the same place.
@@ -126,7 +124,7 @@ The studio and the proxy listen on this computer only (`127.0.0.1`; the proxy al
 | `server.json` | Where the running studio listens, for `saywright mcp` |
 | `proxy-ports.json` | The proxy's port for each app address |
 | `google-service-account.json` | The Google service account key, if you added one (readable by you alone) |
-| `models/` | The on-device voice model and the hand model |
+| `models/` | The on-device voice model |
 | `speech/` | Speech models (`SAYWRIGHT_SPEECH_DIR` moves them) |
 | `target.json` | Left by `connect`; read and removed when the studio next starts |
 
@@ -140,7 +138,7 @@ The studio and the proxy listen on this computer only (`127.0.0.1`; the proxy al
 | `metrics.jsonl` | How you worked (the **Stats** tab) |
 | `google.json` | This app's Search Console and Analytics properties |
 
-Preferences you set in the studio's page (theme, layout, voice, hand tuning, Labs) are kept in your browser's local storage.
+Preferences you set in the studio's page (theme, layout, voice) are kept in your browser's local storage.
 
 ## Environment variables
 

@@ -51,7 +51,7 @@ function ChangeCard({ change: c, defaultOpen }: { change: Change; defaultOpen: b
   const removed = c.files.reduce((n, f) => n + f.removed, 0);
   return (
     <div className={cn('rounded-[10px] bg-raised ring-1 ring-inset', c.status === 'preview' ? 'ring-ai-line/40' : 'ring-line')} data-change={c.id}>
-      <button data-hand onClick={() => setOpen(!open)} className="flex w-full items-start gap-2.5 px-3 pb-2 pt-2.5 text-left">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-start gap-2.5 px-3 pb-2 pt-2.5 text-left">
         <span
           className={cn(
             'mt-px flex size-6 shrink-0 items-center justify-center rounded-[7px] [&_svg]:size-[13px]',
@@ -85,7 +85,7 @@ function ChangeCard({ change: c, defaultOpen }: { change: Change; defaultOpen: b
                 <div key={f.path} className="space-y-1.5">
                   <div className="flex items-center gap-1.5 text-[11.5px] text-fg-2">
                     <FileCode2 className="size-3.5 text-fg-3" />
-                    <button data-hand className="truncate font-mono hover:text-fg hover:underline" onClick={() => controller.openRelative(f.path, f.hunks[0]?.newStart ?? 1)} title={f.path}>
+                    <button className="truncate font-mono hover:text-fg hover:underline" onClick={() => controller.openRelative(f.path, f.hunks[0]?.newStart ?? 1)} title={f.path}>
                       {f.path}
                     </button>
                     {f.created && <Badge tone="ok">new</Badge>}

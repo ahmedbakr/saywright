@@ -1,13 +1,11 @@
 /**
- * Live studio state for React. High-frequency data (the hand cursor, mic
+ * Live studio state for React. High-frequency data (the replay's cursor, the mic
  * level) is drawn straight from the controller instead, so it never re-renders
- * the UI at camera frame rate.
+ * the UI every frame.
  */
 import { create } from 'zustand';
 import type { ElementInfo } from '@saywright/vite/protocol';
 import type { Change, Expectation, InspectResult, MetricsSummary, RecordedStep, StatusResponse, TestRunResult } from '@shared/api';
-import type { HoldKind } from './hand/engine';
-import type { Pose } from './hand/geometry';
 import type { Mode } from './commands';
 import type { AutopilotView } from './autopilot';
 import type { ReplayView } from './replay';
@@ -41,22 +39,6 @@ export interface Binding {
 interface PreviewTarget {
   changeId: string;
   el: ElementInfo;
-}
-
-interface CameraState {
-  status: 'off' | 'starting' | 'on' | 'error';
-  error: string | null;
-  fps: number;
-  delegate: 'GPU' | 'CPU' | null;
-}
-
-export interface HandHud {
-  present: boolean;
-  pose: Pose | 'pinch';
-  holdKind: HoldKind | null;
-  clutched: boolean;
-  dragging: boolean;
-  hand: 'left' | 'right' | null;
 }
 
 export interface VoiceState {
@@ -119,8 +101,8 @@ interface RequestState {
   kind: 'intent' | 'fix' | 'test';
 }
 
-export type Overlay = null | 'settings' | 'palette' | 'help' | 'onboarding' | 'calibrate';
-export type SettingsTab = 'general' | 'hand' | 'voice' | 'ai' | 'usage' | 'mcp' | 'services' | 'shortcuts' | 'labs';
+export type Overlay = null | 'settings' | 'palette' | 'help' | 'onboarding';
+export type SettingsTab = 'general' | 'voice' | 'ai' | 'usage' | 'mcp' | 'services' | 'shortcuts';
 
 interface StudioState {
   mode: Mode;
@@ -128,7 +110,7 @@ interface StudioState {
   statusError: string | null;
   /** `outdated`: the app answered, but its Saywright plugin and this studio can't work together; the side to update. */
   app: { connected: boolean; url: string; title: string; reloadKey: number; outdated?: 'plugin' | 'studio' };
-  pointer: 'hand' | 'mouse' | null;
+  pointer: 'mouse' | null;
   hover: ElementInfo | null;
   snapped: boolean;
   selection: ElementInfo | null;
@@ -138,8 +120,6 @@ interface StudioState {
   replay: ReplayView | null;
   /** Autopilot using the app: its step, and what it is doing. */
   autopilot: AutopilotView | null;
-  camera: CameraState;
-  hand: HandHud;
   voice: VoiceState;
   draft: Draft | null;
   island: Island;
@@ -157,8 +137,6 @@ interface StudioState {
   /** Focus the command input (bumped to trigger). */
   focusInput: number;
   onboardingStep: number;
-  /** Where the calibration screen returns to when it closes. */
-  calibrateReturn: Overlay;
 }
 
 export const initialRecorder: RecorderState = {
@@ -186,8 +164,6 @@ export const useStudio = create<StudioState>()(() => ({
   previewTargets: [],
   replay: null,
   autopilot: null,
-  camera: { status: 'off', error: null, fps: 0, delegate: null },
-  hand: { present: false, pose: 'other', holdKind: null, clutched: false, dragging: false, hand: null },
   voice: { supported: true, state: 'idle', trigger: null, words: [], bindings: [], error: null, last: null, model: 'idle', modelError: '' },
   draft: null,
   island: { kind: 'idle' },
@@ -203,7 +179,6 @@ export const useStudio = create<StudioState>()(() => ({
   history: [],
   focusInput: 0,
   onboardingStep: 0,
-  calibrateReturn: null,
 }));
 
 export const set = useStudio.setState;

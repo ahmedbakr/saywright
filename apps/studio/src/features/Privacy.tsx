@@ -21,7 +21,7 @@ export function WhatsSent({ className }: { className?: string }) {
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button data-hand className={cn('font-medium text-fg-2 underline decoration-line-strong underline-offset-2 hover:text-fg', className)}>
+        <button className={cn('font-medium text-fg-2 underline decoration-line-strong underline-offset-2 hover:text-fg', className)}>
           What’s sent?
         </button>
       </Popover.Trigger>

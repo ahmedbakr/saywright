@@ -196,7 +196,6 @@ async function firstRun(browser, only) {
     ['settings-ai', 'ai'],
     ['settings-voice', 'voice'],
     ['settings-mcp', 'mcp'],
-    ['settings-labs', 'labs'],
   ]) {
     if (!want(name)) continue;
     await openSettings(page, tab);

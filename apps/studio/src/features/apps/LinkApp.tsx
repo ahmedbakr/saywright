@@ -67,7 +67,6 @@ function TabButton({ value, icon, children }: { value: LinkTab; icon: ReactNode;
   return (
     <Tabs.Trigger
       value={value}
-      data-hand
       className={cn(
         'relative flex h-9 items-center gap-1.5 px-2.5 text-[12.5px] font-medium text-fg-3 transition-colors hover:text-fg-2 [&_svg]:size-[14px]',
         'data-[state=active]:text-fg data-[state=active]:after:absolute data-[state=active]:after:inset-x-2 data-[state=active]:after:-bottom-px data-[state=active]:after:h-0.5 data-[state=active]:after:bg-fg',
@@ -145,7 +144,7 @@ function FolderPicker({ onProbe }: { onProbe: (p: AppProbe) => void }) {
         <>
           <div className="flex flex-wrap gap-1.5">
             {listing.places.map((p) => (
-              <button key={p.path} data-hand onClick={() => void go(p.path)} className="inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] text-fg-2 ring-1 ring-inset ring-line hover:bg-hover">
+              <button key={p.path} onClick={() => void go(p.path)} className="inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-[11.5px] text-fg-2 ring-1 ring-inset ring-line hover:bg-hover">
                 {p.label === 'Home' ? <Home className="size-3" /> : <Folder className="size-3" />}
                 {p.label}
               </button>
@@ -173,7 +172,7 @@ function FolderPicker({ onProbe }: { onProbe: (p: AppProbe) => void }) {
 function FolderRow({ icon, name, app, onOpen, onUse }: { icon: ReactNode; name: string; app?: boolean; onOpen: () => void; onUse?: () => void }) {
   return (
     <div className="group flex items-center gap-2 border-b border-line px-3 py-1.5 last:border-0 hover:bg-hover" data-folder={name}>
-      <button data-hand onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2 text-start text-[12.5px] text-fg [&_svg]:size-[15px] [&_svg]:shrink-0 [&_svg]:text-fg-3">
+      <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2 text-start text-[12.5px] text-fg [&_svg]:size-[15px] [&_svg]:shrink-0 [&_svg]:text-fg-3">
         {icon}
         <span className="truncate">{name}</span>
         {app && <Badge tone="human">app</Badge>}

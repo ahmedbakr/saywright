@@ -116,7 +116,6 @@ function KeySection({ state, save }: { state: GoogleState; save: (b: Record<stri
         >
           <div className="relative min-w-0 flex-1">
             <input
-              data-hand
               type={show ? 'text' : 'password'}
               value={key}
               onChange={(e) => setKey(e.target.value)}
@@ -198,7 +197,6 @@ function AccountSection({ state, save }: { state: GoogleState; save: (b: Record<
         )}
         <div className="mt-2 space-y-2">
           <textarea
-            data-hand
             value={json}
             onChange={(e) => setJson(e.target.value)}
             placeholder={state.account ? 'Paste another key to replace it' : '{ "type": "service_account", "client_email": "…", "private_key": "…" }'}
@@ -278,11 +276,11 @@ function AppSection({ state, save, appName }: { state: GoogleState; save: (b: Re
         </div>
         <label className="block space-y-1">
           <span className="text-[12px] font-medium text-fg">Search Console property</span>
-          <input data-hand value={site} onChange={(e) => setSite(e.target.value)} placeholder="sc-domain:example.com  or  https://www.example.com/" spellCheck={false} className={cn(input, 'w-full font-mono')} />
+          <input value={site} onChange={(e) => setSite(e.target.value)} placeholder="sc-domain:example.com  or  https://www.example.com/" spellCheck={false} className={cn(input, 'w-full font-mono')} />
         </label>
         <label className="block space-y-1">
           <span className="text-[12px] font-medium text-fg">Google Analytics 4 property ID</span>
-          <input data-hand value={property} onChange={(e) => setProperty(e.target.value)} placeholder="123456789 (Admin → Property details)" inputMode="numeric" spellCheck={false} className={cn(input, 'w-full font-mono')} aria-invalid={badProperty} />
+          <input value={property} onChange={(e) => setProperty(e.target.value)} placeholder="123456789 (Admin → Property details)" inputMode="numeric" spellCheck={false} className={cn(input, 'w-full font-mono')} aria-invalid={badProperty} />
           {badProperty && <span className="block text-[11.5px] text-bad">A property ID is only numbers (not the G-… measurement ID).</span>}
         </label>
         <div className="flex items-center gap-2">

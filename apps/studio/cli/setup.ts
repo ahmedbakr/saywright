@@ -3,12 +3,11 @@
  *
  *   On-device voice model (28 MB)          voice commands understood without the browser's recogniser
  *   Speech models, Arabic and English      narration of test sessions transcribed on this computer, Arabic voice
- *   Hand model (7.8 MB, --hand)            hand control (Settings → Labs) without loading it from Google
  *   Test browser (in the repository)       running generated tests against the sample app
  */
 import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
-import { browserSpeechReady, ensureBrowserSpeech, ensureHandModel } from '../server/assets.ts';
+import { browserSpeechReady, ensureBrowserSpeech } from '../server/assets.ts';
 import { spawnProgramSync } from '../server/program.ts';
 import { speechDir } from '../server/layout.ts';
 import { MODELS } from '../server/speech/catalog.ts';
@@ -23,7 +22,6 @@ ${c.bold('saywright setup')} [options]: download the optional extras
   --no-speech           skip the speech models (Arabic and English, about 740 MB)
   --best-arabic         add the most accurate Arabic model without asking (1.6 GB more)
   --no-best-arabic      don't add it, don't ask
-  --hand                add the hand model, for hand control (Settings → Labs)
 `;
 
 /** One line that redraws itself, in a terminal; `done` clears it. */
@@ -67,7 +65,8 @@ export async function setup(argv: string[], ctx: CliContext): Promise<number> {
 
   if (!browserSpeechReady(dataDir)) console.log(c.dim('… On-device voice model (28 MB)'));
   await attempt('On-device voice model', () => ensureBrowserSpeech(dataDir), 'Voice uses the browser’s recogniser alone until it is there.');
-  if (values.hand) await attempt('Hand model', () => ensureHandModel(dataDir), 'Hand control loads it from Google’s servers instead.');
+  // Hand control was removed in 0.2.0; --hand is still accepted, so scripts that pass it keep working.
+  if (values.hand) console.log(c.dim('Hand control was removed in 0.2.0: there is no hand model to download.'));
 
   if (values.speech) {
     const speech = new SpeechService(speechDir(ctx.layout), ctx.layout.speechWorker, () => undefined);

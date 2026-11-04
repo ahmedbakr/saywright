@@ -69,7 +69,6 @@
     "@babel/parser": "^8.0.7",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
-    "@mediapipe/tasks-vision": "^1.1.0",
     "@saywright/vite": "*",
     "@tailwindcss/vite": "^4.3.3",
     "@types/cross-spawn": "^6.0.6",

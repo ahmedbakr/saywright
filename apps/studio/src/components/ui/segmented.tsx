@@ -44,7 +44,6 @@ export function Segmented<T extends string>({
           <ToggleGroup.Item
             key={o.value}
             value={o.value}
-            data-hand
             title={o.tip ? undefined : o.title}
             className={cn(
               'relative inline-flex select-none items-center justify-center gap-1.5 rounded-[6px] font-medium transition-colors duration-150 [&_svg]:size-[13px]',

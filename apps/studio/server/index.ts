@@ -725,7 +725,7 @@ export type Studio = Awaited<ReturnType<typeof createStudioApi>>;
 
 /**
  * Everything the studio serves besides its interface: the API, the script that makes apps pointable, the
- * accessibility checks, and the WebAssembly runtimes for hand tracking and speech. Vite (`npm run dev`) and the
+ * accessibility checks, and the WebAssembly runtime for on-device speech. Vite (`npm run dev`) and the
  * standalone server (`npx @saywright/studio`) mount the same list.
  */
 export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route: string, handler: Middleware]> {
@@ -773,10 +773,9 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
       return null;
     }
   };
-  const mediapipe = devDir('@mediapipe/tasks-vision', 'wasm');
   const ort = devDir('onnxruntime-web/wasm');
 
-  // The models the page runs itself (hand tracking, on-device speech), from the data folder.
+  // The models the page runs itself (on-device speech), from the data folder.
   const models = modelsDir(layout.dataDir);
   const modelFiles: Middleware = (req, res, next) => {
     // Under Vite the route is cut from req.url; the full address is kept in originalUrl.
@@ -787,7 +786,7 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
     } catch {
       return next();
     }
-    const stat = file.startsWith(models + path.sep) && /\.(task|onnx)$/.test(file) ? fs.statSync(file, { throwIfNoEntry: false }) : undefined;
+    const stat = file.startsWith(models + path.sep) && /\.onnx$/.test(file) ? fs.statSync(file, { throwIfNoEntry: false }) : undefined;
     if (!stat?.isFile()) return next();
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', stat.size);
@@ -804,8 +803,7 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
     ['/axe.min.js', axe],
     // Vite's dev server has a route of this name too: this one, mounted first, works the same in both.
     ['/__open-in-editor', editorRoute(() => studio.apps.active()?.project ?? null)],
-    // Hand tracking and on-device speech run on MediaPipe's and onnxruntime's WebAssembly.
-    ...(mediapipe ? [['/mediapipe/wasm', files(mediapipe)] as [string, Middleware]] : []),
+    // On-device speech runs on onnxruntime's WebAssembly.
     ...(ort ? [['/ort', files(ort)] as [string, Middleware]] : []),
   ];
 }

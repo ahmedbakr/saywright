@@ -1,13 +1,13 @@
-import { CameraOff, ChevronDown, CircleHelp, Laptop, Mic, MicOff, Monitor, MousePointerClick, PanelRight, RotateCw, Search, Settings2, Smartphone, SquareDashedMousePointer, Tablet } from 'lucide-react';
+import { ChevronDown, CircleHelp, Laptop, Mic, MicOff, Monitor, MousePointerClick, PanelRight, RotateCw, Search, Settings2, Smartphone, SquareDashedMousePointer, Tablet } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import type { ReactNode } from 'react';
 import { Logo } from '@/components/Logo';
 import { IconButton } from '@/components/ui/button';
-import { Dot, Spinner } from '@/components/ui/misc';
+import { Dot } from '@/components/ui/misc';
 import { Segmented } from '@/components/ui/segmented';
 import { Tip } from '@/components/ui/tooltip';
 import { controller } from '@/core/controller';
-import { useHandLab, useSettings, type DevicePreset } from '@/core/settings';
+import { useSettings, type DevicePreset } from '@/core/settings';
 import { set, useStudio, type Mode } from '@/core/store';
 import { cn } from '@/lib/cn';
 import { compact, shortcut, usd } from '@/lib/format';
@@ -39,7 +39,6 @@ export const MODE_LABEL: Record<Mode, string> = { edit: 'Edit', use: 'Use', reco
  * labels collapse to icons (names stay for screen readers and in tooltips).
  */
 export function TopBar() {
-  const handLab = useHandLab();
   const mode = useStudio((s) => s.mode);
   const status = useStudio((s) => s.status);
   const panelOpen = useSettings((s) => s.ui.panelOpen);
@@ -82,7 +81,6 @@ export function TopBar() {
         <span className="mx-1 h-4 w-px bg-line-strong" />
         <DeviceMenu />
         <span className="mx-1 h-4 w-px bg-line-strong" />
-        {handLab && <CameraChip />}
         <MicChip />
         <AiChip />
         <span className="mx-1 h-4 w-px bg-line-strong" />
@@ -91,7 +89,7 @@ export function TopBar() {
             <Search />
           </IconButton>
         </Tip>
-        <Tip label={handLab ? 'Gestures, phrases and shortcuts' : 'Phrases and shortcuts'} kbd="?">
+        <Tip label="Phrases and shortcuts" kbd="?">
           <IconButton onClick={() => set({ overlay: 'help' })} aria-label="Help" data-tour="help">
             <CircleHelp />
           </IconButton>
@@ -115,7 +113,6 @@ function Chip({ children, onClick, label, tone, ...rest }: { children: ReactNode
   return (
     <Tip label={label}>
       <button
-        data-hand
         {...rest}
         onClick={onClick}
         className={cn(
@@ -128,40 +125,6 @@ function Chip({ children, onClick, label, tone, ...rest }: { children: ReactNode
         {children}
       </button>
     </Tip>
-  );
-}
-
-function CameraChip() {
-  const cam = useStudio((s) => s.camera);
-  const present = useStudio((s) => s.hand.present);
-  const onboarded = useSettings((s) => s.onboarded);
-  const click = () => {
-    if (cam.status === 'on') controller.stopCamera();
-    else if (!onboarded) set({ overlay: 'onboarding' });
-    else void controller.startCamera();
-  };
-  if (cam.status === 'starting')
-    return (
-      <Chip onClick={() => undefined} label="Starting the camera and hand tracking">
-        <Spinner className="size-3" /> Hand
-      </Chip>
-    );
-  if (cam.status === 'error')
-    return (
-      <Chip onClick={click} label={cam.error ?? 'Camera error'} tone="bad">
-        <CameraOff /> Camera
-      </Chip>
-    );
-  if (cam.status === 'on')
-    return (
-      <Chip onClick={click} label={`Hand tracking on · ${cam.fps} fps · ${cam.delegate ?? ''} (C to turn off)`}>
-        <Dot tone={present ? 'human' : 'ok'} pulse={present} /> Hand
-      </Chip>
-    );
-  return (
-    <Chip onClick={click} label="Turn on hand control (C)">
-      <CameraOff /> Hand
-    </Chip>
   );
 }
 
@@ -235,7 +198,7 @@ function DeviceMenu() {
     <DropdownMenu.Root>
       <Tip label="Viewport size">
         <DropdownMenu.Trigger asChild>
-          <button data-hand className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-fg-2 hover:bg-hover hover:text-fg [&_svg]:size-[14px]" aria-label="Viewport size">
+          <button className="inline-flex h-7 items-center gap-1 rounded-[7px] px-2 text-fg-2 hover:bg-hover hover:text-fg [&_svg]:size-[14px]" aria-label="Viewport size">
             {d.icon}
             <ChevronDown className="!size-3 text-fg-3" />
           </button>
@@ -248,7 +211,6 @@ function DeviceMenu() {
               <DropdownMenu.RadioItem
                 key={k}
                 value={k}
-                data-hand
                 className="flex cursor-default items-center gap-2.5 rounded-[6px] px-2 py-1.5 text-[12.5px] text-fg outline-none data-[highlighted]:bg-hover data-[state=checked]:text-human-fg [&_svg]:size-[14px] [&_svg]:text-fg-3"
               >
                 {DEVICES[k].icon}

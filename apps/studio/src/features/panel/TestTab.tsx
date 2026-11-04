@@ -56,7 +56,7 @@ export function TestTab() {
           <SectionTitle
             action={
               !empty && (
-                <button data-hand className="flex items-center gap-1 text-[11.5px] text-fg-3 hover:text-fg" onClick={() => controller.newRecording()}>
+                <button className="flex items-center gap-1 text-[11.5px] text-fg-3 hover:text-fg" onClick={() => controller.newRecording()}>
                   <RotateCcw className="size-3" /> Start over
                 </button>
               )
@@ -73,7 +73,7 @@ export function TestTab() {
                   <span className="min-w-0 flex-1 truncate text-fg-2" title={s.description}>
                     {s.description}
                   </span>
-                  <button data-hand className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeStep(i)} aria-label="Remove step">
+                  <button className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeStep(i)} aria-label="Remove step">
                     <Trash2 className="size-3.5" />
                   </button>
                 </li>
@@ -99,7 +99,7 @@ export function TestTab() {
                     <span className="text-fg">{e.description}</span> should show <span className="font-mono text-human-fg">“{e.expected}”</span>
                     {e.actual && <span className="block truncate text-[11.5px] text-fg-3">It showed “{focusOn(e.actual, e.expected)}”</span>}
                   </span>
-                  <button data-hand className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeExpectation(i)} aria-label="Remove check">
+                  <button className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeExpectation(i)} aria-label="Remove check">
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
@@ -121,7 +121,6 @@ export function TestTab() {
                 }}
               >
                 <input
-                  data-hand
                   value={expected}
                   onChange={(e) => setExpected(e.target.value)}
                   placeholder={`${selection.name} should show…`}
@@ -154,7 +153,6 @@ export function TestTab() {
           <SectionTitle
             action={
               <button
-                data-hand
                 className="ml-3 min-w-0 truncate font-mono text-[11.5px] text-fg-3 hover:text-fg"
                 title={`Open ${rec.spec.path}`}
                 onClick={() => controller.openRelative(rec.spec!.path, 1)}

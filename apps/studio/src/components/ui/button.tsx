@@ -31,7 +31,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   return (
     <button
       ref={ref}
-      data-hand
       className={cn(
         'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-medium transition-[background-color,color,box-shadow,filter] duration-150 disabled:pointer-events-none disabled:opacity-45 [&_svg]:size-[14px] [&_svg]:shrink-0',
         variants[variant],
@@ -54,7 +53,6 @@ export const IconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTM
   return (
     <button
       ref={ref}
-      data-hand
       className={cn(
         'inline-flex shrink-0 select-none items-center justify-center rounded-[7px] text-fg-2 transition-colors duration-150 hover:bg-hover hover:text-fg disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-[15px]',
         size === 'md' ? 'size-8' : 'size-7 [&_svg]:size-[14px]',

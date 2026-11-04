@@ -70,7 +70,6 @@ export function Timeline({ items, omitted = 0, start, current, onPick, lang, t }
         {chips.map((c) => (
           <button
             key={c.id}
-            data-hand
             onClick={() => setFilter(c.id)}
             className={cn('h-6 rounded-full px-2.5 text-[11.5px] font-medium ring-1 ring-inset ring-line', filter === c.id ? 'bg-fg text-inverse ring-fg' : 'text-fg-2 hover:bg-hover')}
           >
@@ -97,7 +96,6 @@ const Row = memo(function Row({ x, start, active, text, detail, onPick }: { x: T
   return (
     <button
       data-tl={x.id}
-      data-hand
       onClick={() => onPick(x)}
       className={cn('flex w-full items-start gap-2 rounded-[8px] px-2 py-1.5 text-start transition-colors hover:bg-hover', active && 'bg-active', x.kind === 'speech' && 'py-2')}
     >

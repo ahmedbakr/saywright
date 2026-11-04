@@ -9,10 +9,9 @@ import { cn } from '@/lib/cn';
 import { shortcut } from '@/lib/format';
 import { controller } from '@/core/controller';
 import { selectedOf } from '@/core/selection';
-import { useHandLab, useSettings } from '@/core/settings';
+import { useSettings } from '@/core/settings';
 import { get, set, useStudio } from '@/core/store';
 import type { ElementInfo } from '@saywright/vite/protocol';
-import { CameraPip } from './CameraPip';
 import { Dock } from './Dock';
 import { Island } from './Island';
 import { Overlays } from './Overlays';
@@ -23,7 +22,6 @@ const PAD_TOP = 64;
 const PAD_BOTTOM = 104;
 
 export function Stage() {
-  const handLab = useHandLab();
   const status = useStudio((s) => s.status);
   const statusError = useStudio((s) => s.statusError);
   const connected = useStudio((s) => s.app.connected);
@@ -98,7 +96,7 @@ export function Stage() {
               />
             )}
             <EditLayer active={mode === 'edit' && !replaying} />
-            <Overlays scale={scale} width={w} height={h} />
+            <Overlays scale={scale} width={w} />
             {/* A replay is playing: it alone acts on the app (Stop hands it back). */}
             {replaying && <div className="absolute inset-0 z-[15] cursor-progress" data-replay-shield />}
             {/* A plain fade: it must never be left behind blocking the pointer. */}
@@ -116,7 +114,6 @@ export function Stage() {
       )}
       <Island />
       <Dock />
-      {handLab && <CameraPip />}
     </main>
   );
 }
@@ -194,7 +191,6 @@ function EditLayer({ active }: { active: boolean }) {
     <ContextMenu.Root onOpenChange={(open) => !open && setMenuFor(null)}>
       <ContextMenu.Trigger asChild disabled={!active}>
         <div
-          ref={(el) => controller.attachOverlay(el)}
           className={active ? 'absolute inset-0' : 'pointer-events-none absolute inset-0'}
           onPointerMove={(e) => controller.mouseMove(e.clientX, e.clientY, e.altKey)}
           onPointerLeave={() => controller.mouseLeave()}
@@ -252,7 +248,6 @@ function EditLayer({ active }: { active: boolean }) {
 function MenuItem({ icon, children, onSelect, hint }: { icon: ReactNode; children: ReactNode; onSelect: () => void; hint?: string }) {
   return (
     <ContextMenu.Item
-      data-hand
       onSelect={onSelect}
       className="flex cursor-default items-center gap-2.5 rounded-[6px] px-2 py-1.5 text-[12.5px] text-fg outline-none data-[highlighted]:bg-hover [&_svg]:size-[14px] [&_svg]:text-fg-3"
     >

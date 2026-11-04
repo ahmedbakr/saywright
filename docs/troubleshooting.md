@@ -59,14 +59,6 @@ npx @saywright/studio doctor      # in a checkout: npm run doctor
 | The test doesn't run | The generated test runs with your app's own Playwright: install `@playwright/test` in the app, and give its config a `baseURL` (see [Write test](guide.md#write-test-narrate-a-bug-get-a-playwright-test)). |
 | The accessibility checks couldn't run | The page's Content Security Policy blocked them. Pages shown through the studio's proxy don't have that problem. |
 
-## Hand control (Labs)
-
-| Problem | What to do |
-| --- | --- |
-| “Camera is blocked” | Allow the camera in the address bar, and in your system's privacy settings for your browser. |
-| “The camera is in use by another app” | Close Zoom, FaceTime or Teams, then try again. |
-| The cursor feels jumpy or slow | **Settings → Hand**: adjust **Steadiness**, and check the lighting. |
-
 ## Reporting a problem
 
 Open an [issue](https://github.com/ahmedbakr/saywright/issues) with what you did, what you expected, what happened, and the output of `npx @saywright/studio doctor`. Security problems: see [SECURITY.md](../SECURITY.md) instead.

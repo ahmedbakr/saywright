@@ -101,7 +101,7 @@ function FindingCard({ f, a, t, act, index, start, verdict, lang }: { f: ReportF
   return (
     <article className="group relative overflow-hidden rounded-[14px] bg-raised ring-1 ring-inset ring-line transition-shadow hover:ring-line-strong" data-finding={f.id} data-verdict={verdict?.verdict}>
       <span className={cn('absolute inset-y-0 start-0 w-[3px]', sev.bar)} />
-      <button data-hand onClick={() => setOpen(!open)} className="flex w-full items-start gap-3 px-4 pb-3 pt-3.5 text-start">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-start gap-3 px-4 pb-3 pt-3.5 text-start">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             {verdict && <VerdictChip r={verdict} t={t} lang={lang} />}
@@ -137,7 +137,7 @@ function FindingCard({ f, a, t, act, index, start, verdict, lang }: { f: ReportF
                   {f.quote}
                 </blockquote>
                 {seg && (
-                  <button data-hand title={t.play} onClick={() => act.play(seg)} className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-human text-[#1b1203] hover:brightness-105">
+                  <button title={t.play} onClick={() => act.play(seg)} className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-human text-[#1b1203] hover:brightness-105">
                     <Play className="size-3 fill-current" />
                   </button>
                 )}
@@ -206,7 +206,7 @@ function FindingCard({ f, a, t, act, index, start, verdict, lang }: { f: ReportF
             </div>
           </div>
           {shot && (
-            <button data-hand onClick={() => act.zoom(shot)} className="block self-start overflow-hidden rounded-[10px] ring-1 ring-line transition hover:ring-line-strong md:w-[260px]">
+            <button onClick={() => act.zoom(shot)} className="block self-start overflow-hidden rounded-[10px] ring-1 ring-line transition hover:ring-line-strong md:w-[260px]">
               <img src={act.shotUrl(shot)} alt="Screenshot at this moment" className="w-full object-cover object-top" loading="lazy" />
             </button>
           )}
@@ -269,7 +269,6 @@ export function Findings({
             k === 'all' || counts[k] ? (
               <button
                 key={k}
-                data-hand
                 onClick={() => setFilter(k)}
                 className={cn('h-6 rounded-full px-2.5 text-[11.5px] font-medium ring-1 ring-inset ring-line', filter === k ? 'bg-fg text-inverse ring-fg' : 'text-fg-2 hover:bg-hover')}
               >
@@ -287,7 +286,7 @@ export function Findings({
       </div>
       {aside.length > 0 && (
         <div className="rounded-[14px] ring-1 ring-inset ring-line" data-skipped>
-          <button data-hand onClick={() => setShowSkipped(!showSkipped)} className="flex w-full items-center gap-2 px-4 py-2.5 text-start text-[12.5px] font-medium text-fg-3 hover:text-fg-2">
+          <button onClick={() => setShowSkipped(!showSkipped)} className="flex w-full items-center gap-2 px-4 py-2.5 text-start text-[12.5px] font-medium text-fg-3 hover:text-fg-2">
             <EyeOff className="size-3.5" />
             {t.skippedTitle(aside.length)}
             <ChevronDown className={cn('ms-auto size-3.5 transition-transform', showSkipped && 'rotate-180')} />

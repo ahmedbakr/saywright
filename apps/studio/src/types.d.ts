@@ -1,6 +1,3 @@
-/** The @mediapipe/tasks-vision version the studio is built with (vite.config.ts). */
-declare const __MEDIAPIPE_VERSION__: string;
-
 declare module 'llama-tokenizer-js' {
   const tokenizer: {
     encode(text: string, addBosToken?: boolean, addPrecedingSpace?: boolean): number[];

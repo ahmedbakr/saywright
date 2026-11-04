@@ -20,7 +20,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tip } from '@/components/ui/tooltip';
 import { apps, useApps, type LinkTab } from '@/core/apps';
 import { set, useStudio } from '@/core/store';
-import { useHandLab, useSettings } from '@/core/settings';
+import { useSettings } from '@/core/settings';
 import { cn } from '@/lib/cn';
 import { ago, shortUrl } from '@/lib/format';
 import { AiChip } from '../TopBar';
@@ -73,7 +73,6 @@ export function Launcher() {
   const loaded = useApps((s) => s.loaded);
   const pref = useApps((s) => s.launcherPref);
   const linking = useApps((s) => s.linking);
-  const handLab = useHandLab();
   const open = shown || noApp;
   // A real modal: the studio behind it is inert until an app is open.
   const root = useRef<HTMLDivElement | null>(null);
@@ -117,7 +116,7 @@ export function Launcher() {
             <div className="ms-auto flex items-center gap-1">
               <AiChip />
               <span className="mx-1 h-4 w-px bg-line-strong" />
-              <Tip label={handLab ? 'Gestures, phrases and shortcuts' : 'Phrases and shortcuts'}>
+              <Tip label="Phrases and shortcuts">
                 <IconButton onClick={() => set({ overlay: 'help' })} aria-label="Help">
                   <CircleHelp />
                 </IconButton>
@@ -158,7 +157,7 @@ export function Launcher() {
                   ))}
                 </div>
                 {!list.some((a) => a.sample) && (
-                  <button data-hand onClick={() => void apps.sample()} className="mt-4 text-[12.5px] text-fg-3 underline decoration-line-strong underline-offset-2 hover:text-fg-2">
+                  <button onClick={() => void apps.sample()} className="mt-4 text-[12.5px] text-fg-3 underline decoration-line-strong underline-offset-2 hover:text-fg-2">
                     Try the sample shop (it has a real bug to find)
                   </button>
                 )}
@@ -169,7 +168,7 @@ export function Launcher() {
           </main>
           {loaded && (
             <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-5 py-3 text-[12px] text-fg-3">
-              <label className="flex items-center gap-2" data-hand>
+              <label className="flex items-center gap-2">
                 <Switch checked={pref} onCheckedChange={(on) => void apps.setLauncherPref(on)} aria-label="Show this list when the studio starts" />
                 Show this list when the studio starts
               </label>
@@ -204,7 +203,7 @@ function Welcome({ onLink }: { onLink: (how: LinkTab) => void }) {
           Cloned here, installed and started, ready to change.
         </Choice>
       </div>
-      <button data-hand onClick={() => void apps.sample()} className="mt-8 inline-flex items-center gap-1.5 text-[13px] font-medium text-human-fg hover:underline" data-try-sample>
+      <button onClick={() => void apps.sample()} className="mt-8 inline-flex items-center gap-1.5 text-[13px] font-medium text-human-fg hover:underline" data-try-sample>
         Or try the sample shop first <ArrowRight className="size-3.5" />
       </button>
       {touring && <p className="mt-2 text-[12.5px] text-fg-3">A one-minute tour starts once your app is open.</p>}
@@ -214,7 +213,7 @@ function Welcome({ onLink }: { onLink: (how: LinkTab) => void }) {
 
 function Choice({ icon, title, children, onClick, first }: { icon: ReactNode; title: string; children: ReactNode; onClick: () => void; first?: boolean }) {
   return (
-    <button data-hand onClick={onClick} data-first-action={first || undefined} className="group flex flex-col items-start rounded-[14px] bg-raised p-4 text-start ring-1 ring-inset ring-line transition hover:ring-line-strong">
+    <button onClick={onClick} data-first-action={first || undefined} className="group flex flex-col items-start rounded-[14px] bg-raised p-4 text-start ring-1 ring-inset ring-line transition hover:ring-line-strong">
       <span className="flex size-9 items-center justify-center rounded-[9px] bg-sunken text-fg-2 ring-1 ring-inset ring-line [&_svg]:size-[17px] group-hover:text-fg">{icon}</span>
       <span className="mt-3 block text-[13.5px] font-semibold text-fg">{title}</span>
       <span className="mt-1 block text-[12.5px] leading-relaxed text-fg-3">{children}</span>
@@ -268,7 +267,6 @@ function AppCard({ app, current, first }: { app: LinkedApp; current: boolean; fi
 function EnvRow({ app, env, chosen }: { app: LinkedApp; env: AppEnv; chosen: boolean }) {
   return (
     <button
-      data-hand
       onClick={() => void apps.open(app.id, env.id)}
       className={cn('flex w-full items-center gap-2 rounded-[8px] px-2 py-1 text-start text-[12px] hover:bg-hover', chosen ? 'text-fg-2' : 'text-fg-3')}
       title={`Open ${env.label}: ${env.url}`}
@@ -389,7 +387,7 @@ function EditApp({ app, what, onClose }: { app: LinkedApp; what: 'name' | 'start
         {what === 'env' && (
           <div className="mt-3 flex gap-1.5">
             {['Staging', 'Production', 'Preview'].map((l) => (
-              <button key={l} type="button" data-hand onClick={() => setLabel(l)} className={cn('h-7 rounded-full px-3 text-[12px] ring-1 ring-inset', label === l ? 'bg-fg text-inverse ring-fg' : 'text-fg-2 ring-line hover:bg-hover')}>
+              <button key={l} type="button" onClick={() => setLabel(l)} className={cn('h-7 rounded-full px-3 text-[12px] ring-1 ring-inset', label === l ? 'bg-fg text-inverse ring-fg' : 'text-fg-2 ring-line hover:bg-hover')}>
                 {l}
               </button>
             ))}
@@ -448,7 +446,7 @@ export function OpeningCard() {
         </div>
         {lines.length > 1 && (
           <div className="border-t border-line">
-            <button data-hand onClick={() => setLog(!log)} className="flex w-full items-center gap-1.5 px-5 py-2 text-start text-[12px] text-fg-3 hover:text-fg-2">
+            <button onClick={() => setLog(!log)} className="flex w-full items-center gap-1.5 px-5 py-2 text-start text-[12px] text-fg-3 hover:text-fg-2">
               <ChevronDown className={cn('size-3.5 transition-transform', (log || failed) && 'rotate-180')} />
               Its output
             </button>

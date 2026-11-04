@@ -19,7 +19,6 @@ export function Select<T extends string>({
   return (
     <S.Root value={value} onValueChange={(v) => onChange(v as T)}>
       <S.Trigger
-        data-hand
         className={cn(
           'inline-flex h-8 min-w-[160px] items-center justify-between gap-2 rounded-[8px] bg-raised px-2.5 text-[12.5px] text-fg ring-1 ring-inset ring-line-strong hover:bg-hover',
           className,
@@ -37,7 +36,6 @@ export function Select<T extends string>({
               <S.Item
                 key={o.value}
                 value={o.value}
-                data-hand
                 className="relative flex cursor-default select-none items-center gap-2 rounded-[6px] py-1.5 pl-7 pr-3 text-[12.5px] text-fg outline-none data-[highlighted]:bg-hover"
               >
                 <S.ItemIndicator className="absolute left-2">

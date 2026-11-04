@@ -1,4 +1,4 @@
-import { ChartLine, Download, FlaskConical, Gauge, Hand, Keyboard, Mic, Plug, SlidersHorizontal, Sparkles, X } from 'lucide-react';
+import { ChartLine, Download, Gauge, Keyboard, Mic, Plug, SlidersHorizontal, Sparkles, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Button, IconButton } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
@@ -8,11 +8,10 @@ import { Segmented } from '@/components/ui/segmented';
 import { Select } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Switch, SwitchLabel } from '@/components/ui/switch';
-import { listCameras } from '@/core/camera';
 import { controller } from '@/core/controller';
 import { NOT_DOWNLOADED } from '@/core/voice/engine';
 import { api } from '@/lib/api';
-import { pinchFromSensitivity, sensitivityFromPinch, useHandLab, useSettings, type SpeechEngine, type Theme } from '@/core/settings';
+import { useSettings, type SpeechEngine, type Theme } from '@/core/settings';
 import { set, useStudio, type HeardSentence, type SettingsTab } from '@/core/store';
 import { tour } from '@/core/tour';
 import { cn } from '@/lib/cn';
@@ -20,32 +19,29 @@ import { keys, ms } from '@/lib/format';
 import { AiSettings, McpSettings, UsageSettings } from './settings/AiSettings';
 import { ServicesSettings } from './settings/ServicesSettings';
 import { AccuracyCheck, SpeechModels } from './settings/SpeechSettings';
+import { VOICE_STEP } from './Onboarding';
 
 const NAV: { id: SettingsTab; label: string; icon: ReactNode }[] = [
   { id: 'general', label: 'General', icon: <SlidersHorizontal /> },
-  { id: 'hand', label: 'Hand', icon: <Hand /> },
   { id: 'voice', label: 'Voice', icon: <Mic /> },
   { id: 'ai', label: 'AI', icon: <Sparkles /> },
   { id: 'usage', label: 'Usage and budget', icon: <Gauge /> },
   { id: 'mcp', label: 'Other AI apps', icon: <Plug /> },
   { id: 'services', label: 'Google data', icon: <ChartLine /> },
   { id: 'shortcuts', label: 'Shortcuts', icon: <Keyboard /> },
-  { id: 'labs', label: 'Labs', icon: <FlaskConical /> },
 ];
 
 export function SettingsDialog() {
   const open = useStudio((s) => s.overlay === 'settings');
   const tab = useStudio((s) => s.settingsTab);
-  const handLab = useHandLab();
   return (
     <Dialog open={open} onOpenChange={(o) => set({ overlay: o ? 'settings' : null })} title="Settings" className="h-[600px] w-[min(780px,calc(100vw-32px))]">
       <div className="flex h-full min-h-0">
         <nav className="flex w-[188px] shrink-0 flex-col gap-0.5 border-r border-line bg-sunken/50 p-2">
           <div className="px-2 pb-2 pt-1.5 text-[13px] font-semibold text-fg">Settings</div>
-          {NAV.filter((n) => n.id !== 'hand' || handLab).map((n) => (
+          {NAV.map((n) => (
             <button
               key={n.id}
-              data-hand
               onClick={() => set({ settingsTab: n.id })}
               className={cn(
                 'flex h-8 items-center gap-2.5 rounded-[7px] px-2 text-[12.5px] font-medium transition-colors [&_svg]:size-[15px]',
@@ -63,15 +59,12 @@ export function SettingsDialog() {
           </IconButton>
           <div className="px-6 pb-8 pt-5">
             {tab === 'general' && <General />}
-            {tab === 'hand' && handLab && <HandSettings />}
             {tab === 'voice' && <VoiceSettings />}
             {tab === 'ai' && <AiSettings />}
             {tab === 'usage' && <UsageSettings />}
             {tab === 'mcp' && <McpSettings />}
             {tab === 'services' && <ServicesSettings />}
             {tab === 'shortcuts' && <Shortcuts />}
-            {tab === 'labs' && <Labs />}
-            {tab === 'hand' && !handLab && <Labs />}
           </div>
         </div>
       </div>
@@ -107,7 +100,6 @@ function Row({ label, hint, children, stack }: { label: ReactNode; hint?: ReactN
 }
 
 function General() {
-  const handLab = useHandLab();
   const theme = useSettings((s) => s.theme);
   const sounds = useSettings((s) => s.voice.sounds);
   const commit = useSettings((s) => s.ui.commitOnKeep);
@@ -144,95 +136,15 @@ function General() {
           Take the tour
         </Button>
       </Row>
-      <Row label={handLab ? 'Voice and hand setup' : 'Voice check'} hint={handLab ? 'The camera, reach and pinch practice for hand control, then talking.' : 'Hold Space and talk, to check the studio hears you.'}>
-        <Button size="sm" onClick={() => set({ overlay: 'onboarding', onboardingStep: handLab ? 0 : 4 })}>
-          {handLab ? 'Set up' : 'Check'}
+      <Row label="Voice check" hint="Hold Space and talk, to check the studio hears you.">
+        <Button size="sm" onClick={() => set({ overlay: 'onboarding', onboardingStep: VOICE_STEP })}>
+          Check
         </Button>
       </Row>
-      <Row label="Reset all settings" hint={handLab ? 'Theme, layout, voice, hand tuning and calibration, and Labs go back to their defaults.' : 'Theme, layout, voice and Labs settings go back to their defaults.'}>
+      <Row label="Reset all settings" hint="Theme, layout and voice settings go back to their defaults.">
         <Button size="sm" variant="danger" onClick={() => st.reset()}>
           Reset
         </Button>
-      </Row>
-    </>
-  );
-}
-
-function HandSettings() {
-  const cam = useStudio((s) => s.camera);
-  const s = useSettings();
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  useEffect(() => {
-    void listCameras().then((d) => setDevices(d.filter((x) => x.deviceId)));
-  }, [cam.status]);
-  const e = s.engine;
-  return (
-    <>
-      <Title sub="Point with your index finger. Pinch thumb and index to select or click. Everything runs on this computer; video never leaves it.">Hand control</Title>
-      <Row
-        label="Hand control"
-        hint={cam.status === 'on' ? `Tracking at ${cam.fps} fps on the ${cam.delegate}.` : cam.status === 'error' ? cam.error : 'Uses your camera to track one hand.'}
-      >
-        <div className="flex items-center gap-2">
-          {cam.status === 'starting' && <Spinner className="text-fg-3" />}
-          <Switch checked={cam.status === 'on' || cam.status === 'starting'} onCheckedChange={(v) => (v ? void controller.startCamera() : controller.stopCamera())} />
-        </div>
-      </Row>
-      {devices.length > 1 && (
-        <Row label="Camera">
-          <Select
-            value={s.camera.deviceId ?? devices[0]?.deviceId}
-            onChange={(id) => {
-              s.setCamera({ deviceId: id });
-              if (cam.status === 'on') void controller.startCamera(id);
-            }}
-            options={devices.map((d, i) => ({ value: d.deviceId, label: d.label || `Camera ${i + 1}` }))}
-            className="w-[220px]"
-          />
-        </Row>
-      )}
-      <Row label="Reach" hint="Map your comfortable pointing area to the screen. Recalibrate if corners are hard to reach.">
-        <Button size="sm" onClick={() => set({ overlay: 'calibrate', calibrateReturn: 'settings' })}>
-          Calibrate…
-        </Button>
-      </Row>
-      <Row label="Which hand" hint="With two hands in view, follow this one.">
-        <Segmented
-          value={e.hand}
-          onChange={(v) => s.setEngine({ hand: v })}
-          options={[
-            { value: 'any', label: 'Either' },
-            { value: 'left', label: 'Left' },
-            { value: 'right', label: 'Right' },
-          ]}
-        />
-      </Row>
-      <Row label="Steadiness" hint="Steadier filters out tremor; responsive follows fast moves with less lag." stack>
-        <SliderRow left="Responsive" right="Steady" value={e.steadiness} onChange={(v) => s.setEngine({ steadiness: v })} />
-      </Row>
-      <Row label="Pinch sensitivity" hint="Lighter means a smaller pinch counts as a click." stack>
-        <SliderRow left="Firm" right="Light" value={sensitivityFromPinch(e.pinchOn)} onChange={(v) => s.setEngine(pinchFromSensitivity(v))} />
-      </Row>
-      <Row label="Aim assist" hint="How far the cursor reaches to snap onto small targets." stack>
-        <SliderRow left="Off" right="Strong" value={s.aimAssist / 48} onChange={(v) => s.set({ aimAssist: Math.round(v * 48) })} />
-      </Row>
-      <Row label="Select by resting" hint="In Edit mode, pointing at something for a second selects it, without a pinch.">
-        <Switch checked={s.dwellSelect} onCheckedChange={(v) => s.set({ dwellSelect: v })} />
-      </Row>
-      <Row label="Peace sign starts talking" hint="Hold ✌ briefly; pause to send. No keyboard needed.">
-        <Switch checked={e.talkEnabled} onCheckedChange={(v) => s.setEngine({ talkEnabled: v })} />
-      </Row>
-      <Row label="Thumbs keep and undo" hint="Thumb up keeps the preview, thumb down undoes it.">
-        <Switch checked={e.thumbsEnabled} onCheckedChange={(v) => s.setEngine({ thumbsEnabled: v })} />
-      </Row>
-      <Row label="Open palm stops" hint="Hold an open hand still to cancel listening or a running request.">
-        <Switch checked={e.palmEnabled} onCheckedChange={(v) => s.setEngine({ palmEnabled: v })} />
-      </Row>
-      <Row label="Show hand skeleton">
-        <Switch checked={s.camera.skeleton} onCheckedChange={(v) => s.setCamera({ skeleton: v })} />
-      </Row>
-      <Row label="Show gesture legend">
-        <Switch checked={s.camera.legend} onCheckedChange={(v) => s.setCamera({ legend: v })} />
       </Row>
     </>
   );
@@ -513,22 +425,20 @@ const SHORTCUTS: [string, string[]][] = [
   ['Add to the selection, or take out', keys('shift+Click')],
   ['Select inner element', keys('alt+Click')],
   ['Edit · Use · Write test', ['E', 'U', 'R']],
-  ['Hand control on/off (Labs)', ['C']],
   ['Toggle panel', ['\\']],
   ['Command palette', keys('mod+k')],
   ['Help', ['?']],
 ];
 
-/** The shortcuts that apply: hand control's only with the Labs feature on. */
-export const shortcutsFor = (handLab: boolean) => SHORTCUTS.filter(([, keys]) => handLab || keys[0] !== 'C');
+/** The studio's keyboard shortcuts (Help shows them too). */
+export const shortcutsFor = () => SHORTCUTS;
 
 function Shortcuts() {
-  const handLab = useHandLab();
   return (
     <>
       <Title>Keyboard shortcuts</Title>
       <div className="divide-y divide-line">
-        {shortcutsFor(handLab).map(([label, keys]) => (
+        {shortcutsFor().map(([label, keys]) => (
           <div key={label} className="flex items-center justify-between py-2.5">
             <span className="text-[12.5px] text-fg-2">{label}</span>
             <span className="flex gap-1">
@@ -541,26 +451,3 @@ function Shortcuts() {
   );
 }
 
-/** Features in development, off until turned on here. */
-function Labs() {
-  const hand = useHandLab();
-  const setLabs = useSettings((s) => s.setLabs);
-  return (
-    <>
-      <Title sub="Features still in development. They work, but may change or go away in a later release.">Labs</Title>
-      <Row
-        label="Hand control"
-        hint="Point and pinch with your hand instead of the mouse, and use gestures to keep, undo and talk. Uses your webcam; video never leaves this computer."
-      >
-        <Switch
-          checked={hand}
-          onCheckedChange={(on) => {
-            setLabs({ hand: on });
-            if (on) set({ overlay: 'onboarding', onboardingStep: 1 });
-          }}
-          aria-label="Hand control"
-        />
-      </Row>
-    </>
-  );
-}

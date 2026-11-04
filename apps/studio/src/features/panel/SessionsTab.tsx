@@ -49,7 +49,7 @@ export function SessionsTab() {
           const found = n != null ? `${n} ${n === 1 ? 'finding' : 'findings'}` : `${m.counts.errors + m.counts.failedRequests + m.counts.frustration} issues`;
           return (
             <div key={m.id} className="group flex items-center gap-3 rounded-[10px] px-2.5 py-2 ring-1 ring-inset ring-transparent hover:bg-hover hover:ring-line">
-              <button data-hand onClick={() => sessions.openReport(m.id)} className="flex min-w-0 flex-1 items-center gap-3 text-start">
+              <button onClick={() => sessions.openReport(m.id)} className="flex min-w-0 flex-1 items-center gap-3 text-start">
                 <span
                   className={cn('flex size-9 shrink-0 items-center justify-center rounded-[9px] text-[13px] font-semibold tabular')}
                   style={score != null ? { background: scoreTone(score).soft, color: scoreTone(score).color } : undefined}

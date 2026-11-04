@@ -27,7 +27,6 @@ export function Switch({
       id={id}
       aria-label={label}
       aria-labelledby={labelledBy ?? (label ? undefined : rowLabel)}
-      data-hand
       checked={checked}
       disabled={disabled}
       onCheckedChange={onCheckedChange}

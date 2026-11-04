@@ -22,7 +22,7 @@ function sample(into: number[], v: unknown, positive = false): void {
 }
 
 /**
- * How the studio is used in an app: the commands given (spoken or typed, pointing with the hand or the mouse), the
+ * How the studio is used in an app: the commands given (spoken or typed, and whether the mouse pointed), the
  * changes kept and undone, the tests run. Each event is appended to .saywright/metrics.jsonl in the app (exported
  * from Stats); the studio itself keeps only the counts and the latest values its Stats show.
  */

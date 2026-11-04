@@ -199,10 +199,6 @@ Open **Settings**: the icon next to **Help** (<kbd>?</kbd>) at the right of the 
 
 <img src="media/guide/settings-mcp.png" alt="Settings → Other AI apps: connecting coding agents over MCP" width="880">
 
-**Labs.** Features still in development. **Hand control** lets you point and pinch with your hand, tracked by your webcam; it is off until you turn it on. Details: [Hand control](guide.md#hand-control-labs).
-
-<img src="media/guide/settings-labs.png" alt="Settings → Labs: Hand control, off" width="880">
-
 Two more ways to find anything: <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd>) opens the command palette, every action by name, and <kbd>?</kbd> shows the phrases and shortcuts.
 
 <p>
@@ -226,6 +222,6 @@ To put the sample shop back as it was: delete `~/.saywright/sample-shop` and rem
 
 ## Where next
 
-- [Using the studio](guide.md): everything you can say, the keyboard, voice, hand control.
+- [Using the studio](guide.md): everything you can say, the keyboard and voice.
 - [Sessions and reports](session-report.md), [Autopilot](autopilot.md), [Experts](experts.md).
 - [Troubleshooting](troubleshooting.md), if something doesn't work as described here.

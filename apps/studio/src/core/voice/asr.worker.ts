@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 /**
- * Runs the on-device speech model off the main thread, so the hand cursor and
- * the UI stay smooth while it works.
+ * Runs the on-device speech model off the main thread, so the studio's UI stays
+ * smooth while it works.
  */
 import type { Tensor } from 'onnxruntime-web/wasm';
 import { Moonshine, SAMPLE_RATE } from './moonshine';

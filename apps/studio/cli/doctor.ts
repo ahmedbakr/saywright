@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { STUDIO_PORT } from '@saywright/vite/protocol';
-import { browserSpeechReady, handModelFile, isHandModel } from '../server/assets.ts';
+import { browserSpeechReady } from '../server/assets.ts';
 import { speechDir } from '../server/layout.ts';
 import { SpeechService } from '../server/speech/service.ts';
 import type { CliContext } from './index.ts';
@@ -59,7 +59,6 @@ export async function doctor(argv: string[], ctx: CliContext): Promise<number> {
 
   if (browserSpeechReady(layout.dataDir)) ok('On-device voice model');
   else warn('On-device voice model not downloaded: voice uses the browser’s recogniser alone', `Run ${ctx.clientDir ? 'npx @saywright/studio setup' : 'npm run setup'} to download it once (28 MB).`);
-  if (isHandModel(handModelFile(layout.dataDir))) ok('Hand model (for hand control, in Settings → Labs)');
 
   const speech = new SpeechService(speechDir(layout), layout.speechWorker, () => undefined).status();
   if (speech.runtime === 'missing') warn('The speech engine can’t run on this computer', 'Narration is still recorded; voice uses the browser’s recogniser.');

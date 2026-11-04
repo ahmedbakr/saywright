@@ -7,39 +7,24 @@ import { appPoint, E2E_SHOP, expectIsland, forgetTour, openStudio, resetAll, SHO
 
 test.beforeEach(() => resetAll());
 
-test('first run shows the quick-start tour, not the setup; the setup’s camera steps come up only when hand control is turned on in Labs', async ({ page }) => {
+test('first run shows the quick-start tour, not the setup; there is no hand control, and the voice check goes straight to talking', async ({ page }) => {
   await forgetTour();
   await openStudio(page, { theme: 'dark' });
   const tour = page.locator('[data-tour-card]');
   await expect(tour).toContainText('Point at something', { timeout: 15_000 });
   await expect(page.getByRole('dialog', { name: 'Set up Saywright' })).toHaveCount(0);
-  // Hand control (camera) is a Labs feature: no Hand chip, no C shortcut.
+  // Hand control (the camera) is gone: no Hand chip, and C does nothing.
   await expect(page.getByRole('button', { name: /^Hand/ })).toHaveCount(0);
   await page.keyboard.press('c');
-  expect(await page.evaluate(() => (window as any).__saywrightStore.get().camera.status)).toBe('off');
-  // Turned on in Settings → Labs, the camera steps of the setup come up; the tour waits behind them.
-  await page.getByRole('button', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: 'Labs' }).click();
-  await page.getByRole('switch', { name: 'Hand control' }).click();
-  await expect.poll(() => store<string | null>(page, 's.overlay')).toBe('onboarding');
-  const setup = page.getByRole('dialog', { name: 'Set up Saywright' });
-  await expect(setup).toContainText('Camera');
-  await expect(tour).toHaveCount(0);
-  // The dialog keeps its place from one step to the next (measured once it has come in).
-  const top = async () => (await setup.boundingBox())!.y;
-  await page.waitForTimeout(400);
-  const before = await top();
-  await setup.getByRole('button', { name: 'Skip hand control' }).click();
-  await expect(setup.getByText('Talk to it')).toBeVisible();
-  await page.waitForTimeout(300);
-  expect(Math.abs((await top()) - before)).toBeLessThan(2);
-  await setup.getByRole('button', { name: 'Skip, I’ll type' }).click();
-  await expect(setup).toHaveCount(0);
-  await expect(tour).toContainText('Point at something');
+  await expect(page.getByRole('dialog', { name: 'Set up Saywright' })).toHaveCount(0);
   await tour.getByRole('button', { name: 'Skip tour' }).click();
-  // The voice check, from Settings: straight to talking, with no second welcome.
+  // Settings has no Labs or Hand page any more.
   await page.getByRole('button', { name: 'Settings' }).click();
+  await expect(page.getByRole('button', { name: 'Labs' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Hand', exact: true })).toHaveCount(0);
+  // The voice check, from Settings: straight to talking.
   await page.getByRole('button', { name: 'Check', exact: true }).click();
+  const setup = page.getByRole('dialog', { name: 'Set up Saywright' });
   await expect(setup.getByText('Talk to it')).toBeVisible();
   await expect(setup).not.toContainText('Point at your app. Say what to change.');
   await setup.getByRole('button', { name: 'Finish' }).click();
@@ -47,37 +32,22 @@ test('first run shows the quick-start tour, not the setup; the setup’s camera 
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('saywright.settings')!).state.onboarded)).toBe(true);
 });
 
-test('skipping hand control in the setup tour turns it off', async ({ page }) => {
-  // The camera answers late, as on a slow computer: skipped before it does, it must not come on after.
+test('settings saved by a studio that had hand control load without them', async ({ page }) => {
   await page.addInitScript(() => {
-    const devices = navigator.mediaDevices;
-    const open = devices.getUserMedia.bind(devices);
-    const cameras: MediaStream[] = ((window as unknown as { cameras: MediaStream[] }).cameras = []);
-    devices.getUserMedia = async (c) => {
-      if (!c?.video) return open(c);
-      await new Promise((r) => setTimeout(r, 1500));
-      const stream = await open(c);
-      cameras.push(stream);
-      return stream;
-    };
+    if (sessionStorage.getItem('seeded')) return;
+    sessionStorage.setItem('seeded', '1');
+    localStorage.setItem(
+      'saywright.settings',
+      JSON.stringify({ version: 2, state: { theme: 'dark', onboarded: true, camera: { enabled: true, deviceId: 'x' }, engine: { hand: 'right' }, aimAssist: 30, dwellSelect: true, labs: { hand: true }, voice: { lang: 'en-US', autoStopMs: 1500 } } }),
+    );
   });
-  await openStudio(page);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Labs' }).click();
-  await page.getByRole('switch', { name: 'Hand control' }).click();
-  await expect.poll(() => store<string | null>(page, 's.overlay')).toBe('onboarding');
-  await page.getByRole('button', { name: 'Skip hand control' }).click();
-  await expectIsland(page, /Hand control is off\. Turn it on again in Settings → Labs\./);
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('saywright.settings')!).state.labs.hand)).toBe(false);
-  await expect.poll(() => store<string>(page, 's.camera.status')).toBe('off');
-  // Once the camera has answered: still off, and the camera let go of.
-  await expect.poll(() => page.evaluate(() => (window as unknown as { cameras: MediaStream[] }).cameras.length)).toBeGreaterThan(0);
-  await page.waitForTimeout(1500);
-  expect(await store<string>(page, 's.camera.status')).toBe('off');
-  expect(await page.evaluate(() => (window as unknown as { cameras: MediaStream[] }).cameras.flatMap((s) => s.getVideoTracks()).filter((t) => t.readyState === 'live').length)).toBe(0);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: 'Labs' }).click();
-  await expect(page.getByRole('switch', { name: 'Hand control' })).not.toBeChecked();
+  await page.goto(STUDIO);
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('saywright.settings') ?? '{}').version)).toBe(3);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('saywright.settings')!).state);
+  expect(saved.theme).toBe('dark');
+  expect(saved.voice.autoStopMs).toBe(1500);
+  for (const gone of ['camera', 'engine', 'aimAssist', 'dwellSelect', 'labs']) expect(saved).not.toHaveProperty(gone);
 });
 
 test('saved settings apply from the first paint, and the script tag apps add loads the bridge', async ({ page }) => {

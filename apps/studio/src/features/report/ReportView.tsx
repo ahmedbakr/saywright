@@ -236,7 +236,6 @@ function useReplay(detail: SessionDetail): { can: boolean; steps: number; run: (
 function SideTab({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
-      data-hand
       role="tab"
       aria-selected={on}
       onClick={onClick}
@@ -259,7 +258,6 @@ function LangToggle({ detail, report }: { detail: SessionDetail; report: Session
         {(['en', 'ar'] as const).map((l) => (
           <button
             key={l}
-            data-hand
             role="radio"
             aria-checked={report?.lang === l}
             onClick={() => sessions.setReportLang(l)}
@@ -319,7 +317,7 @@ function Header({ detail, report, t, replay }: { detail: SessionDetail; report: 
             className="h-6 w-full max-w-[420px] rounded-[6px] bg-sunken px-1.5 text-[13.5px] font-semibold text-fg outline-none ring-1 ring-ai-line"
           />
         ) : (
-          <button data-hand onClick={() => setEditing(true)} className="max-w-full truncate text-start text-[13.5px] font-semibold text-fg hover:underline hover:decoration-line-strong">
+          <button onClick={() => setEditing(true)} className="max-w-full truncate text-start text-[13.5px] font-semibold text-fg hover:underline hover:decoration-line-strong">
             {meta.name}
           </button>
         )}
@@ -351,7 +349,6 @@ function Header({ detail, report, t, replay }: { detail: SessionDetail; report: 
         <a
           href={`/api/sessions/${meta.id}/export.html?download=1&lang=${report?.lang ?? ''}`}
           download
-          data-hand
           aria-disabled={!report || undefined}
           className={cn(
             'inline-flex h-7 shrink-0 select-none items-center gap-1.5 whitespace-nowrap rounded-[7px] bg-raised px-2.5 text-[12.5px] font-medium text-fg ring-1 ring-inset ring-line-strong transition-colors hover:bg-hover [&_svg]:size-[14px]',
@@ -554,7 +551,6 @@ function Suggestions({ report, t }: { report: SessionReport; t: Strings }) {
             {c.items.map(({ s, i }) => (
               <label
                 key={i}
-                data-hand
                 className={cn('flex cursor-default gap-2.5 rounded-[12px] bg-raised p-3 ring-1 ring-inset transition-shadow', picked.has(i) ? 'ring-ai-line' : 'ring-line hover:ring-line-strong')}
               >
                 <input type="checkbox" checked={picked.has(i)} onChange={() => toggle(i)} className="mt-0.5 size-3.5 shrink-0 accent-[var(--ai)]" />

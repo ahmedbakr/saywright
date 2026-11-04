@@ -25,7 +25,7 @@ export function AppSwitcher() {
   return (
     <DropdownMenu.Root onOpenChange={(o) => o && void apps.refresh()}>
       <DropdownMenu.Trigger asChild>
-        <button data-hand className="flex min-w-0 items-center gap-1.5 rounded-[8px] py-1 pl-1.5 pr-1 text-start hover:bg-hover" data-app-switcher>
+        <button className="flex min-w-0 items-center gap-1.5 rounded-[8px] py-1 pl-1.5 pr-1 text-start hover:bg-hover" data-app-switcher>
           <Dot tone={connected ? 'ok' : 'off'} />
           <span className="truncate text-[13px] font-medium text-fg">{current?.name ?? (status ? 'No app open' : 'Connecting…')}</span>
           {current && current.envs.length > 1 && <span className="shrink-0 rounded-[5px] bg-active px-1.5 text-[10.5px] font-medium text-fg-2">{current.env.label}</span>}

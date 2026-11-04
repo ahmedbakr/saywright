@@ -1,7 +1,6 @@
 /**
  * Shared helpers for the end-to-end tests: a fresh copy of the sample app per
- * test, simulated speech recognition, and a "hand" driven by real MediaPipe
- * landmarks (recorded from photos), fed into the studio at 30 fps.
+ * test, and simulated speech recognition.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,9 +18,6 @@ export const E2E_SHOP = path.resolve(here, '../.e2e-shop');
  * `chromium` channel) rather than its headless shell, whose microphone, camera and screen sharing differ from Chrome's.
  */
 export const BROWSER = process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : { channel: 'chromium' };
-const FIXTURES = JSON.parse(fs.readFileSync(path.resolve(here, '../fixtures/hands.json'), 'utf8'));
-/** A real pinch made from the pointing hand (thumb and index from a photo of one; see hands-real.json). */
-const POINTING_PINCH: number[][] = JSON.parse(fs.readFileSync(path.resolve(here, '../fixtures/hands-real.json'), 'utf8')).pointingPinches.find((p: { from: string }) => p.from === '249').lm;
 
 /** Settle anything a previous test left pending (changes, a session still recording), then put the sample app's sources back. */
 export async function resetAll(): Promise<void> {
@@ -138,84 +134,6 @@ export async function appPoint(page: Page, testId: string, fx = 0.5, fy = 0.5): 
   const b = await page.frameLocator('iframe').getByTestId(testId).boundingBox();
   if (!b) throw new Error(`no box for ${testId}`);
   return { x: b.x + b.width * fx, y: b.y + b.height * fy };
-}
-
-/**
- * Start feeding hand frames. `setHand` moves the hand or changes its pose;
- * the pump keeps sending frames at 30 fps like a camera would. `frameMs` sets
- * another rate, and `steady` stamps the frames exactly that far apart, as a
- * camera's clock does, instead of when the timer happened to fire.
- */
-export async function startHand(page: Page, { frameMs = 33, steady = false }: { frameMs?: number; steady?: boolean } = {}): Promise<void> {
-  await page.evaluate(([fixtures, pointingPinch, frameMs, steady]) => {
-    const w = window as any;
-    // Hand control is a Labs feature: a person using it has turned it on.
-    w.__saywrightSettings.getState().setLabs({ hand: true });
-    w.__saywrightStore.set({ camera: { status: 'on', error: null, fps: 30, delegate: 'GPU' } });
-    w.__hand = { pose: null, x: 0, y: 0, pinch: 0, raw: null };
-    const frame = () => {
-      const h = w.__hand;
-      if (!h.pose) return { t: performance.now(), hands: [], aspect: 4 / 3 };
-      const f = fixtures[h.pose];
-      const lm = f.hands[0].lm.map(([x, y, z]: number[]) => ({ x, y, z }));
-      const box = w.__saywrightSettings.getState().engine.box;
-      // `raw` places the fingertip in camera coordinates (for calibration); otherwise aim at a screen point.
-      const camX = h.raw ? h.raw.x : 1 - (box.x0 + (h.x / innerWidth) * (box.x1 - box.x0));
-      const camY = h.raw ? h.raw.y : box.y0 + (h.y / innerHeight) * (box.y1 - box.y0);
-      const dx = camX - lm[8].x;
-      const dy = camY - lm[8].y;
-      const pts = lm.map((p: { x: number; y: number; z: number }) => ({ x: p.x + dx, y: p.y + dy, z: p.z }));
-      if (h.pinch && h.pose === 'pointing_up') {
-        // As a real hand pinches: the index bends down onto the thumb (its tip moves), the thumb comes up.
-        for (const i of [1, 2, 3, 4, 6, 7, 8]) {
-          const [px, py, pz] = pointingPinch[i];
-          pts[i] = { x: pts[i].x + (px - lm[i].x) * h.pinch, y: pts[i].y + (py - lm[i].y) * h.pinch, z: pts[i].z + (pz - lm[i].z) * h.pinch };
-        }
-      } else if (h.pinch) {
-        const t = pts[4];
-        const i = pts[8];
-        pts[4] = { x: t.x + (i.x + 0.004 - t.x) * h.pinch, y: t.y + (i.y + 0.006 - t.y) * h.pinch, z: t.z + (i.z - t.z) * h.pinch };
-        pts[3] = { x: (pts[2].x + pts[4].x) / 2, y: (pts[2].y + pts[4].y) / 2, z: pts[4].z };
-      }
-      return { t: performance.now(), hands: [{ landmarks: pts, handedness: f.hands[0].handedness, score: 0.99 }], aspect: f.w / f.h };
-    };
-    clearInterval(w.__pump);
-    let n = 0;
-    const start = performance.now();
-    w.__pump = setInterval(() => w.__saywright.onFrame(steady ? { ...frame(), t: start + ++n * frameMs } : frame()), frameMs);
-  }, [FIXTURES, POINTING_PINCH, frameMs, steady] as const);
-}
-
-export async function setHand(page: Page, hand: { pose?: string | null; x?: number; y?: number; pinch?: number; raw?: { x: number; y: number } | null }): Promise<void> {
-  await page.evaluate((h) => Object.assign((window as any).__hand, h), hand);
-}
-
-/** Pinch and release at the current position, the way a hand does it (the fingers close and open over ~150 ms): a tap. */
-export async function pinchTap(page: Page): Promise<void> {
-  for (const k of [0.35, 0.7, 1]) {
-    await setHand(page, { pinch: k });
-    await page.waitForTimeout(50);
-  }
-  await page.waitForTimeout(150);
-  for (const k of [0.6, 0.25, 0]) {
-    await setHand(page, { pinch: k });
-    await page.waitForTimeout(50);
-  }
-  await page.waitForTimeout(200);
-}
-
-/** Pinch and keep the fingers together for `ms` before letting go: a hold. */
-export async function pinchHold(page: Page, ms = 1000): Promise<void> {
-  for (const k of [0.35, 0.7, 1]) {
-    await setHand(page, { pinch: k });
-    await page.waitForTimeout(50);
-  }
-  await page.waitForTimeout(ms);
-  for (const k of [0.6, 0.25, 0]) {
-    await setHand(page, { pinch: k });
-    await page.waitForTimeout(50);
-  }
-  await page.waitForTimeout(200);
 }
 
 /** The labels of everything selected, in the order picked. */

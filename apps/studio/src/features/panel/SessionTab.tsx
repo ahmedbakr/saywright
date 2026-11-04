@@ -58,7 +58,8 @@ export function SessionTab() {
       <div className="space-y-3 rounded-[10px] bg-raised p-3 ring-1 ring-inset ring-line">
         <SectionTitle>How you worked</SectionTitle>
         <Split label="Input" a={s.byInput.voice} b={s.byInput.typed} aLabel="voice" bLabel="typed" />
-        <Split label="Pointing" a={s.byPointer.hand} b={s.byPointer.mouse} aLabel="hand" bLabel="mouse" />
+        {/* Requests made while pointing at something (an older studio counted its hand control as pointing too). */}
+        <Split label="Pointing" a={s.byPointer.mouse + s.byPointer.hand} b={s.byPointer.none} aLabel="pointed" bLabel="not" />
       </div>
       <a href="/api/metrics/export" download>
         <Button size="sm" icon={<Download />} className="w-full">

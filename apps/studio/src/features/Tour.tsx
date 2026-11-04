@@ -17,6 +17,7 @@ import { tour, useTour } from '@/core/tour';
 import { escapeEndsTour, placeCard, stepText, tourSteps, type Box, type Side, type TourContext, type TourStep } from '@/core/tour-steps';
 import { cn } from '@/lib/cn';
 import { isMac } from '@/lib/format';
+import { VOICE_STEP } from './Onboarding';
 
 /** Where a step points: the first of `anchor` that shows (a list: everything in it, as one box), the rings, the sides its card tries. */
 interface Spec {
@@ -271,7 +272,7 @@ function Coach() {
             )}
             <span className="flex-1" />
             {step === 'say' && c.mic && (
-              <Button variant="ghost" onClick={() => set({ overlay: 'onboarding', onboardingStep: 4 })}>
+              <Button variant="ghost" onClick={() => set({ overlay: 'onboarding', onboardingStep: VOICE_STEP })}>
                 Check your mic
               </Button>
             )}

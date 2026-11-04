@@ -7,7 +7,7 @@ New here? Start with [Getting started](getting-started.md): `npx @saywright/stud
 | Page | What it covers |
 | --- | --- |
 | [Getting started](getting-started.md) | A twenty-minute walk through every feature on the sample shop, with a picture of each step and what you should see |
-| [Using the studio](guide.md) | Pointing, previews (keep or undo), the modes **Edit, Use, Write test**, what you can say, writing a Playwright test, the screen, keyboard, voice, hand control, and a five-minute tour of the sample shop |
+| [Using the studio](guide.md) | Pointing, previews (keep or undo), the modes **Edit, Use, Write test**, what you can say, writing a Playwright test, the screen, keyboard, voice, and a five-minute tour of the sample shop |
 | [Linking your apps](apps.md) | A folder, an address or a GitHub repository; how elements are traced to your code; `saywright connect`; the plugin; the proxy; monorepos; `saywright.config.json` |
 | [Sessions and reports](session-report.md) | **Record session**, what is captured, how the report is made, what you can do with it, and Replay & verify |
 | [Autopilot](autopilot.md) | Letting the AI test your app, its safety rules, and what it costs |

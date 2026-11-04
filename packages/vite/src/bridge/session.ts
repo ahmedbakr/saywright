@@ -821,7 +821,7 @@ export class SessionRecorder {
       if (e) this.record({ type: 'perf', metric: 'lcp', value: Math.round(e.startTime), el: e.element ? this.target(e.element) : null }, at(e));
     });
     // Only the app's own long tasks. A browser that runs the app in the studio's process (Chromium gives it one of
-    // its own) shows the studio's work (hand tracking, speech) here too, as an ancestor's.
+    // its own) shows the studio's work (speech, drawing) here too, as an ancestor's.
     const alone = window.top === window;
     const longTasks = PerformanceObserver.supportedEntryTypes?.includes('longtask') ?? false;
     observe('longtask', (es) => {

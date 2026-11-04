@@ -10,8 +10,6 @@ import { Kbd } from '@/components/ui/kbd';
 import { Tip } from '@/components/ui/tooltip';
 import { controller } from '@/core/controller';
 import { keepUndoHint, previewKey } from '@/core/keys';
-import { useSettings } from '@/core/settings';
-import { PIP_MARGIN, PIP_SIZES } from './CameraPip';
 import { useStudio, type InspectResult, type Mode } from '@/core/store';
 import { cn } from '@/lib/cn';
 import { isMac } from '@/lib/format';
@@ -65,9 +63,6 @@ export function Dock() {
   const hasPreview = useStudio((s) => s.changes.some((c) => c.status === 'preview'));
   // An app linked by its address alone has no code here to change: no edit suggestions to dead-end on.
   const hasCode = useStudio((s) => s.status?.target.hasCode ?? true);
-  const pipOn = useStudio((s) => s.camera.status === 'on' || s.camera.status === 'starting');
-  const pip = useSettings((s) => s.camera);
-  const avoid = pipOn && pip.corner.startsWith('b') ? PIP_SIZES[pip.pip].w + PIP_MARGIN * 2 : 0;
   const [text, setText] = useState('');
   const [hIndex, setHIndex] = useState(-1);
   const input = useRef<HTMLInputElement>(null);
@@ -142,7 +137,6 @@ export function Dock() {
   return (
     <div
       className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex flex-col items-center gap-2 px-4 transition-[padding] duration-200"
-      style={avoid ? (pip.corner === 'bl' ? { paddingLeft: avoid } : { paddingRight: avoid }) : undefined}
     >
       <AnimatePresence>
         {suggestions.length > 0 && !listening && (
@@ -159,7 +153,6 @@ export function Dock() {
             {suggestions.map((s, i) => (
               <button
                 key={s.label}
-                data-hand
                 onClick={s.run}
                 className={cn('glass inline-flex h-7 items-center gap-2 rounded-[8px] pr-2.5 text-[12px] font-medium text-fg-2 transition-colors hover:text-fg', alternatives ? 'pl-2.5' : 'pl-1.5')}
               >
@@ -174,7 +167,6 @@ export function Dock() {
       <div className={cn('glass pointer-events-auto flex w-[min(660px,100%)] items-center gap-1.5 rounded-[14px] p-1.5 transition-shadow', listening && 'shadow-[var(--shadow-float),0_0_0_1.5px_var(--human-line)]')} data-tour="dock">
         <Tip label={listening ? 'Stop and send' : 'Talk: hold, or click for hands-free'} kbd="Space" side="top">
           <button
-            data-hand
             aria-label="Talk"
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -196,7 +188,7 @@ export function Dock() {
             <span key={p.id} className="inline-flex h-6 max-w-[120px] shrink-0 items-center gap-1 rounded-[6px] bg-human-soft pl-1 pr-0.5 text-[11.5px] font-medium text-human-fg">
               <span className="flex size-4 items-center justify-center rounded-full bg-human font-mono text-[10px] text-[#1b1203]">{i + 1}</span>
               <span className="truncate">{p.name}</span>
-              <button data-hand onClick={() => controller.deselect(p.id)} className="rounded-[4px] p-0.5 hover:bg-black/10" aria-label="Take out of the selection">
+              <button onClick={() => controller.deselect(p.id)} className="rounded-[4px] p-0.5 hover:bg-black/10" aria-label="Take out of the selection">
                 <X className="size-3" />
               </button>
             </span>
@@ -204,14 +196,13 @@ export function Dock() {
           {selection && !pins.length && (
             <span className="inline-flex h-6 max-w-[170px] shrink-0 items-center gap-1 rounded-[6px] bg-human-soft pl-2 pr-0.5 text-[11.5px] font-medium text-human-fg">
               <span className="truncate">{selection.text && selection.text.length < 18 ? `${selection.name} · ${selection.text}` : selection.name}</span>
-              <button data-hand onClick={() => controller.select(null)} className="rounded-[4px] p-0.5 hover:bg-black/10" aria-label="Deselect">
+              <button onClick={() => controller.select(null)} className="rounded-[4px] p-0.5 hover:bg-black/10" aria-label="Deselect">
                 <X className="size-3" />
               </button>
             </span>
           )}
           <input
             ref={input}
-            data-hand
             value={text}
             onChange={(e) => {
               setText(e.target.value);
@@ -266,7 +257,6 @@ export function Dock() {
           </span>
         )}
         <button
-          data-hand
           aria-label="Send"
           disabled={!text.trim()}
           onClick={submit}

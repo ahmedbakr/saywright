@@ -245,7 +245,6 @@ function KeyRow({ c, file }: { c: ConnectionView; file?: string }) {
       >
         <div className="relative min-w-0 flex-1">
           <input
-            data-hand
             type={show ? 'text' : 'password'}
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -342,7 +341,7 @@ function CustomRow({ c }: { c: ConnectionView }) {
           if (model.trim()) void ai.addModel(c.id, model.trim()).then(() => setModel(''));
         }}
       >
-        <input data-hand value={model} onChange={(e) => setModel(e.target.value)} placeholder="Add a model by its id (e.g. anthropic/claude-sonnet-5-5)" className={cn(input, 'flex-1 font-mono')} aria-label={`Model for ${c.label}`} />
+        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Add a model by its id (e.g. anthropic/claude-sonnet-5-5)" className={cn(input, 'flex-1 font-mono')} aria-label={`Model for ${c.label}`} />
         <Button type="submit" size="md" disabled={!model.trim()}>
           Add model
         </Button>
@@ -383,11 +382,11 @@ function AddProvider() {
       <p className="text-[12px] leading-relaxed text-fg-3">{p.note ?? 'Any provider with an OpenAI-compatible API.'}</p>
       <div className="flex flex-wrap gap-2">
         <Select<string> value={preset} onChange={setPreset} options={options} className="w-[190px]" />
-        {preset === 'custom' && <input data-hand value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className={cn(input, 'min-w-[220px] flex-1 font-mono')} aria-label="Provider address" />}
+        {preset === 'custom' && <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className={cn(input, 'min-w-[220px] flex-1 font-mono')} aria-label="Provider address" />}
       </div>
       <div className="flex flex-wrap gap-2">
-        <input data-hand type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={p.keyUrl ? 'API key' : 'API key (if it needs one)'} autoComplete="off" className={cn(input, 'min-w-[200px] flex-1 font-mono')} aria-label="Provider key" />
-        <input data-hand value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model id (optional)" className={cn(input, 'w-[200px] font-mono')} aria-label="Provider model" />
+        <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={p.keyUrl ? 'API key' : 'API key (if it needs one)'} autoComplete="off" className={cn(input, 'min-w-[200px] flex-1 font-mono')} aria-label="Provider key" />
+        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model id (optional)" className={cn(input, 'w-[200px] font-mono')} aria-label="Provider model" />
         <Button type="submit" size="md" variant="primary" disabled={busy || (p.keyUrl !== null && !key.trim()) || (preset === 'custom' && !baseUrl.trim())}>
           {busy ? <Spinner /> : 'Add'}
         </Button>
@@ -554,7 +553,7 @@ function Limit({ label, hint, value, onSave, unit }: { label: string; hint: stri
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         {unit === '$' && <span className="text-[12.5px] text-fg-3">$</span>}
-        <input data-hand inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} placeholder="No limit" aria-label={label} className={cn(input, 'w-[110px] text-right tabular-nums')} />
+        <input inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} placeholder="No limit" aria-label={label} className={cn(input, 'w-[110px] text-right tabular-nums')} />
         {unit === 'tokens' && <span className="text-[12.5px] text-fg-3">tokens</span>}
       </div>
     </div>

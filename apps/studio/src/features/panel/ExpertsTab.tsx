@@ -230,7 +230,6 @@ export function ExpertsTab() {
           {EXPERT_LIST.map((e) => (
             <button
               key={e.id}
-              data-hand
               title={e.hint}
               onClick={() => experts.toggle(e.id)}
               aria-pressed={picked.includes(e.id)}

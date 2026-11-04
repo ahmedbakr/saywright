@@ -96,7 +96,7 @@ function Sentence({
   };
   return (
     <div data-seg={s.id} className={cn('group flex gap-2.5 rounded-[9px] px-2 py-2', active && !editing ? 'bg-human-soft' : 'hover:bg-hover')}>
-      <button data-hand onClick={onPlay} title="Play" className="mt-px flex shrink-0 flex-col items-center gap-1 text-fg-3 hover:text-fg">
+      <button onClick={onPlay} title="Play" className="mt-px flex shrink-0 flex-col items-center gap-1 text-fg-3 hover:text-fg">
         <span className="tabular text-[11px]">{fmtClock(s.start - start)}</span>
         <Play className="size-3 fill-current opacity-60 group-hover:opacity-100" />
       </button>
@@ -132,7 +132,7 @@ function Sentence({
             </div>
           </div>
         ) : (
-          <button data-hand onClick={() => onEdit(true)} className="block w-full text-start" title={t.correct}>
+          <button onClick={() => onEdit(true)} className="block w-full text-start" title={t.correct}>
             <span dir="auto" className="block text-[13px] leading-relaxed text-fg">
               {s.text}
               <Pencil className="ms-1.5 inline size-3 text-fg-3 opacity-0 group-hover:opacity-100" />

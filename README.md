@@ -78,7 +78,6 @@ Other apps work too: Next.js and other React apps through one development-only s
 | **Experts** | Review a page for SEO, content, UI/UX and accessibility (WCAG 2.2 with axe-core), ask an AI expert's opinion, fix findings in place, and add Google's real-user data. [Experts](docs/experts.md) |
 | **Write test** | In **Write test** mode, use your app and say what it should show (“this should show $80.80”). You get a Playwright test that reproduces the bug; say “fix it”, and the AI fixes the code and runs the test again. [Write test](docs/guide.md#write-test-narrate-a-bug-get-a-playwright-test) |
 | **Your AI apps** | Claude Code, Cursor, Codex, VS Code and Claude Desktop connect to the studio over MCP: they see what you point at and propose changes you keep or undo. [MCP](docs/mcp.md) |
-| **Labs: hand control** | Point and pinch with your hand, tracked by your webcam. Off by default: **Settings → Labs**. [Hand control](docs/guide.md#hand-control-labs) |
 
 The modes are **Edit | Use | Write test** (<kbd>E</kbd> <kbd>U</kbd> <kbd>R</kbd>): Edit to point and change, Use to click through your app as usual, Write test to turn what you do into a test.
 
@@ -125,7 +124,7 @@ Each kind of work (changes and questions, reports and reviews, small jobs such a
 ## Privacy and security
 
 - Saywright runs on your computer. The studio answers only on `localhost` and refuses requests from other websites; its proxy shows only the sites you link.
-- Your code leaves your computer only when you ask the AI something, as above. Saywright itself sends no telemetry, and it blocks the usage logging built into Google's MediaPipe, which hand control (in Labs) uses.
+- Your code leaves your computer only when you ask the AI something, as above. Saywright itself sends no telemetry.
 - Session narration is transcribed on your computer. Voice commands also use your browser's speech recogniser (in Chrome, on Google's servers) unless you choose *On-device* in **Settings → Voice**.
 - Sessions, previews, reviews and settings stay on your computer, in `~/.saywright` and in each app's `.saywright/` folder. Typed passwords and card numbers are never recorded.
 - The studio reads and writes files inside your app's folder only, links included. API keys are saved readable by you alone, and sent only to their provider.
@@ -137,7 +136,7 @@ The threat model, every protection, and how to report a vulnerability: [SECURITY
 
 - **Node.js 22.18 or newer, or 24.11 or newer** (the current LTS lines), on macOS, Windows or Linux.
 - **A current Chrome or Edge.** Voice uses the browser's recogniser in Chrome, Edge or Safari, or the on-device model in any browser.
-- **Optional:** a microphone (voice), git (GitHub repositories), Playwright in your app (to run the tests it writes), a webcam (hand control, in Labs), and disk space for the speech models (about 740 MB, and 1.6 GB more for the most accurate Arabic model).
+- **Optional:** a microphone (voice), git (GitHub repositories), Playwright in your app (to run the tests it writes), and disk space for the speech models (about 740 MB, and 1.6 GB more for the most accurate Arabic model).
 
 ## Troubleshooting
 
