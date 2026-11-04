@@ -65,13 +65,22 @@ function apply(r: AppsResponse): void {
   setA({ apps: r.apps, active: r.active, runs: Object.fromEntries(r.runs.map((x) => [x.app, x])), cloneDir: r.cloneDir, launcherPref: r.launcher, loaded: true });
 }
 
-/** Called when the open app changed (the controller resets what it showed). */
-let onSwitched: () => void = () => undefined;
+/** Called when the open app changed (the controller resets what it showed, unless it is the app it showed). */
+let onSwitched: (changed: boolean) => void = () => undefined;
+/** The app this page shows: a studio that restarted opens it again, and the page keeps what it had of it. */
+let shown: string | null = null;
+const switched = (id: string | null) => {
+  const changed = id !== shown;
+  shown = id;
+  onSwitched(changed);
+};
 
 export const apps = {
-  init(switched: () => void): void {
-    onSwitched = switched;
-    void this.refresh();
+  /** Resolves once the app list (and which app is open) is known. */
+  async init(onSwitch: (changed: boolean) => void): Promise<void> {
+    onSwitched = onSwitch;
+    await this.refresh();
+    shown = getA().active;
   },
 
   async refresh(): Promise<void> {
@@ -80,6 +89,17 @@ export const apps = {
     } catch {
       /* the status poll reports a server that is down */
     }
+  },
+
+  /**
+   * Back in touch with a studio server that restarted: the app this page had open is opened again (a restarted
+   * server has none open), so the page carries on where it was, a recording in it included.
+   */
+  async reconnected(): Promise<void> {
+    const had = getA().active;
+    await this.refresh();
+    const now = getA();
+    if (had && !now.active && !now.opening && now.apps.some((a) => a.id === had)) await this.open(had);
   },
 
   /** The app list; with `link`, the Link dialog over it, on that tab. */
@@ -104,7 +124,7 @@ export const apps = {
     else if (m.kind === 'clone' && m.line) setA({ cloneLog: [...getA().cloneLog, m.line].slice(-80) });
     else if (m.kind === 'active') {
       setA({ active: m.id ?? null, opening: null, launcher: !m.id });
-      onSwitched();
+      switched(m.id ?? null);
       void this.refresh();
     } else if (m.kind === 'linked' || m.kind === 'unlinked') void this.refresh();
   },
@@ -115,7 +135,7 @@ export const apps = {
     try {
       apply(await api.post<AppsResponse>(`/apps/${id}/open`, { env, decide }));
       setA({ opening: null, launcher: false });
-      onSwitched();
+      switched(id);
       return true;
     } catch (err) {
       const e = err instanceof ApiError ? err : null;
@@ -162,7 +182,7 @@ export const apps = {
     try {
       apply(await api.post<AppsResponse>('/apps/sample', {}));
       setA({ opening: null, launcher: false });
-      onSwitched();
+      switched(getA().active);
     } catch (err) {
       setA({ opening: { id: 'sample', env: '', step: 'Failed', error: err instanceof Error ? err.message : String(err), code: err instanceof ApiError ? err.code : undefined } });
     }
@@ -212,6 +232,6 @@ export const apps = {
   async close(): Promise<void> {
     apply(await api.post<AppsResponse>('/apps/close', {}));
     setA({ launcher: true });
-    onSwitched();
+    switched(null);
   },
 };

@@ -79,7 +79,7 @@ interface Draft {
   n: number;
 }
 
-interface RecorderState {
+export interface RecorderState {
   startUrl: string | null;
   steps: RecordedStep[];
   expectations: Expectation[];

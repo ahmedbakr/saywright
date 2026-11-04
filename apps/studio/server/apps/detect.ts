@@ -286,6 +286,21 @@ function safeDirs(dir: string): string[] {
   }
 }
 
+/** Where `connect` adds the studio's script tag (and where a person would): a root layout, a document, the page. */
+const SCRIPT_FILES = ['src/app/layout.tsx', 'app/layout.tsx', 'src/app/layout.jsx', 'app/layout.jsx', 'src/app/layout.js', 'app/layout.js', 'src/pages/_document.tsx', 'pages/_document.tsx', 'src/pages/_document.jsx', 'pages/_document.jsx', 'src/pages/_document.js', 'pages/_document.js', 'public/index.html', 'index.html', 'src/index.html'];
+
+/** Whether the app's own pages load the studio's script (connected with its script tag): no proxy needed. */
+export function hasScriptTag(dir: string): boolean {
+  for (const rel of SCRIPT_FILES) {
+    try {
+      if (BRIDGE_SCRIPT.test(fs.readFileSync(path.join(dir, rel), 'utf8').slice(0, 200_000))) return true;
+    } catch {
+      /* not there */
+    }
+  }
+  return false;
+}
+
 /** Whether a Vite config already loads the studio's plugin. */
 export function hasPlugin(dir: string): boolean {
   const config = first(dir, ...VITE_CONFIGS);
@@ -314,6 +329,7 @@ export function probeFolder(input: string): AppProbe {
   const notes: string[] = [];
   const { start, port, guessed } = devCommandOf(root, pkg, runs, framework);
   const plugin = hasPlugin(root);
+  const script = !plugin && hasScriptTag(root);
   const canAddPlugin = VITE_BASED.has(framework) && !plugin && !!declaredDeps(root).react;
   const candidates = pkg ? workspaceApps(root, pkg) : undefined;
   if (!pkg && framework === 'static') notes.push('No package.json: the studio serves this folder as a static site.');
@@ -321,6 +337,7 @@ export function probeFolder(input: string): AppProbe {
   if (pkg && !start && framework !== 'static') notes.push('No dev, start or serve script: start the app yourself and give its address.');
   if (candidates?.length && !start) notes.push(`A monorepo with ${candidates.length} app${candidates.length === 1 ? '' : 's'}: pick one.`);
   if (canAddPlugin) notes.push('A Vite + React app: adding the Saywright plugin maps every element to its exact line of code.');
+  else if (script) notes.push('Its pages load the studio’s script: shown as it is, without the proxy.');
   else if (!plugin && pkg) notes.push('Shown through the studio’s proxy: no change to your code needed.');
   if (start && pmNote) notes.push(pmNote);
   if (start && guessed) notes.push(portNote(guessed, framework, port));
@@ -336,7 +353,7 @@ export function probeFolder(input: string): AppProbe {
     needsInstall,
     plugin,
     canAddPlugin,
-    connection: plugin ? 'plugin' : 'proxy',
+    connection: plugin ? 'plugin' : script ? 'script' : 'proxy',
     repo: fs.existsSync(path.join(root, '.git')) ? gitRemote(root) : undefined,
     notes,
     candidates: candidates?.length ? candidates : undefined,

@@ -4,6 +4,12 @@ import http from 'node:http';
 const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Harbor Dashboard</title></head>
 <body style="font:16px system-ui;padding:32px"><h1>Harbor Dashboard</h1><button data-testid="refresh">Refresh</button></body></html>`;
 const server = http.createServer((req, res) => {
+  // A test asks it to stop on its own, as a dev server that crashes does.
+  if (req.url === '/__exit') {
+    res.end('bye');
+    setTimeout(() => process.exit(3), 50);
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'X-Frame-Options': 'DENY' });
   res.end(page);
 });

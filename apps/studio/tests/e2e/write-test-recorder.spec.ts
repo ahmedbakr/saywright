@@ -76,3 +76,16 @@ test('the keys that choose from a combobox’s list are steps too', async ({ pag
   await clinic.press('Enter');
   await expect.poll(async () => (await steps(page)).map((s) => `${s.kind} ${s.kind === 'press' ? s.key : s.value}`)).toEqual(['fill harb', 'press ArrowDown', 'press Enter']);
 });
+
+test('a reload keeps the test being written: its steps and checks are still there', async ({ page }) => {
+  await writeTestOnAccount(page);
+  await page.frameLocator('iframe').getByLabel('Email').fill('me@example.com');
+  await page.frameLocator('iframe').getByText('Show password').click();
+  await expect.poll(async () => (await steps(page)).length).toBe(2);
+  const before = await steps(page);
+  // Kept a moment after each change.
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect.poll(() => store<boolean>(page, '!!s.status?.app')).toBe(true);
+  await expect.poll(async () => (await steps(page)).map((s) => s.description)).toEqual(before.map((s) => s.description));
+});

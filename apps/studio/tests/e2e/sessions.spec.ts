@@ -134,6 +134,14 @@ test('the recorder in the app’s own tab: keeps recording across a reload, and 
   await widget.locator('button[data-act="stop"]:not([disabled])').waitFor();
   const id = await page.evaluate(() => JSON.parse(sessionStorage.getItem('saywright.session') ?? 'null')?.id as string);
   expect(id).toBeTruthy();
+  // Out of the page's way while it records: a dot that stays (and back with the shortcut), or on the other side.
+  await widget.locator('button[data-act="hide"]').click();
+  await widget.locator('button[data-act="show"]').waitFor();
+  await expect(widget.locator('button[data-act="stop"]')).toHaveCount(0);
+  await page.keyboard.press('Alt+Shift+KeyD');
+  await widget.locator('button[data-act="stop"]:not([disabled])').waitFor();
+  await widget.locator('button[data-act="side"]').click();
+  await expect(widget.locator('.root')).toHaveAttribute('data-side', 'left');
 
   await page.getByTestId('coupon-input').fill('SAVE20');
   await page.getByTestId('coupon-apply').click();

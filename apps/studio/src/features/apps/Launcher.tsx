@@ -225,6 +225,8 @@ function AppCard({ app, current, first }: { app: LinkedApp; current: boolean; fi
   const run = useApps((s) => s.runs[app.id]);
   const busy = useApps((s) => s.opening?.id === app.id && !s.opening.error);
   const state = runTone(run);
+  // Open, but its dev server stopped: going back to it starts it again.
+  const stopped = run?.status === 'crashed';
   const env = app.envs.find((e) => e.id === app.env) ?? app.envs[0];
   return (
     <article className={cn('flex flex-col rounded-[14px] bg-raised p-4 ring-1 ring-inset transition-shadow', current ? 'ring-human-line/60' : 'ring-line hover:ring-line-strong')} data-app={app.id}>
@@ -256,8 +258,17 @@ function AppCard({ app, current, first }: { app: LinkedApp; current: boolean; fi
       )}
       <div className="mt-auto flex items-center gap-2 pt-4">
         <span className="text-[11.5px] text-fg-3">{current ? 'Open now' : `Opened ${ago(app.openedAt)}`}</span>
-        <Button className="ms-auto" variant={current ? 'secondary' : 'primary'} size="sm" icon={busy ? <Spinner /> : <Play />} disabled={busy} onClick={() => (current ? apps.hide() : void apps.open(app.id))} data-open-app data-first-action={first || undefined}>
-          {current ? 'Back to it' : 'Open'}
+        <Button
+          className="ms-auto"
+          variant={current && !stopped ? 'secondary' : 'primary'}
+          size="sm"
+          icon={busy ? <Spinner /> : <Play />}
+          disabled={busy}
+          onClick={() => (current && !stopped ? apps.hide() : void apps.open(app.id))}
+          data-open-app
+          data-first-action={first || undefined}
+        >
+          {current ? (stopped ? 'Start it again' : 'Back to it') : 'Open'}
         </Button>
       </div>
     </article>

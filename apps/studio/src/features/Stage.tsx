@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import type { StatusResponse } from '@shared/api';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/misc';
-import { apps } from '@/core/apps';
+import { apps, useApps } from '@/core/apps';
 import { cn } from '@/lib/cn';
 import { shortcut } from '@/lib/format';
 import { controller } from '@/core/controller';
@@ -30,6 +30,9 @@ export function Stage() {
   const mode = useStudio((s) => s.mode);
   const replaying = useStudio((s) => !!s.replay);
   const device = useSettings((s) => s.ui.device);
+  // The dev server the studio started for it stopped: the page still shows, but nothing behind it answers.
+  const crashed = useApps((s) => (s.active && s.runs[s.active]?.status === 'crashed' ? s.runs[s.active] : null));
+  const reopening = useApps((s) => !!s.opening && !s.opening.error);
   const areaRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [area, setArea] = useState({ w: 0, h: 0 });
@@ -109,6 +112,23 @@ export function Stage() {
             >
               {waiting && <Connecting app={status?.app ?? null} loaded={!!status} url={url} slow={slow} error={statusError} outdated={outdated} />}
             </div>
+            {crashed && status?.app && !waiting && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas/85 backdrop-blur-sm" data-crashed>
+                <div className="max-w-[420px] text-center">
+                  <PlugZap className="mx-auto mb-3 size-6 text-warn" />
+                  <div className="text-[13px] font-medium text-fg">
+                    {status.app.name}’s dev server stopped{crashed.exitCode != null ? ` (exit code ${crashed.exitCode})` : ''}
+                  </div>
+                  {lastWords(crashed.log) && <div className="mt-1.5 truncate font-mono text-[11.5px] text-fg-3">{lastWords(crashed.log)}</div>}
+                  <div className="mt-3 flex justify-center gap-2">
+                    <Button variant="primary" icon={reopening ? <Spinner /> : undefined} disabled={reopening} onClick={() => void apps.open(status.app!.id)}>
+                      Start it again
+                    </Button>
+                    <Button onClick={() => apps.show()}>Your apps</Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -116,6 +136,11 @@ export function Stage() {
       <Dock />
     </main>
   );
+}
+
+/** The last thing a dev server said before it stopped (not the studio's own note of its exit). */
+function lastWords(log: string[]): string | undefined {
+  return log.filter((l) => l.trim() && !/^Exited with code/.test(l)).pop();
 }
 
 /**

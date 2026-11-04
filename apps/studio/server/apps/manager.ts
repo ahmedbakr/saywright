@@ -5,6 +5,7 @@
  * for one app carries on while you work in another.
  */
 import fs from 'node:fs';
+import path from 'node:path';
 import type { AppEnv, AppProbe, AppsResponse, LinkedApp } from '../../shared/apps.ts';
 import type { ChangeStore } from '../changes.ts';
 import { HttpError } from '../http.ts';
@@ -12,7 +13,7 @@ import type { Metrics } from '../metrics.ts';
 import { Project } from '../project.ts';
 import type { Sessions } from '../sessions/index.ts';
 import type { SourceMapper } from '../sessions/sourcemap.ts';
-import { dependenciesInstalled, hasPlugin, probeFolder } from './detect.ts';
+import { dependenciesInstalled, hasPlugin, hasScriptTag, probeFolder } from './detect.ts';
 import { AppProxy } from './proxy.ts';
 import { AppRegistry, appStateDir, envFor } from './registry.ts';
 import { AppRunner } from './runner.ts';
@@ -233,7 +234,10 @@ export class AppManager {
     if (env.kind === 'local') {
       const plugin = await pluginAnswers(url, app.root && hasPlugin(app.root) ? 20_000 : 5000);
       if (plugin) connection = 'plugin';
-      else if (connection === 'plugin') connection = 'proxy';
+      // Its pages load the studio's script themselves (connected with the script tag): shown as they are.
+      else if (app.root && hasScriptTag(app.root)) connection = 'script';
+      // Its folder no longer loads it (or never did): the proxy adds it. Without a folder, its pages said so when linked.
+      else if (connection === 'plugin' || (connection === 'script' && app.root)) connection = 'proxy';
       if (connection !== latest.connection) this.registry.setEnv(app.id, { ...latest, connection });
     }
     // One proxy per app address: when the app's port moves, it keeps its proxy, and with it its cookies and storage.
@@ -253,6 +257,23 @@ export class AppManager {
     ws = { app: fresh, env: current, project, frameUrl, ...this.deps.build(project) };
     this.spaces.set(app.id, ws);
     return ws;
+  }
+
+  /**
+   * Apps whose newest session was still recording when the studio stopped: their workspace is set up now (without
+   * opening the app), so the page recording it finds the studio again and the recording goes on.
+   */
+  restoreRecordings(): void {
+    for (const app of this.registry.list()) {
+      if (this.spaces.has(app.id)) continue;
+      // Where appStateDir keeps it, without making it: an app's folder may be gone.
+      const state = app.root ? path.join(app.root, '.saywright') : path.join(this.deps.dataDir, 'apps', app.id);
+      if (!recordingIn(path.join(state, 'sessions'))) continue;
+      const env = app.envs.find((e) => e.id === app.env) ?? app.envs[0];
+      const dataDir = appStateDir(this.deps.dataDir, app);
+      const project = new Project(app.root ?? dataDir, env.url, dataDir, !!app.root);
+      this.spaces.set(app.id, { app, env, project, frameUrl: env.url, ...this.deps.build(project) });
+    }
   }
 
   /** Tell the open app's plugin where the studio is (once the studio knows its own address). */
@@ -302,5 +323,20 @@ export class AppManager {
     for (const ws of this.spaces.values()) ws.sessions.close();
     this.runner.stopAll();
     this.proxy.close();
+  }
+}
+
+/** Whether the newest session in a sessions folder was still recording (only one records at a time, the newest). */
+function recordingIn(dir: string): boolean {
+  try {
+    const newest = fs
+      .readdirSync(dir)
+      .filter((n) => /^\d{8}-\d{6}-[a-z0-9]{4}$/.test(n))
+      .sort()
+      .pop();
+    if (!newest) return false;
+    return (JSON.parse(fs.readFileSync(path.join(dir, newest, 'session.json'), 'utf8')) as { status?: string }).status === 'recording';
+  } catch {
+    return false;
   }
 }

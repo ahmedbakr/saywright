@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { SessionClient } from '@saywright/vite/client';
 import { durationWords, fmtDuration } from '../../shared/session';
 import type { Workspace } from '../../server/apps/manager';
@@ -17,6 +17,7 @@ import { Project } from '../../server/project';
 import { Sessions } from '../../server/sessions/index';
 import { sessionRoutes } from '../../server/sessions/routes';
 import { SessionStore } from '../../server/sessions/store';
+import { restartWords } from '../../server/sessions/report';
 import { finishWebm } from '../../server/sessions/webm';
 import type { SpeechService } from '../../server/speech/service';
 
@@ -119,6 +120,59 @@ describe('narration uploads', () => {
     expect(second.id).not.toBe(first.id);
     expect(sessions.store.meta(first.id).status).not.toBe('recording');
     sessions.close();
+  });
+});
+
+describe('a studio that restarts while it records', () => {
+  const speech = { canNarrate: () => false } as unknown as SpeechService;
+  const deps = (p: Project) => ({ project: p, speech, emit: () => undefined, writer: () => null });
+
+  it('takes the recording page’s writes again: the recording goes on, and its report says the studio restarted', () => {
+    const p = project();
+    const before = new Sessions(deps(p));
+    const meta = before.start({ appUrl: 'http://localhost:1', source: 'app', lang: 'en' });
+    const key = before.key(meta.id)!;
+    // The key is kept beside it, for its owner only.
+    const file = path.join(before.store.dir(meta.id), '.key');
+    expect(fs.readFileSync(file, 'utf8')).toBe(key);
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o077).toBe(0);
+    before.store.close();
+
+    // The studio comes back: the page, which kept what it recorded meanwhile, is let in with the key it holds.
+    const after = new Sessions(deps(p));
+    expect(after.key(meta.id)).toBe(key);
+    expect(after.store.meta(meta.id).status).toBe('recording');
+    expect(after.store.meta(meta.id).restarts).toEqual([{ at: expect.any(Number), resumed: false }]);
+    after.resumed(meta.id);
+    expect(after.store.meta(meta.id).restarts?.[0].resumed).toBe(true);
+    after.stop(meta.id);
+    // Ended: nothing more can be written to it after another restart.
+    expect(fs.existsSync(file)).toBe(false);
+    after.close();
+  });
+
+  it('finishes a recording whose page never comes back, with what it had', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const p = project();
+      const before = new Sessions(deps(p));
+      const meta = before.start({ appUrl: 'http://localhost:1', source: 'app', lang: 'en' });
+      before.store.close();
+      const after = new Sessions(deps(p));
+      expect(after.store.meta(meta.id).status).toBe('recording');
+      vi.advanceTimersByTime(61_000);
+      expect(after.store.meta(meta.id).status).not.toBe('recording');
+      expect(after.store.meta(meta.id).restarts?.[0].resumed).toBe(false);
+      after.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a report says where the recording ended, in either language', () => {
+    expect(restartWords({ resumed: false }).en).toMatch(/ended there/);
+    expect(restartWords({ resumed: true }).en).toMatch(/nothing is missing/);
+    expect(restartWords({ resumed: true }).ar).toMatch(/فلم يضع شيء/);
   });
 });
 

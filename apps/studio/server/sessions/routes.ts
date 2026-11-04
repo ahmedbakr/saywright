@@ -122,8 +122,10 @@ export function sessionRoutes(router: Router, deps: Deps): void {
    * another page on this computer can't add to or read someone else's recording. The studio's own page needs none.
    */
   const writer = (req: Req): void => {
-    if (sameOrigin(req.raw)) return;
-    if (!holdsKey(req, of(req.params.id), req.params.id)) throw new HttpError(403, 'This page can’t write to that session.');
+    const sessions = of(req.params.id);
+    if (!sameOrigin(req.raw) && !holdsKey(req, sessions, req.params.id)) throw new HttpError(403, 'This page can’t write to that session.');
+    // After a restart, a recording goes on once its page is heard from again.
+    sessions.resumed(req.params.id);
   };
 
   // ---- recording ----

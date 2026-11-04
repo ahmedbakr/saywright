@@ -11,6 +11,8 @@ import { redactUrl } from '../protocol';
 import type { SessionRecorder } from './session';
 
 const HIDE_KEY = 'saywright.widget.hidden';
+/** Which side of the page it sits on: moved out of the way of the page's own controls. */
+const SIDE_KEY = 'saywright.widget.side';
 const PREFS_KEY = 'saywright.widget.prefs';
 
 interface Prefs {
@@ -57,6 +59,10 @@ input[type=text]:focus{border-color:#0090ff}
 .voice[data-tone=warn] .bars i{background:#ffc53d}.voice[data-tone=warn] .voice-text{color:#ffc53d}
 .voice[data-tone=bad] .voice-text{color:#ff9592}
 .count{font-size:11.5px;color:#a0a0ab;display:flex;gap:8px}.count b{color:#ededef}.count .bad b{color:#ff9592}
+.root[data-side=left]{right:auto;left:16px}
+.root[data-side=left] .caption{margin:0 auto 8px 0}
+.mini{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1px solid rgba(255,255,255,.16);background:rgba(22,22,26,.85);box-shadow:0 4px 14px rgba(0,0,0,.35);cursor:pointer;padding:0}
+.mini .dot{width:8px;height:8px;box-shadow:0 0 0 2px rgba(229,72,77,.25)}
 .caption{max-width:340px;margin:0 0 8px auto;padding:8px 12px;border-radius:12px;background:rgba(22,22,26,.9);border:1px solid rgba(255,255,255,.1);font-size:12.5px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
 .caption .issue{color:#ff9592}
 .err{color:#ff9592;font-size:12px;margin-top:8px}
@@ -84,6 +90,8 @@ const ICON = {
   pause: '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>',
   play: '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>',
   close: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  side: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h12l-3-3M17 17H5l3 3"/></svg>',
+  hide: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 12h12"/></svg>',
 };
 
 function esc(s: string): string {
@@ -115,6 +123,7 @@ export class Widget {
   private reachable: boolean | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
   private hidden: boolean;
+  private side: 'left' | 'right';
 
   constructor(
     endpoint: string,
@@ -122,6 +131,7 @@ export class Widget {
   ) {
     this.endpoint = endpoint.replace(/\/$/, '');
     this.hidden = localStorage.getItem(HIDE_KEY) === '1';
+    this.side = localStorage.getItem(SIDE_KEY) === 'left' ? 'left' : 'right';
     this.host = document.createElement('saywright-recorder');
     this.shadow = this.host.attachShadow({ mode: 'open' });
     const style = document.createElement('style');
@@ -174,9 +184,7 @@ export class Widget {
       this.mark();
     } else if (e.code === 'KeyD') {
       e.preventDefault();
-      this.hidden = !this.hidden;
-      localStorage.setItem(HIDE_KEY, this.hidden ? '1' : '0');
-      this.render();
+      this.setHidden(!this.hidden);
     }
   };
 
@@ -187,6 +195,14 @@ export class Widget {
       clearInterval(this.tick);
       this.tick = null;
     }
+    this.render();
+  }
+
+  /** Hidden: out of the page's way. While recording, a small dot stays, so it is never recording unseen. */
+  private setHidden(on: boolean): void {
+    this.hidden = on;
+    localStorage.setItem(HIDE_KEY, on ? '1' : '0');
+    this.shown = '';
     this.render();
   }
 
@@ -236,8 +252,19 @@ export class Widget {
 
   private render(): void {
     const s = this.client.state;
-    this.root.style.display = this.hidden && s.status !== 'recording' && s.status !== 'starting' ? 'none' : '';
+    const live = s.status === 'recording' || s.status === 'starting' || s.status === 'stopping';
+    this.root.style.display = this.hidden && !live ? 'none' : '';
+    this.root.dataset.side = this.side;
     if (s.status === 'starting' && s.countdown && !s.id) return this.renderCountdown(s.countdown);
+    if (live && this.hidden) {
+      this.issueUntil = 0;
+      const html = `<button class="mini" data-act="show" title="Recording: show the controls (Alt+Shift+D)" aria-label="Recording: show the controls"><span class="dot ${s.paused ? '' : 'rec'}"></span></button>`;
+      if (html === this.shown) return;
+      this.shown = html;
+      this.root.innerHTML = html;
+      this.bind();
+      return;
+    }
     if (s.status === 'recording' || s.status === 'starting' || s.status === 'stopping') return this.renderRecording(s);
     this.shown = '';
     if (s.status === 'processing' || s.status === 'ready' || (s.status === 'failed' && s.id)) return this.renderDone(s);
@@ -262,7 +289,7 @@ export class Widget {
         <div class="check"><span>Record the screen</span><button class="switch" role="switch" data-toggle="screen" aria-checked="${p.screen}"></button></div>
         <div class="check"><span>Count down 3 s first</span><button class="switch" role="switch" data-toggle="countdown" aria-checked="${p.countdown}"></button></div>
       </div>
-      ${this.reachable === false ? `<div class="err">The studio isn’t running at ${esc(this.endpoint)}. Start it with <b>npm run dev</b>.</div>` : ''}
+      ${this.reachable === false ? `<div class="err">The studio isn’t running at ${esc(this.endpoint)}. Start it with <b>npx @saywright/studio</b>.</div>` : ''}
       ${s.error ? `<div class="err">${esc(s.error)}${s.busy ? ` <button class="btn" style="height:24px;margin-top:6px" data-act="replace">Stop it and start mine</button>` : ''}</div>` : ''}
       <div class="row" style="margin-top:12px"><button class="btn primary" style="flex:1" data-act="start"><span class="dot" style="background:#fff;box-shadow:none;width:8px;height:8px"></span>Start recording</button></div>
       <div class="muted" style="margin-top:8px;font-size:11.5px">Use the app as usual and talk about what you notice. <span class="kbd">Alt⇧M</span> marks a moment, <span class="kbd">Alt⇧R</span> stops.</div>
@@ -290,6 +317,8 @@ export class Widget {
         <button class="btn icon" data-act="mark" title="Mark this moment (Alt+Shift+M)">${ICON.flag}</button>
         <button class="btn icon" data-act="pause" title="${s.paused ? 'Resume narration' : 'Pause narration'}">${s.paused ? ICON.play : ICON.pause}</button>
         <button class="btn" data-act="stop" ${s.status !== 'recording' ? 'disabled' : ''}>${ICON.stop}${s.status === 'stopping' ? 'Saving…' : 'Stop'}</button>
+        <button class="btn icon" data-act="side" title="Move to the other side of the page" aria-label="Move to the other side of the page">${ICON.side}</button>
+        <button class="btn icon" data-act="hide" title="Hide the controls; it goes on recording (Alt+Shift+D)" aria-label="Hide the controls">${ICON.hide}</button>
       </div>`;
     // A problem shows for six seconds: come back then to take it down.
     this.issueUntil = issue ? issue.t + 6000 : 0;
@@ -348,7 +377,7 @@ export class Widget {
   private renderLive(): void {
     const s = this.client.state;
     if (s.status !== 'recording') return;
-    if (this.issueUntil && Date.now() > this.issueUntil) return this.renderRecording(s);
+    if (this.issueUntil && Date.now() > this.issueUntil) return this.render();
     const t = clock(Date.now() - s.startedAt);
     if (t !== this.shownTime) {
       const time = this.shadow.querySelector('[data-time]');
@@ -413,6 +442,13 @@ export class Widget {
         else if (act === 'mark') this.mark();
         else if (act === 'pause') this.client.setPaused(!this.client.state.paused);
         else if (act === 'screen') void this.client.resumeScreen({ video: true });
+        else if (act === 'hide') this.setHidden(true);
+        else if (act === 'show') this.setHidden(false);
+        else if (act === 'side') {
+          this.side = this.side === 'right' ? 'left' : 'right';
+          localStorage.setItem(SIDE_KEY, this.side);
+          this.render();
+        }
         else if (act === 'dismiss' || act === 'opened') {
           this.client.reset();
           this.view = 'button';

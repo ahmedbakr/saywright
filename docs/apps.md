@@ -87,7 +87,9 @@ An app linked by its address, or one without the plugin or the script tag, is sh
 - adds the studio's script first in each page's `<head>`, which makes the page pointable and recordable;
 - removes the headers that would stop the page from showing inside the studio (framing rules and the Content Security Policy) while it is shown there;
 - keeps redirects within the site inside the proxy, and fetches pages of that site only;
-- passes on the app's requests to another port of this computer (its API, at `http://localhost:5010` say), from the app's own address and with its cookies, so the API's CORS rules work as they do in the app's own tab. Only the app's own page can ask for that.
+- passes on the app's requests to another port of this computer (its API, at `http://localhost:5010` say), from the app's own address, so the API's CORS rules work as they do in the app's own tab: a request the API's rules would refuse there is refused here too, and the app's cookies go only with requests made with credentials (`credentials: 'include'`, `withCredentials`). This covers `fetch`, `XMLHttpRequest`, `EventSource`, `WebSocket` and `sendBeacon`. Only the app's own page can ask for that.
+
+Not covered: an image, a stylesheet or a link that points at that API's address (`<img src="http://localhost:5010/avatar">`, a sign-out link to the API). The browser loads those itself, at the real address, without the cookies the app has through the proxy: the image doesn't show, the link leaves the proxy. Load such things through `fetch`, serve them from the app's own address (a dev server proxy such as Vite's `server.proxy`), or connect the app so the studio shows it at its own address.
 
 What can't work through any proxy: signing in on another site that returns to the real address (OAuth, single sign-on), bot checks, API keys locked to the real domain, an API on another site that allows only the app's real address, and service workers (they are switched off while the studio shows the site). For an app on this computer, connecting it (`npx @saywright/studio connect <folder>`) avoids all of these: the studio then shows it at its own address.
 

@@ -47,6 +47,9 @@ const scoresFrom = (s: ScoreSummary): SessionScores => ({
   accessibility: { score: s.accessibility, notes: [] },
 });
 
+
+/** How long a recording found unfinished at startup waits for its page to come back (it retries every few seconds). */
+const RESUME_MS = 60_000;
 export class Sessions {
   readonly store: SessionStore;
   private segmentNo = new Map<string, number>();
@@ -66,19 +69,52 @@ export class Sessions {
   private notable = new Map<string, { t: number; text: string }[]>();
   /** Each recording's key: an app's page writes to a session, and follows it, only with the key it was given. */
   private keys = new Map<string, string>();
+  /** Recordings found unfinished when the studio started: each finishes unless its page comes back in time. */
+  private recovering = new Map<string, ReturnType<typeof setTimeout>>();
   /** Per recording: when its last problem went out, and the newest one waiting to (see ISSUE_EVERY_MS). */
   private issueFrames = new Map<string, { at: number; waiting: SessionLive | null; timer: ReturnType<typeof setTimeout> | null }>();
 
   constructor(private deps: SessionsDeps) {
     this.store = new SessionStore(deps.project);
-    // A session left "recording" by a studio that was closed: finish it now.
+    // Left by a studio that stopped: a recording may go on (its page keeps what it records meanwhile); one that was
+    // being processed is processed now.
     for (const m of this.store.list()) {
-      if (m.status === 'recording' || m.status === 'processing') void this.finish(m.id, 'Recovered after a restart');
+      if (m.status === 'recording') this.recover(m);
+      else if (m.status === 'processing') void this.finish(m.id, 'Recovered after a restart');
     }
   }
 
   private emit(live: SessionLive): void {
     this.deps.emit('session', live);
+  }
+
+  /**
+   * A session the studio was recording when it stopped. The page recording it keeps what it records while the
+   * studio is away, and sends it once the studio is back: for a while its key is taken again and the recording
+   * goes on. If nothing comes, it is finished with what it has, and its report says where it ended.
+   */
+  private recover(m: SessionMeta): void {
+    const key = this.store.savedKey(m.id);
+    if (!key) return void this.finish(m.id, 'Recovered after a restart');
+    this.keys.set(m.id, key);
+    this.store.update(m.id, { restarts: [...(m.restarts ?? []), { at: Date.now(), resumed: false }] });
+    const timer = setTimeout(() => {
+      this.recovering.delete(m.id);
+      if (this.store.meta(m.id).status === 'recording') void this.finish(m.id, 'Recovered after a restart');
+    }, RESUME_MS);
+    timer.unref?.();
+    this.recovering.set(m.id, timer);
+  }
+
+  /** The page recording a session sent something: after a restart, that recording goes on. */
+  resumed(id: string): void {
+    const timer = this.recovering.get(id);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.recovering.delete(id);
+    const restarts = this.store.meta(id).restarts ?? [];
+    this.store.update(id, { restarts: restarts.map((r, i) => (i === restarts.length - 1 ? { ...r, resumed: true } : r)) });
+    this.emit({ kind: 'status', id, status: 'recording' });
   }
 
   active(): SessionMeta | null {
@@ -95,7 +131,9 @@ export class Sessions {
     }
     const meta = this.store.create(input);
     this.segmentNo.set(meta.id, 0);
-    this.keys.set(meta.id, randomBytes(16).toString('hex'));
+    const key = randomBytes(16).toString('hex');
+    this.keys.set(meta.id, key);
+    this.store.saveKey(meta.id, key);
     this.emit({ kind: 'status', id: meta.id, status: 'recording' });
     // Start the recogniser now so the first sentence isn't waiting on a model load (a replay and Autopilot have no narration).
     if (meta.source !== 'replay' && meta.source !== 'autopilot') this.live.set(meta.id, this.openLive(meta));
@@ -242,6 +280,9 @@ export class Sessions {
   stop(id: string, endedAt?: unknown): SessionMeta {
     const meta = this.store.meta(id);
     if (meta.status !== 'recording') return meta;
+    const recovering = this.recovering.get(id);
+    if (recovering) clearTimeout(recovering);
+    this.recovering.delete(id);
     const now = Date.now();
     const end = typeof endedAt === 'number' && endedAt >= meta.startedAt && endedAt <= now ? endedAt : now;
     const updated = this.store.update(id, { status: 'processing', stage: 'Finishing the transcript', endedAt: end });
@@ -262,6 +303,8 @@ export class Sessions {
   private async finish(id: string, note?: string): Promise<void> {
     if (this.processing.has(id)) return;
     this.processing.add(id);
+    // Nothing more is written to it: a studio that restarts now takes nothing for it.
+    this.store.dropKey(id);
     try {
       const meta = this.store.meta(id);
       if (meta.status === 'recording' || !meta.endedAt) this.store.update(id, { status: 'processing', endedAt: meta.endedAt ?? Date.now() });
@@ -553,6 +596,9 @@ export class Sessions {
     this.countTimers.clear();
     for (const f of this.issueFrames.values()) if (f.timer) clearTimeout(f.timer);
     this.issueFrames.clear();
+    // A recording still waiting for its page stays as it is on disk: the next studio waits for it in turn.
+    for (const t of this.recovering.values()) clearTimeout(t);
+    this.recovering.clear();
     this.store.close();
   }
 

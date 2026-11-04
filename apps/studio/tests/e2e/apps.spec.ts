@@ -183,6 +183,26 @@ test('a project with a dev command: the studio starts it, finds where it listens
   await expect(page.locator('[data-run-log]')).toContainText('DATABASE_URL is not set');
 });
 
+test('a dev server that stops on its own is said so over the app, and Start it again brings it back', async ({ page }) => {
+  const folder = copyFixture('devserver');
+  fs.mkdirSync(path.join(folder, 'node_modules'));
+  const id = await linkFolder(folder);
+  await openStudio(page);
+  await call('POST', `/apps/${id}/open`);
+  await page.reload();
+  await expect(frame(page).getByRole('heading', { name: 'Harbor Dashboard' })).toBeVisible({ timeout: 30_000 });
+  const run = (await call<AppsState>('GET', '/apps')).runs.find((r) => r.app === id)!;
+  await fetch(new URL('/__exit', run.url!)).catch(() => undefined);
+  // The page it showed stays, but nothing answers behind it: said at once, with a way back.
+  const cover = page.locator('[data-crashed]');
+  await expect(cover).toContainText('harbor-dashboard’s dev server stopped', { timeout: 10_000 });
+  await expect(cover).toContainText(/\(exit code \d+\)/);
+  await cover.getByRole('button', { name: 'Start it again' }).click();
+  await expect(cover).toBeHidden({ timeout: 30_000 });
+  await expect.poll(async () => (await call<AppsState>('GET', '/apps')).runs.find((r) => r.app === id)?.status, { timeout: 30_000 }).toBe('running');
+  await expect(frame(page).getByRole('heading', { name: 'Harbor Dashboard' })).toBeVisible({ timeout: 30_000 });
+});
+
 test('switching apps settles a change waiting for keep or undo first', async ({ page }) => {
   const plain = await linkFolder(copyFixture('plain'));
   await openStudio(page);

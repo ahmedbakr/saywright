@@ -90,3 +90,17 @@ describe('the port in a config', () => {
     expect(probeFolder(dir)).toMatchObject({ framework: 'astro', url: 'http://localhost:4400' });
   });
 });
+
+describe('how a folder’s pages reach the studio', () => {
+  it('a Next.js app connected with the script tag is shown as it is, not through the proxy', () => {
+    installed('npm');
+    const tagged = tree({
+      'package.json': { name: 'portfolio', scripts: { dev: 'next dev' }, dependencies: { next: '15.0.0', react: '19.0.0' } },
+      'app/layout.tsx': `export default function Root({ children }) {\n  return (<html><body>\n        {process.env.NODE_ENV === 'development' && <script src="http://localhost:7357/saywright.js" defer />}\n        {children}</body></html>);\n}\n`,
+    });
+    expect(probeFolder(tagged)).toMatchObject({ connection: 'script' });
+    expect(probeFolder(tagged).notes.join(' ')).toMatch(/without the proxy/);
+    const plain = tree({ 'package.json': { name: 'plain', scripts: { dev: 'next dev' }, dependencies: { next: '15.0.0' } }, 'app/layout.tsx': 'export default function Root({ children }) { return <html><body>{children}</body></html>; }\n' });
+    expect(probeFolder(plain)).toMatchObject({ connection: 'proxy' });
+  });
+});

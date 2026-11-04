@@ -552,7 +552,7 @@ export class SessionClient {
       });
     } catch {
       await this.release();
-      this.set({ status: 'failed', countdown: null, mic: 'off', error: 'The studio isn’t reachable. Is `npm run dev` running?' });
+      this.set({ status: 'failed', countdown: null, mic: 'off', error: 'The studio isn’t reachable. Is it still running? Start it again with `npx @saywright/studio`.' });
       throw new Error(this.state.error!);
     }
     const data = (await res.json().catch(() => ({}))) as { session?: { id: string; startedAt: number }; key?: string; error?: string; code?: string };

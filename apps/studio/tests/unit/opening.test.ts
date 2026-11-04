@@ -148,3 +148,42 @@ describe('an app with the Vite plugin', { timeout: 60_000 }, () => {
     }
   });
 });
+
+describe('a studio that restarts while an app records', () => {
+  it('sets that app up at once, without opening it, so the page recording it finds the studio again', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-recording-'));
+    fs.writeFileSync(path.join(root, 'package.json'), '{"name":"recorded"}');
+    const quiet = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-quiet-'));
+    fs.writeFileSync(path.join(quiet, 'package.json'), '{"name":"quiet"}');
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-opening-'));
+    const built: string[] = [];
+    const make = () =>
+      new AppManager({
+        dataDir,
+        emit: () => undefined,
+        studio: () => 'http://localhost:7357',
+        build: (project) => {
+          built.push(project.root);
+          return { changes: {}, metrics: {}, mapper: {}, sessions: { close: () => undefined, active: () => null, store: { has: (id: string) => id === '20261104-101500-abcd' } } } as never;
+        },
+      });
+    const first = make();
+    const recorded = first.link({ name: 'recorded', root, framework: 'vite', packageManager: 'npm', start: null, url: 'http://localhost:5190', connection: 'plugin', notes: [] });
+    first.link({ name: 'quiet', root: quiet, framework: 'vite', packageManager: 'npm', start: null, url: 'http://localhost:5191', connection: 'plugin', notes: [] });
+    // Its newest session was still recording when the studio stopped.
+    const session = path.join(root, '.saywright/sessions/20261104-101500-abcd');
+    fs.mkdirSync(session, { recursive: true });
+    fs.writeFileSync(path.join(session, 'session.json'), JSON.stringify({ id: '20261104-101500-abcd', status: 'recording' }));
+    first.close();
+
+    const studio = make();
+    studio.restoreRecordings();
+    try {
+      expect(built).toEqual([root]);
+      expect(studio.active()).toBeNull();
+      expect(studio.forSession('20261104-101500-abcd').app.id).toBe(recorded.id);
+    } finally {
+      studio.close();
+    }
+  });
+});

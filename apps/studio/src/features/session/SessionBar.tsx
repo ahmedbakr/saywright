@@ -134,7 +134,7 @@ export function SessionBar() {
                 <b className={issues ? 'tabular font-semibold' : 'tabular font-semibold text-fg'}>{issues}</b> issues
               </span>
               {live.lost ? (
-                <Tip label="The studio couldn’t be reached for a long while: some narration or video wasn’t kept. Check that npm run dev is still running.">
+                <Tip label="The studio couldn’t be reached for a long while: some narration or video wasn’t kept. Check that the studio is still running.">
                   <span className="text-bad">some not saved</span>
                 </Tip>
               ) : (

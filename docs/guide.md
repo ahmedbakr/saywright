@@ -64,7 +64,7 @@ Hold <kbd>Space</kbd> and talk, then let go; or tap <kbd>Space</kbd> to talk han
 | “generate test”, “run test”, “fix it” | The bug-to-test flow below |
 | “mark this” (while recording a session) | Marks the moment for the report |
 
-**Quick edits** (size, variant, text, move, remove) are made on your computer in milliseconds, for free, with no AI. They work on React components. When a quick edit can't do something safely (a label built from code, the largest size already), the studio says why and offers **Ask the AI anyway** or the file to open. Everything else goes to the AI you chose in **Settings → AI** ([AI in Saywright](ai.md)).
+**Quick edits** (size, variant, text, move, remove) are made on your computer in milliseconds, for free, with no AI. They work on React components. When a quick edit can't do something safely (a label built from code, the largest size already, code that changed since you selected the element), the studio says why and offers **Ask the AI anyway** or the file to open. A request of more than one part (“make this bigger and red”) goes to the AI whole. **Remove** also takes out the imports and props only the removed element used, and names anything else it leaves unused. A quick edit on code that draws several elements says so in its title: “(all 50 on this page)” for a list's rows, “Card is used in 6 places” for a shared component. Everything else goes to the AI you chose in **Settings → AI** ([AI in Saywright](ai.md)).
 
 Requests run one at a time: one you make while another is running waits its turn, and <kbd>Esc</kbd> stops the running one.
 
@@ -73,7 +73,7 @@ Requests run one at a time: one you make while another is running waits its turn
 <img src="media/guide/write-test.png" alt="Write test: the recorded steps, a check, the generated Playwright test, and its failed run" width="880">
 
 1. Switch to **Write test** (<kbd>R</kbd>) and use your app: each click, typing, choice in a list and <kbd>Enter</kbd> is recorded as a step in the **Test** tab. A link that opens another page adds a step that waits for it.
-2. Point at what is wrong and say what it should show: “this should show $80.80”. That becomes a check, in the test where you said it: after the steps before it, before the steps after it.
+2. Point at what is wrong and say what it should show: “this should show $80.80”. That becomes a check, in the test where you said it: after the steps before it, before the steps after it. Of a checkbox, a radio button or a switch (or its label), say “this should be checked” or “this shouldn't be checked”; of an option in a list, “this should be selected”.
 3. Say “generate test” (or **Generate test**): a Playwright spec is written to `tests/saywright/` in your app's folder. Each step and check is a numbered `test.step`.
 4. Say “run test” (or **Run test**). It runs with your app's own Playwright (`@playwright/test` installed in the app) and a configuration of the studio's own: Chromium, no retries, a fresh browser, and the app the studio has open as its `baseURL`. Your app's Playwright configuration doesn't change the verdict.
 5. Say “fix it”: the AI fixes the code and the studio runs the same test again with the fix. When it passes, verified, keep the fix.
@@ -85,13 +85,17 @@ Requests run one at a time: one you make while another is running waits its turn
 | **The test fails at its check, so it reproduces the bug** | Every step ran and the check failed: the bug shows. **Fix with …** is offered. |
 | **It doesn’t show the bug yet** | A step before the checks failed (a field that isn’t there, a page that didn’t come): the test never got to its check. Fix the step, then run it again. |
 | **Passed: all 4 steps and 1 check ran** | Verified: it passed on the first try, every step and check reported that it ran, and (after a fix) the test is the one that failed, unchanged. |
-| **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run, it passed only when tried again, it has no check, or the test changed since it failed. |
+| **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run, it passed only when tried again, it has no check, or the test changed since it failed (by hand, or by any AI request). The next run judges the test as it is then. |
 
 A fix may not change the test it is checked against: if the AI's change edits that test, that part is left out (and a change that only edits the test is refused), so a weakened check can't pass for a fix.
 
 **Passwords and other secrets.** What you type into a password field, or a field for a card number, a one-time code, an API key or a token, is never recorded: the step names it (`PASSWORD`, `CARD_NUMBER`), and the test types it from the environment variable `SAYWRIGHT_SECRET_PASSWORD`. The **Secrets** section of the Test tab saves its value on this computer, with the studio's data, outside your code; the studio sets it when it runs the test, and Replay & verify types it in the replay. Elsewhere (your CI), set the variable yourself. To mark a field of your own as secret, give it (or a parent) `data-saywright-secret`; the marks session-replay tools use (`data-private`, `data-sentry-mask`, `.rr-mask`, `.fs-mask`…) work too.
 
 **Lists.** A choice in a drop-down becomes `selectOption({ label: 'Express' })` (by its value when what it says has numbers in it, like a price); in a list that takes several choices, every one chosen.
+
+**Checks that hold once the fix is in.** A check reads what an element shows, so it is never found by the words it checks, which the fix changes: the value in a table row by the row's heading (`getByRole('row').filter({ hasText: 'You pay' }).locator('td')`), a name with a price or a count by a pattern with the numbers left open (`getByRole('button', { name: /^Like this portfolio \(\d[\d.,]*\)$/ })`), else by its place among the same. Steps find a name with numbers the same way, so a fix that changes a total doesn't lose the Pay button. A box checks `toBeChecked()`, and a list the options chosen in it.
+
+**The Test tab** shows each check's own result in the last run (passed, failed, or not reached), and keeps the test being written when you reload the studio.
 
 **Repeatable runs.** Each run starts from a fresh browser: no cookies, no storage. For data the test needs (an account, an empty cart), add `tests/saywright/setup.ts`: it runs before the test, as Playwright's global setup, to put that data in place.
 
@@ -154,7 +158,7 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 | <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>⌘</kbd>+<kbd>K</kbd>) | Command palette |
 | <kbd>?</kbd> | Phrases and shortcuts |
 
-In your app's own tab, the **Record session** button has its own keys: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> starts and stops, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> marks a moment, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> hides the button (<kbd>Option</kbd> for <kbd>Alt</kbd> on a Mac).
+In your app's own tab, the **Record session** button has its own keys: <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> starts and stops, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> marks a moment, <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> hides the button, and while recording shrinks the recorder to a small dot (<kbd>Option</kbd> for <kbd>Alt</kbd> on a Mac). Its ⇆ button moves it to the other side of the page.
 
 ## Voice
 

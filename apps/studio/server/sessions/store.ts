@@ -215,6 +215,27 @@ export class SessionStore {
     if (st) st.dirty = false;
   }
 
+  /**
+   * A recording's write key, kept beside it (only its owner can read it) so a studio that restarts still takes what
+   * the page recording it sends: that page alone was given it. Gone once the recording ends.
+   */
+  saveKey(id: string, key: string): void {
+    writeFileAtomic(path.join(this.dir(id), '.key'), key, { mode: 0o600, sync: false });
+  }
+
+  savedKey(id: string): string | null {
+    try {
+      const key = fs.readFileSync(path.join(this.dir(id), '.key'), 'utf8').trim();
+      return /^[0-9a-f]{32}$/.test(key) ? key : null;
+    } catch {
+      return null;
+    }
+  }
+
+  dropKey(id: string): void {
+    if (ID.test(id)) fs.rmSync(path.join(this.root, id, '.key'), { force: true });
+  }
+
   /** Stop the timer and write what's pending (the studio is shutting down or restarting). */
   close(): void {
     clearInterval(this.saveTimer);

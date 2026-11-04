@@ -29,6 +29,11 @@ export interface SessionMeta {
   /** Seconds of narration audio received. */
   audioSeconds: number;
   video: { mime: string; startedAt: number; bytes: number; parts?: VideoPart[] } | null;
+  /**
+   * When the studio restarted while it recorded, and whether the page recording it went on afterwards (it keeps what
+   * it records while the studio is away, and sends it once it is back).
+   */
+  restarts?: { at: number; resumed: boolean }[];
   /** The report, in brief: its findings are counted (reports written before they were have no count). */
   report?: { source: 'ai' | 'claude' | 'local'; model?: string; at: number; overall: number; title: string; scores?: ScoreSummary; findings?: number };
 }

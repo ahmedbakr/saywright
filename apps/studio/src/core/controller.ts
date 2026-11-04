@@ -11,7 +11,7 @@ import type { UsagePill } from '@shared/ai';
 import type { Change, Expectation, IntentResult, NextStep, RecordedStep, RefInfo, StatusResponse, TestRunResult } from '@shared/api';
 import type { ReportFinding, ReportSuggestion, SessionAnalysis, SessionDetail, SessionReport, SessionTarget, TimelineItem } from '@shared/session';
 import { ApiError, api, subscribe } from '@/lib/api';
-import { apps } from './apps';
+import { apps, useApps } from './apps';
 import { fileName, plural } from '@/lib/format';
 import { focusOn, shouldBe, stateWord } from '@shared/text';
 import { sanitizeSteps } from '@shared/steps';
@@ -28,7 +28,7 @@ import { sessions, useSessions, type SpeechStatus } from './sessions';
 import { arabicCommand } from '@shared/arabic-commands';
 import { applyTheme, useSettings } from './settings';
 import { play, setSoundsEnabled } from './sound';
-import { get, initialRecorder, previews, sameEl, set, useStudio, type Binding, type InspectResult, type IslandAction, type MetricsSummary, type Tone } from './store';
+import { get, initialRecorder, previews, sameEl, set, useStudio, type Binding, type InspectResult, type IslandAction, type MetricsSummary, type RecorderState, type Tone } from './store';
 import { alignWords } from './voice/choose';
 import { VoiceInput, type VoiceFinal } from './voice/engine';
 import type { Word } from './voice/speech';
@@ -233,11 +233,14 @@ class Controller {
           this.notify(`${via} proposed a change: ${change.title}. Keep or undo it.`, 'info');
         },
       }, (again) => {
-        // Back after a dropped connection: catch up on what was missed meanwhile.
+        // Back after a dropped connection: catch up on what was missed meanwhile (a restarted server has the app
+        // this page had open opened again).
         if (!again) return;
-        void sessions.resync();
-        void this.refreshStatus();
-        void this.refreshChanges();
+        void apps.reconnected().then(() => {
+          void sessions.resync();
+          void this.refreshStatus();
+          void this.refreshChanges();
+        });
       }),
     );
     // Arabic push-to-talk uses the studio server's model when one is installed.
@@ -282,7 +285,12 @@ class Controller {
       window.removeEventListener('blur', blur);
     });
 
-    apps.init(() => this.appSwitched());
+    void apps.init((changed) => this.appSwitched(changed)).then(() => this.restoreRecorder());
+    this.cleanups.push(
+      useStudio.subscribe((st, prev) => {
+        if (st.recorder !== prev.recorder) this.keepRecorder();
+      }),
+    );
     void this.refreshStatus();
     void this.refreshChanges().then(() => this.announceWaiting());
     // Boxes to keep up with: the frame loop has work again.
@@ -1858,7 +1866,42 @@ class Controller {
   // ───────────────────────────── server state ─────────────────────────────
 
   /** Another app (or address) is open now: nothing shown for the last one still applies. */
-  private appSwitched(): void {
+  /** Write test's steps and checks so far, kept in this tab: a reload, or a studio that restarts, doesn't lose them. */
+  private keepTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private keepRecorder(): void {
+    if (this.keepTimer) clearTimeout(this.keepTimer);
+    this.keepTimer = setTimeout(() => {
+      const app = useApps.getState().active;
+      if (!app) return;
+      const { startUrl, steps, expectations, spec, run, baseline } = get().recorder;
+      try {
+        sessionStorage.setItem(RECORDER_KEY, JSON.stringify({ app, recorder: { startUrl, steps, expectations, spec, run, baseline } }));
+      } catch {
+        /* storage full or off: only this convenience is lost */
+      }
+    }, 300);
+  }
+
+  private restoreRecorder(): void {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(RECORDER_KEY) ?? 'null') as { app?: string; recorder?: Partial<RecorderState> } | null;
+      const r = get().recorder;
+      if (!saved?.recorder || saved.app !== useApps.getState().active || r.steps.length || r.expectations.length) return;
+      set({ recorder: { ...initialRecorder, ...saved.recorder, running: false, installing: false, installLog: [], verifying: false } });
+    } catch {
+      /* nothing kept */
+    }
+  }
+
+  private appSwitched(changed = true): void {
+    // The same app, opened again by a studio that restarted: what this page had of it stays.
+    if (!changed) {
+      void this.refreshStatus();
+      void this.refreshChanges();
+      void sessions.refreshList();
+      return;
+    }
     // Requests made for the last app: the running one stops, the waiting ones aren't sent.
     this.appEpoch++;
     this.requests.stop();
@@ -1923,6 +1966,9 @@ class Controller {
 }
 
 /** A check on a field reads its value, and on a list the option chosen. */
+/** Where this tab keeps what Write test has so far (sessionStorage: this tab only, gone when it closes). */
+const RECORDER_KEY = 'saywright.recorder';
+
 /** An element as a request names it to the studio's server. */
 function refOf(el: ElementInfo, role: string): RefInfo {
   return { role, src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames, ...(el.same ? { same: el.same } : {}) };

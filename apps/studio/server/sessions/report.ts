@@ -31,6 +31,13 @@ export interface ReportWriter {
 }
 
 /** mm:ss from the start of the session. */
+/** What a restart of the studio during a recording did to it. */
+export function restartWords(r: { resumed: boolean }): { en: string; ar: string } {
+  return r.resumed
+    ? { en: 'the page recording it went on, and sent what it kept meanwhile, so nothing is missing.', ar: 'واصلت الصفحة التسجيل وأرسلت ما احتفظت به في أثناء ذلك، فلم يضع شيء.' }
+    : { en: 'the recording ended there; nothing after it was recorded.', ar: 'انتهى التسجيل عندها، ولم يُسجَّل شيء بعدها.' };
+}
+
 export function clock(t: number, start: number): string {
   const s = Math.max(0, Math.round((t - start) / 1000));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -260,6 +267,7 @@ export function evidencePack(input: ReportInput): { text: string; images: { id: 
   if (meta.git) push(`Git: ${meta.git.branch} @ ${meta.git.commit}${meta.git.dirty ? ' (uncommitted changes)' : ''}`);
   push(`Pages: ${analysis.pages.map((p) => `${p.url} (${Math.round(p.ms / 1000)} s)`).join(' → ') || 'unknown'}`);
   push(`Narration: ${analysis.transcript.length} sentences, language setting ${meta.lang}`);
+  for (const r of meta.restarts ?? []) push(`Studio restart at ${clock(r.at, t0)}: ${restartWords(r).en}`);
   push('</session>');
 
   const s = analysis.scores;
@@ -719,6 +727,8 @@ export function localReport(meta: SessionMeta, analysis: SessionAnalysis, note?:
         : { kind: 'add', title: 'Turn this session into an end-to-end test', why: `${analysis.steps.length} recorded steps can replay this flow in CI.`, effort: 'small' },
     );
   const pages = analysis.pages.length;
+  const restarted = (meta.restarts ?? []).map((r) => (ar ? `أُعيد تشغيل الاستوديو عند ${clock(r.at, meta.startedAt)}: ${restartWords(r).ar}` : `The studio restarted at ${clock(r.at, meta.startedAt)}: ${restartWords(r).en}`)).join(' ');
+  if (restarted) note = note ? { en: `${note.en} ${restarted}`, ar: `${note.ar} ${restarted}` } : { en: restarted, ar: restarted };
   const summary = ar
     ? `اختبار لمدة ${durationWordsAr(analysis.durationMs)} على ${arCount(pages, AR_UNITS.page)}. النقرات: ${counts.clicks}، الإدخالات: ${counts.inputs}، الجمل المنطوقة: ${analysis.transcript.length}. ${top.length ? `أهم مشكلة: ${title(top[0])}.` : 'لم تُسجَّل أخطاء ولا طلبات فاشلة ولا علامات تعثّر.'}${note ? ` ${note.ar}` : ''}`
     : `${durationWords(analysis.durationMs)} of testing across ${pages} page${pages === 1 ? '' : 's'}: ${counts.clicks} click${counts.clicks === 1 ? '' : 's'}, ${counts.inputs} input${counts.inputs === 1 ? '' : 's'} and ${analysis.transcript.length} spoken comment${analysis.transcript.length === 1 ? '' : 's'}. ${top.length ? `The most important problem: ${top[0].title}.` : 'No errors, failed requests or signs of frustration were recorded.'}${note ? ` ${note.en}` : ''}`;

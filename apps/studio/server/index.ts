@@ -200,6 +200,9 @@ export async function createStudioApi(layout: StudioLayout) {
     }
   }
 
+  // A recording the studio was making when it stopped goes on, if its page comes back (see Sessions.recover).
+  apps.restoreRecordings();
+
   const status = (): StatusResponse => {
     const w = apps.active();
     const project = w?.project;

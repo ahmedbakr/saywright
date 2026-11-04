@@ -20,7 +20,7 @@ async function call<T>(method: string, path: string, body?: unknown, signal?: Ab
     });
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err;
-    throw new ApiError(0, 'The studio server isn’t responding. Is `npm run dev` still running?');
+    throw new ApiError(0, 'The studio isn’t responding. Is it still running? Start it again with `npx @saywright/studio`.');
   }
   let text: string;
   try {
