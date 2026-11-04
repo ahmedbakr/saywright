@@ -167,6 +167,8 @@ async function firstRun(browser, only) {
   await page.waitForTimeout(1500);
   if (want('tour')) await shot(page, 'tour');
   await page.locator('[data-tour-card]').getByRole('button', { name: 'Skip tour' }).click();
+  // Its “Tour closed” note goes first, or the next screens show it (with --only, nothing in between gives it time).
+  await page.locator('[data-island]').filter({ hasText: /Tour closed/ }).waitFor({ state: 'hidden', timeout: 20_000 }).catch(() => {});
   await page.waitForTimeout(600);
   await page.unroute('**/api/apps');
 
