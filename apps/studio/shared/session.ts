@@ -194,6 +194,10 @@ export interface SessionStep {
   value?: string;
   /** A checkbox or radio button: ticked or not, after the step. */
   checked?: boolean;
+  /** A secret was typed: the name a test types it under (PASSWORD); `value` is empty. */
+  secret?: string;
+  /** A choice in a list: what each option chosen says. */
+  select?: string[];
   key?: string;
   url?: string;
   description: string;
@@ -366,6 +370,9 @@ const REPLAY_REASONS: Record<string, { en: string; ar: string }> = {
   'not-a-field': { en: 'it can’t be typed into', ar: 'لا يمكن الكتابة فيه' },
   'not-recording': { en: 'the app didn’t start recording', ar: 'لم يبدأ التطبيق التسجيل' },
   error: { en: 'something went wrong', ar: 'حدث خطأ' },
+  disabled: { en: 'it was disabled, so a person couldn’t use it either', ar: 'كان معطّلًا، فلا يستطيع أحد استخدامه' },
+  secret: { en: 'it needs a secret that isn’t saved (the Test tab keeps them)', ar: 'يحتاج قيمة سرية غير محفوظة (تحفظها لسان الاختبار)' },
+  'no-effect': { en: 'it did nothing this time', ar: 'لم يفعل شيئًا هذه المرة' },
   stopped: { en: 'you stopped it', ar: 'أوقفتَها أنت' },
   timeout: { en: 'the app didn’t answer', ar: 'لم يستجب التطبيق' },
   disconnected: { en: 'the app wasn’t connected', ar: 'لم يكن التطبيق متصلًا' },

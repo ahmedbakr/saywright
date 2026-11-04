@@ -12,8 +12,9 @@ import type { Change, Expectation, IntentResult, NextStep, RecordedStep, RefInfo
 import type { ReportFinding, ReportSuggestion, SessionAnalysis, SessionDetail, SessionReport, SessionTarget, TimelineItem } from '@shared/session';
 import { ApiError, api, subscribe } from '@/lib/api';
 import { apps } from './apps';
-import { fileName } from '@/lib/format';
+import { fileName, plural } from '@/lib/format';
 import { focusOn } from '@shared/text';
+import { sanitizeSteps } from '@shared/steps';
 import { BridgeClient } from './bridge';
 import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
 import { findingBrief } from './evidence';
@@ -361,7 +362,10 @@ class Controller {
       void this.reresolveAll();
     };
     b.onOutdated = (outdated) => set({ app: { ...get().app, connected: false, outdated } });
-    b.onNavigated = ({ url, title }) => set({ app: { ...get().app, url, title } });
+    b.onNavigated = ({ url, title }) => {
+      set({ app: { ...get().app, url, title } });
+      this.recordedPage(url);
+    };
     b.onProbe = (m) => {
       const s = get();
       if (!sameEl(s.hover, m.hit) || s.snapped !== m.snapped) set({ hover: m.hit, snapped: m.snapped });
@@ -378,7 +382,18 @@ class Controller {
     b.onRecorded = (action) => {
       if (get().mode !== 'record') return;
       const r = get().recorder;
-      set({ recorder: { ...r, steps: [...r.steps, { kind: action.kind, locator: action.locator, description: action.description, value: 'value' in action ? action.value : undefined, key: 'key' in action ? action.key : undefined }] } });
+      const step: RecordedStep = {
+        kind: action.kind,
+        locator: action.locator,
+        description: action.description,
+        value: 'value' in action ? action.value : undefined,
+        key: 'key' in action ? action.key : undefined,
+        ...(action.kind === 'fill' && action.secret ? { secret: action.secret } : {}),
+        ...(action.kind === 'fill' && action.select ? { select: action.select, values: action.values } : {}),
+      };
+      // An older plugin may still send a password in clear: it is a secret by name before it is shown or kept.
+      const [clean] = sanitizeSteps([step]);
+      set({ recorder: { ...r, steps: [...r.steps, clean] } });
     };
     b.onKey = (key, down) => {
       if (key === 'Space') {
@@ -824,7 +839,32 @@ class Controller {
 
   removeStep(i: number): void {
     const r = get().recorder;
-    set({ recorder: { ...r, steps: r.steps.filter((_, j) => j !== i) } });
+    // A check said after this step stays after the steps that were before it.
+    const expectations = r.expectations.map((e) => (e.after !== undefined && e.after > i ? { ...e, after: e.after - 1 } : e));
+    set({ recorder: { ...r, steps: r.steps.filter((_, j) => j !== i), expectations, spec: null, run: null } });
+  }
+
+  /** The page a step led to while writing a test: the test waits for it before its next step. */
+  private recordedPage(url: string): void {
+    const r = get().recorder;
+    if (get().mode !== 'record' || !r.startUrl) return;
+    const path = (u: string) => {
+      try {
+        const x = new URL(u);
+        return x.hash.startsWith('#/') ? x.hash.split('?')[0] : x.pathname;
+      } catch {
+        return u;
+      }
+    };
+    const last = [...r.steps].reverse().find((s) => s.kind === 'url' || s.kind === 'goto')?.url ?? r.startUrl;
+    if (path(url) === path(last) || !r.steps.length) return;
+    set({ recorder: { ...r, steps: [...r.steps, { kind: 'url', url, description: `Wait for ${path(url)}` }] } });
+  }
+
+  /** Where a check said now goes: after the steps recorded so far, the text still being typed included. */
+  private async checkPlace(): Promise<number> {
+    await this.bridge.flushRecorder();
+    return get().recorder.steps.length;
   }
 
   removeExpectation(i: number): void {
@@ -1445,7 +1485,8 @@ class Controller {
     if (!el) return this.notify('Point at the element that shows the wrong value while you say it.', 'warn');
     const loc = await this.bridge.locator(el.id);
     if (!loc) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
-    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected: exp.expected, actual: loc.locator.text };
+    const after = await this.checkPlace();
+    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected: exp.expected, actual: loc.locator.text, after, ...fieldOf(el) };
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
     play('keep');
@@ -1459,8 +1500,9 @@ class Controller {
   async addExpectationFor(el: ElementInfo, expected: string): Promise<void> {
     const loc = await this.bridge.locator(el.id);
     if (!loc) return this.notify('Couldn’t build a locator for that element.', 'warn');
+    const after = await this.checkPlace();
     const r = get().recorder;
-    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected, actual: loc.locator.text };
+    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected, actual: loc.locator.text, after, ...fieldOf(el) };
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
   }
 
@@ -1593,7 +1635,7 @@ class Controller {
     const expectations: Expectation[] = [];
     // The value as the replay checks it: from the words said about an element, on that element.
     const check = findingCheck(f, a);
-    if (check) expectations.push({ locator: check.locator, description: check.el.description ?? check.el.label, expected: check.expected, actual: check.el.text });
+    if (check) expectations.push({ locator: check.locator, description: check.el.description ?? check.el.label, expected: check.expected, actual: check.el.text, after: steps.length, ...fieldOf(check.el) });
     set({ recorder: { ...initialRecorder, startUrl, steps, expectations } });
     settings().setUi({ panelOpen: true, panelTab: 'test' });
     if (expectations.length) await this.generateTest();
@@ -1644,63 +1686,105 @@ class Controller {
 
   private async testRun(id: string, path: string): Promise<void> {
     set({ recorder: { ...get().recorder, running: true } });
+    // After a fix, the run is compared with the test that failed: a test changed since then proves nothing.
+    const { verifying, baseline } = get().recorder;
     let res: TestRunResult;
     try {
-      res = await api.post<TestRunResult>('/tests/run', { path });
+      res = await api.post<TestRunResult>('/tests/run', { path, ...(verifying && baseline ? { baseline } : {}) });
     } catch (err) {
       res = { status: 'error', durationMs: 0, message: err instanceof Error ? err.message : String(err) };
     }
-    const verifying = get().recorder.verifying;
     set({ recorder: { ...get().recorder, running: false, run: { ...res, at: Date.now() } } });
     if (get().request?.id === id) set({ request: null });
     void this.refreshSummary();
+    const details = { label: 'Details', run: () => (settings().setUi({ panelOpen: true, panelTab: 'test' }), this.dismissIsland()) };
+    const counted = res.counts ? `${plural(res.counts.steps, 'step')} and ${plural(res.counts.checks, 'check')}` : 'its steps and checks';
     switch (res.status) {
-      case 'passed':
+      case 'passed': {
+        const fixing = verifying && previews(get()).length > 0;
+        set({ recorder: { ...get().recorder, verifying: false } });
+        if (!res.verified) {
+          // It passed, but the run can't show what a pass should: said as it is, never as a success.
+          play('error');
+          set({
+            island: {
+              kind: 'message',
+              tone: 'warn',
+              sticky: true,
+              text: fixing ? `Couldn’t verify the fix. ${res.unverified ?? ''}` : `Couldn’t verify. ${res.unverified ?? ''}`,
+              actions: fixing ? [{ label: 'Keep anyway', run: () => void this.keep('test') }, { label: 'Undo fix', primary: true, run: () => void this.undo('test') }, details] : [details],
+            },
+          });
+          return;
+        }
         play('keep');
-        if (verifying && previews(get()).length) {
+        if (fixing) {
           set({
             island: {
               kind: 'message',
               tone: 'ok',
               sticky: true,
-              text: 'The test passes with this fix. Keep it?',
+              text: `The test passes with this fix: all ${counted} ran. Keep it?`,
               actions: [
                 { label: 'Keep fix', primary: true, run: () => void this.keep('test') },
                 { label: 'Undo', run: () => void this.undo('test') },
               ],
             },
           });
-        } else this.notify(`Test passed in ${(res.durationMs / 1000).toFixed(1)} s.`, 'ok');
+        } else this.notify(`Test passed in ${(res.durationMs / 1000).toFixed(1)} s: all ${counted} ran.`, 'ok');
         return;
-      case 'failed':
+      }
+      case 'failed': {
         play('error');
-        set({ recorder: { ...get().recorder, verifying: false } });
+        const wasFixing = verifying && previews(get()).length > 0;
+        // The test that failed is the baseline the next fix is checked against.
+        set({ recorder: { ...get().recorder, verifying: false, baseline: res.hash } });
+        const fixWith = { label: `Fix with ${aiName(get().status?.ai.who)}`, primary: true, run: () => void this.fix() };
+        if (res.failedAt === 'step') {
+          // It never got to its checks: it doesn't show the bug (a step that can't be done, a page that didn't come).
+          const step = res.steps?.find((x) => !x.ok);
+          const why = (step?.error ?? res.message ?? '').split('\n')[0].slice(0, 160);
+          set({
+            island: {
+              kind: 'message',
+              tone: 'warn',
+              sticky: true,
+              text: `${wasFixing ? 'With the fix, the test' : 'The test'} didn’t reach its checks, so it doesn’t show the bug yet: ${step ? step.title.replace(/^\[\d+\] /, '') : 'a step'} failed${why ? ` (${why})` : ''}.`,
+              actions: [details, { ...fixWith, primary: false, label: `Fix with ${aiName(get().status?.ai.who)} anyway` }],
+            },
+          });
+          return;
+        }
         set({
           island: {
             kind: 'message',
             tone: 'error',
             sticky: true,
-            text: res.expected || res.received ? `Test failed: expected “${res.expected ?? '?'}”, got “${res.received ?? '?'}”.` : `Test failed. ${res.message?.split('\n')[0] ?? ''}`,
-            actions: [
-              { label: `Fix with ${aiName(get().status?.ai.who)}`, primary: true, run: () => void this.fix() },
-              { label: 'Details', run: () => (settings().setUi({ panelOpen: true, panelTab: 'test' }), this.dismissIsland()) },
-            ],
+            text: `${wasFixing ? 'Still failing with the fix: expected' : 'Test failed: expected'} “${res.expected ?? '?'}”, got “${res.received ?? '?'}”.`,
+            actions: [fixWith, details],
           },
         });
         return;
+      }
       case 'setup-needed':
+        set({ recorder: { ...get().recorder, verifying: false } });
         set({
           island: {
             kind: 'message',
             tone: 'warn',
             sticky: true,
             text: res.message ?? 'Playwright needs a one-time setup.',
-            actions: [{ label: 'Install test browser', primary: true, run: () => void this.installBrowser() }],
+            actions: res.missingSecrets?.length
+              ? [{ label: 'Open the Test tab', primary: true, run: () => (settings().setUi({ panelOpen: true, panelTab: 'test' }), this.dismissIsland()) }]
+              : /Chromium/.test(res.message ?? '')
+                ? [{ label: 'Install test browser', primary: true, run: () => void this.installBrowser() }]
+                : [details],
           },
         });
         return;
       default:
         play('error');
+        set({ recorder: { ...get().recorder, verifying: false } });
         this.notify(res.message ?? 'The test couldn’t run.', 'error');
     }
   }
@@ -1710,6 +1794,7 @@ class Controller {
     const r = get().recorder;
     if (!r.spec || r.run?.status !== 'failed') return this.notify('Run a failing test first, then ask for a fix.', 'info');
     const body = { path: r.spec.path, failure: r.run.message ?? '', input };
+    const baseline = r.run.hash;
     const epoch = this.appEpoch;
     await this.ask({
       text: 'Fix the bug this test shows',
@@ -1718,8 +1803,9 @@ class Controller {
       run: async (id, stopped) => {
         const res = await api.post<IntentResult>('/fix', { ...body, requestId: id });
         if (!this.settle(id, res, 'fix it', [], { stopped: stopped(), epoch }) || stopped()) return;
-        set({ recorder: { ...get().recorder, verifying: true } });
-        // Check the fix against the test straight away.
+        if (res.kind !== 'change') return;
+        set({ recorder: { ...get().recorder, verifying: true, baseline } });
+        // Check the fix against the same test straight away.
         setTimeout(() => void this.runTest(), 500);
       },
     });
@@ -1805,11 +1891,25 @@ class Controller {
   })();
 }
 
+/** A check on a field reads its value, and on a list the option chosen. */
+function fieldOf(el: { tag: string }): Pick<Expectation, 'field'> {
+  return el.tag === 'input' || el.tag === 'textarea' ? { field: 'value' } : el.tag === 'select' ? { field: 'select' } : {};
+}
+
 /** A session's steps a test can play, up to a moment. */
 function stepsOf(a: SessionAnalysis, until = Infinity): RecordedStep[] {
   return a.steps
     .filter((s) => s.t <= until && s.kind !== 'navigate' && s.locator)
-    .map((s) => ({ kind: s.kind === 'fill' ? 'fill' : s.kind === 'press' ? 'press' : 'click', locator: s.locator, value: s.value, checked: s.checked, key: s.key, description: s.description }));
+    .map((s) => ({
+      kind: s.kind === 'fill' ? 'fill' : s.kind === 'press' ? 'press' : 'click',
+      locator: s.locator,
+      value: s.value,
+      checked: s.checked,
+      key: s.key,
+      description: s.description,
+      ...(s.secret ? { secret: s.secret } : {}),
+      ...(s.select ? { select: s.select } : {}),
+    }));
 }
 
 export const controller = new Controller();

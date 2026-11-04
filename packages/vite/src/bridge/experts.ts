@@ -10,7 +10,7 @@
  * shows how far it has got. Long runs of like items (rows, cards) are checked
  * by their first few.
  */
-import type { CheckSeverity, ElementInfo, ExpertId, PageCheck, PageFacts, PageReview } from '../protocol';
+import { maskSecrets, redactUrl, type CheckSeverity, type ElementInfo, type ExpertId, type PageCheck, type PageFacts, type PageReview } from '../protocol';
 import { collapse, describe, isVisible } from './dom';
 import { own } from './own';
 
@@ -108,7 +108,8 @@ export function watchVitals(): void {
 
 function facts(): PageFacts {
   const main = document.querySelector('main, [role="main"]') ?? document.body;
-  const text = ((main as HTMLElement).innerText ?? '').replace(/\n{3,}/g, '\n\n').trim();
+  // What an expert (and its AI) reads of the page: any card number or key on it masked.
+  const text = maskSecrets(((main as HTMLElement).innerText ?? '').replace(/\n{3,}/g, '\n\n').trim());
   const here = location.origin;
   let internal = 0;
   let external = 0;
@@ -136,7 +137,7 @@ function facts(): PageFacts {
   }
   const fields = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea')).filter(shown) as HTMLInputElement[];
   return {
-    url: location.href,
+    url: redactUrl(location.href),
     title: document.title,
     description: meta('description'),
     canonical: document.querySelector('link[rel="canonical"]')?.getAttribute('href') ?? null,
@@ -199,7 +200,7 @@ function liveRegions(): { role: string; text: string }[] {
 function linkTargets(): { text: string; href: string }[] {
   const out: { text: string; href: string }[] = [];
   for (const a of Array.from(document.querySelectorAll('a[href]')).filter(shown)) {
-    const link = { text: collapse((a as HTMLElement).innerText || a.getAttribute('aria-label') || '', 40), href: (a.getAttribute('href') ?? '').slice(0, 120) };
+    const link = { text: collapse((a as HTMLElement).innerText || a.getAttribute('aria-label') || '', 40), href: redactUrl(a.getAttribute('href') ?? '').slice(0, 120) };
     if (!out.some((l) => l.text === link.text && l.href === link.href)) out.push(link);
     if (out.length >= 25) break;
   }

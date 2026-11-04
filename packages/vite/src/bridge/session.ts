@@ -14,8 +14,8 @@
  *   (across reloads too, in sessionStorage), and the server drops duplicates,
  *   so nothing is lost or doubled.
  */
-import { NAME_ATTR, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
-import { annotatedAncestor, collapse, isField, labelText, pageAnnotated, roleOf, screenLines, sourceHint } from './dom';
+import { dots, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
+import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, roleOf, screenLines, secretNameOf, sourceHint } from './dom';
 import { EnterSubmits, formLabel } from './forms';
 import { buildLocator, locatorFromInfo } from './locator';
 import { bodies, KEEPALIVE_BYTES, Outbox, slim, type Delivery } from './outbox';
@@ -26,8 +26,6 @@ import { RequestTally, type NetBody } from './tally';
 const ACTIVE_KEY = 'saywright.session';
 const PENDING_KEY = 'saywright.session.pending';
 const INTERACTIVE = 'button, a[href], input, select, textarea, summary, label, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="switch"], [role="option"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
-/** Fields whose value is never recorded (by name, id or autocomplete: "password", "cc-number", "card_cvc"…). */
-const SECRET = /pass|secret|token|otp|cvv|cvc|csc|card|credit|\bcc-|cc-?num|cc-?exp|iban|ssn|pin\b/i;
 /** Requests that are the dev server or the studio talking, not the app. */
 const PLUMBING_URL = /\/@vite\/|\/@fs\/|\/@id\/|\/@react-refresh|\/node_modules\/|__saywright|\.hot-update\.|\/_next\/webpack-hmr|\/__nextjs|sockjs-node|\/api\/sessions\/|\/api\/speech\//;
 
@@ -306,7 +304,8 @@ export class SessionRecorder {
 
   private record(body: SessionEventBody, t: number, urgent = false): void {
     if (!this.active || !this.outbox) return;
-    this.outbox.push({ ...body, seq: ++this.seq, t: Math.round(t) } as SessionEvent, urgent);
+    // Secrets never leave the page: addresses, texts and typed values as the protocol's redaction leaves them.
+    this.outbox.push(scrubEvent({ ...body, seq: ++this.seq, t: Math.round(t) } as SessionEvent), urgent);
     this.stats.events++;
     if (['error', 'rage', 'dead'].includes(body.type) || (body.type === 'net' && !body.ok && body.error !== 'aborted') || (body.type === 'console' && body.level === 'error')) {
       this.stats.issues++;
@@ -539,9 +538,9 @@ export class SessionRecorder {
     this.fieldTimes.delete(el);
     if (!this.fieldTimers.delete(el) || !isField(el)) return;
     const value = 'value' in el ? String(el.value) : '';
-    const secret = (el instanceof HTMLInputElement && el.type === 'password') || SECRET.test(`${el.getAttribute('name') ?? ''} ${el.id} ${el.getAttribute('autocomplete') ?? ''}`);
+    const secret = isSecretField(el);
     const target = this.target(el);
-    this.recordLater({ type: 'input', el: target, value: secret ? '•'.repeat(Math.min(value.length, 12)) : collapse(value, 500), masked: secret }, typed, [[target, el]]);
+    this.recordLater({ type: 'input', el: target, value: secret ? dots(value) : collapse(value, 500), masked: secret, ...(secret ? { secret: secretNameOf(el) } : {}) }, typed, [[target, el]]);
   }
 
   private flushFields(): void {
@@ -554,8 +553,14 @@ export class SessionRecorder {
     if (this.fieldTimers.has(el)) return this.flushField(el);
     if (el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && ['checkbox', 'radio', 'file', 'range', 'color', 'date', 'time'].includes(el.type))) {
       const target = this.target(el);
-      const value = el instanceof HTMLSelectElement ? (el.selectedOptions[0]?.text ?? el.value) : el.type === 'file' ? Array.from(el.files ?? []).map((f) => f.name).join(', ') : el.value;
-      this.recordLater({ type: 'change', el: target, value: collapse(value, 200), checked: el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined }, eventTime(e), [[target, el]]);
+      // Every option chosen, in a list that takes several; the first is the value, as it always was.
+      const options = el instanceof HTMLSelectElement ? Array.from(el.selectedOptions, (o) => collapse(o.label || o.text, 80)) : undefined;
+      const value = el instanceof HTMLSelectElement ? (options![0] ?? el.value) : el.type === 'file' ? Array.from(el.files ?? []).map((f) => f.name).join(', ') : el.value;
+      this.recordLater(
+        { type: 'change', el: target, value: collapse(value, 200), checked: el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined, ...(options && options.length > 1 ? { options } : {}) },
+        eventTime(e),
+        [[target, el]],
+      );
     }
   };
 
@@ -587,6 +592,8 @@ export class SessionRecorder {
 
   private onFocus = (e: FocusEvent): void => {
     if (!this.active || !(e.target instanceof Element) || !isField(e.target) || ours(e.target)) return;
+    // A password field is remembered as one before anything is typed, should “show password” make it a text field.
+    isSecretField(e.target);
     const target = this.target(e.target);
     this.recordLater({ type: 'focus', el: target }, eventTime(e), [[target, e.target]]);
   };

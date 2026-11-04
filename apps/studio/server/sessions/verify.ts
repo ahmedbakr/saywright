@@ -7,7 +7,7 @@
  * amount a finding expects after a step, on the screen after the same step.
  */
 import { amountsIn, moneyText, showsValue } from '../../shared/expected.ts';
-import { replayReason, type ReplayCheck, type ReplayOutcome, type ReportFinding, type SessionAnalysis, type SessionIssue, type SessionReport, type SessionVerification, type VerifyResult } from '../../shared/session.ts';
+import { replayReason, type ReplayCheck, type ReplayOutcome, type ReportFinding, type ScreenText, type SessionAnalysis, type SessionIssue, type SessionReport, type SessionStep, type SessionVerification, type VerifyResult } from '../../shared/session.ts';
 
 /**
  * A problem's key, with what varies between runs taken out: numbers (ids, counts), quotes, the exact failing status.
@@ -51,6 +51,34 @@ function requested(replay: SessionAnalysis, endpoint: string): boolean {
   return replay.network.endpoints.some((e) => normKey(`${e.method} ${e.url}`) === want);
 }
 
+/** The steps a replay plays, in order (as the studio's replayer picks them). */
+const playable = (a: SessionAnalysis): SessionStep[] => a.steps.filter((s) => s.kind !== 'navigate' && !!s.locator);
+
+/** A session's reads of the screen were thinned to stay within a size: a read missing from them says nothing. */
+const thinned = (screens: ScreenText[]) => screens.length >= 140 || screens.reduce((n, s) => n + s.lines.reduce((m, l) => m + l.length + 1, 0), 0) > 50_000;
+
+/**
+ * The step a problem came after, when it changed the screen the first time and changed nothing after the same step
+ * in the replay: it was done, but it didn't do what it did. Whatever came of it then can't be judged from the replay.
+ */
+export function noEffect(original: SessionAnalysis, replay: SessionAnalysis, issue: SessionIssue): SessionStep | null {
+  const steps = playable(original);
+  let i = -1;
+  for (let k = 0; k < steps.length && steps[k].t <= issue.t; k++) i = k;
+  if (i < 0) return null;
+  const step = steps[i];
+  const end = steps[i + 1]?.t ?? Infinity;
+  const screens = original.screens ?? [];
+  const at = screens.findIndex((s) => !!s.after && s.t > step.t && s.t < end);
+  // Nothing changed on screen after it the first time either (a dead button, an error with nothing shown): no measure.
+  if (at < 0) return null;
+  const again = replay.screens ?? [];
+  if (thinned(screens) || thinned(again)) return null;
+  const text = screens[at].after!.text;
+  const nth = screens.slice(0, at).filter((s) => s.after?.text === text).length;
+  return again.filter((s) => s.after?.text === text)[nth] ? null : step;
+}
+
 function verifyIssues(original: SessionAnalysis, replay: SessionAnalysis, outcome: ReplayOutcome): Record<string, VerifyResult> {
   const failed = outcome.steps.failed;
   // Nothing arrived from the app: no page, no action. Nothing can be said to be gone.
@@ -83,7 +111,11 @@ function verifyIssues(original: SessionAnalysis, replay: SessionAnalysis, outcom
       continue;
     }
     if (o.t >= reachedUntil && failed) {
-      out[o.id] = unknown(`The replay stopped before this: ${failed.description} (${replayReason(failed.reason, 'en')}).`, `توقّفت الإعادة قبل هذا: ${failed.descriptionAr ?? failed.description} (${replayReason(failed.reason, 'ar')}).`);
+      // A button that did nothing because it was disabled, and still is: the replay couldn't press it either.
+      const stuck = failed.reason === 'disabled' && /^(?:dead|disabled|rage):/.test(key) && o.t - failed.t < 3000;
+      out[o.id] = stuck
+        ? still(`It is still disabled: ${failed.description}.`, `ما زال معطّلًا: ${failed.descriptionAr ?? failed.description}.`)
+        : unknown(`The replay stopped before this: ${failed.description} (${replayReason(failed.reason, 'en')}).`, `توقّفت الإعادة قبل هذا: ${failed.descriptionAr ?? failed.description} (${replayReason(failed.reason, 'ar')}).`);
       continue;
     }
     if (key.startsWith('inp:') || key.startsWith('disabled:')) {
@@ -99,6 +131,12 @@ function verifyIssues(original: SessionAnalysis, replay: SessionAnalysis, outcom
     const endpoint = key.startsWith('net:') || key.startsWith('html:') || key.startsWith('slow:') ? o.key!.replace(/^(net|html|slow):/, '').replace(/:\d+$/, '') : null;
     if (endpoint && !requested(replay, endpoint)) {
       out[o.id] = unknown('The replay didn’t make this request, so it couldn’t tell.', 'لم ترسل الإعادة هذا الطلب، فلم تستطع الحكم.');
+      continue;
+    }
+    // Gone only if the step it came after did what it did the first time: else the replay never got to it, really.
+    const idle = noEffect(original, replay, o);
+    if (idle) {
+      out[o.id] = unknown(`The step before it, ${idle.description}, changed nothing on screen in the replay (it did the first time), so it can’t tell.`, `الخطوة التي سبقته، ${idle.descriptionAr ?? idle.description}، لم تغيّر شيئًا على الشاشة في الإعادة (وغيّرت في المرة الأولى)، فتعذّر الحكم.`);
       continue;
     }
     out[o.id] = fixed('It didn’t happen in the replay.', 'لم يحدث في الإعادة.');

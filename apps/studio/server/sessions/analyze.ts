@@ -9,7 +9,7 @@
  * problem lists its first 200; the rest is counted in `more`. The work is done in
  * slices (analyzeAsync), so the studio keeps answering while a long one runs.
  */
-import type { SessionTarget } from '@saywright/vite/protocol';
+import { secretName, type SessionTarget } from '@saywright/vite/protocol';
 import {
   AR_UNITS,
   arCount,
@@ -384,7 +384,11 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
         const it = add({ t: at, kind: 'action', text: `Typed “${e.value.slice(0, 60)}” into ${nameOf(e.el)}`, textAr: `كتب «${iso(e.value.slice(0, 60))}» في ${nameOfAr(e.el)}`, src: e.el.src });
         lastAction = it;
         refFile(e.el.src);
-        if (e.el.locator) steps.push({ t: at, kind: 'fill', locator: e.el.locator, value: e.masked ? '' : e.value, description: `Fill ${nameOf(e.el)}`, descriptionAr: `املأ ${nameOfAr(e.el)}`, ...likeOf(e.el) });
+        if (e.el.locator) {
+          // A secret is a name to fill from (the Test tab, or SAYWRIGHT_SECRET_…), never a value: not in the steps, a test or a replay.
+          const secret = e.masked ? { secret: e.secret ?? secretName(e.el.label || e.el.name) } : {};
+          steps.push({ t: at, kind: 'fill', locator: e.el.locator, value: e.masked ? '' : e.value, ...secret, description: `Fill ${nameOf(e.el)}`, descriptionAr: `املأ ${nameOfAr(e.el)}`, ...likeOf(e.el) });
+        }
         if (!e.el.label && e.el.role === 'textbox') {
           issue(`nolabel:${e.el.src ?? e.el.locator}`, () => ({ kind: 'accessibility', severity: 'medium', title: 'A field with no label', detail: 'Placeholder-only or unlabelled fields are hard to use with screen readers and once filled in.', titleAr: 'حقل بلا تسمية', detailAr: 'الحقول التي لا تحمل إلا نصًا توضيحيًا أو بلا تسمية صعبة الاستخدام مع قارئات الشاشة وبعد تعبئتها.', t: at, el: e.el, src: e.el.src }), it);
         }
@@ -393,7 +397,9 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
       case 'change': {
         lastAction = add({ t: at, kind: 'action', text: e.checked !== undefined ? `${e.checked ? 'Checked' : 'Unchecked'} ${nameOf(e.el)}` : `Chose “${e.value}” in ${nameOf(e.el)}`, textAr: e.checked !== undefined ? `${e.checked ? 'حدّد' : 'ألغى تحديد'} ${nameOfAr(e.el)}` : `اختار «${iso(e.value)}» في ${nameOfAr(e.el)}`, src: e.el.src });
         refFile(e.el.src);
-        if (e.el.locator) steps.push({ t: at, kind: 'fill', locator: e.el.locator, value: e.value, ...(e.checked !== undefined ? { checked: e.checked } : {}), description: `Set ${nameOf(e.el)}`, descriptionAr: `اضبط ${nameOfAr(e.el)}`, ...likeOf(e.el) });
+        // A list's choice is a choice (every option chosen), not text to type: selectOption in a test.
+        const list = e.checked === undefined && (e.el.tag === 'select' || e.el.role === 'combobox' || e.el.role === 'listbox');
+        if (e.el.locator) steps.push({ t: at, kind: 'fill', locator: e.el.locator, value: e.value, ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(list ? { select: e.options?.length ? e.options : [e.value] } : {}), description: `Set ${nameOf(e.el)}`, descriptionAr: `اضبط ${nameOfAr(e.el)}`, ...likeOf(e.el) });
         break;
       }
       case 'submit':

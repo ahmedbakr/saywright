@@ -38,8 +38,9 @@ import { EXPERTS, skillFile } from './experts/instructions.ts';
 import { STUDIO_PORT, STUDIO_URL, type ExpertId, type PageReview } from '@saywright/vite/protocol';
 import type { SpeechLang } from './speech/catalog.ts';
 import { SpeechService } from './speech/service.ts';
-import { writeSpec } from './tests/generate.ts';
+import { sanitizeSteps, writeSpec } from './tests/generate.ts';
 import { installBrowser, runSpec } from './tests/run.ts';
+import { secretKey, TestSecrets } from './tests/secrets.ts';
 
 /** Connect-style middleware, as Vite and the standalone server mount it. */
 export type Middleware = (req: IncomingMessage, res: ServerResponse, next: () => void) => unknown;
@@ -407,6 +408,11 @@ export async function createStudioApi(layout: StudioLayout) {
     return { result: result && traced.guessed ? { ...result, guessed: true } : result };
   });
 
+  /** The secrets this app's tests type, saved on this computer for runs and replays (with the studio's data, outside the app). */
+  const secretsOf = (w: { app: { id: string } }) => new TestSecrets(path.join(dataDir, 'secrets', `${w.app.id}.json`));
+  /** Where a test run's configuration and report go: the studio's data, never the app's code. */
+  const runsDir = (w: { app: { id: string } }) => path.join(dataDir, 'test-runs', w.app.id);
+
   router.post('/tests/generate', (req) => {
     const body = (req.body ?? {}) as { name?: string; startUrl?: string; steps?: RecordedStep[]; expectations?: Expectation[] };
     if (!Array.isArray(body.expectations) || !body.expectations.length) throw new HttpError(400, 'Say what you expected first');
@@ -414,7 +420,8 @@ export async function createStudioApi(layout: StudioLayout) {
     const spec = writeSpec(project, {
       name: body.name,
       startUrl: typeof body.startUrl === 'string' ? body.startUrl : project.url,
-      steps: Array.isArray(body.steps) ? body.steps.slice(0, 100) : [],
+      // Whatever sent them, secrets go in as names only.
+      steps: sanitizeSteps(Array.isArray(body.steps) ? body.steps.slice(0, 100) : []),
       expectations: body.expectations.slice(0, 20),
     });
     metrics.record({ type: 'test-generated', path: spec.path, steps: body.steps?.length ?? 0 });
@@ -422,11 +429,37 @@ export async function createStudioApi(layout: StudioLayout) {
   });
 
   router.post('/tests/run', async (req) => {
-    const rel = asString((req.body as { path?: unknown } | undefined)?.path, 'path', 300);
-    const { project, metrics } = ws();
-    const result = await runSpec(project, rel, project.url);
-    metrics.record({ type: 'test', path: rel, status: result.status, durationMs: result.durationMs });
+    const body = (req.body ?? {}) as { path?: unknown; baseline?: unknown };
+    const rel = asString(body.path, 'path', 300);
+    const baseline = typeof body.baseline === 'string' ? body.baseline.slice(0, 64) : undefined;
+    const current = ws();
+    const { project, metrics } = current;
+    const result = await runSpec(project, rel, { baseUrl: project.url, workDir: runsDir(current), secrets: secretsOf(current).all(), baseline });
+    metrics.record({ type: 'test', path: rel, status: result.status, durationMs: result.durationMs, verified: result.verified ?? false });
     return result;
+  });
+
+  // Which secrets are set, never their values; saving one; and the values a replay types (for the studio's own page only).
+  router.get('/tests/secrets', () => secretsOf(ws()).names());
+  router.put('/tests/secrets', (req) => {
+    const body = (req.body ?? {}) as { name?: unknown; value?: unknown };
+    const name = secretKey(asString(body.name, 'name', 60));
+    const value = body.value === undefined ? '' : asString(body.value, 'value', 4000);
+    const store = secretsOf(ws());
+    store.set(name, value);
+    return store.names();
+  });
+  router.post('/tests/secrets/values', (req) => {
+    const names = (req.body as { names?: unknown } | undefined)?.names;
+    if (!Array.isArray(names)) throw new HttpError(400, 'Expected { names }');
+    const store = secretsOf(ws());
+    const out: Record<string, string> = {};
+    for (const n of names.slice(0, 20)) {
+      if (typeof n !== 'string') continue;
+      const v = store.get(n);
+      if (v) out[secretKey(n)] = v;
+    }
+    return { values: out };
   });
 
   router.post('/tests/install', async () => {
@@ -453,13 +486,23 @@ export async function createStudioApi(layout: StudioLayout) {
     inflight.set(requestId, ctl);
     const started = Date.now();
     try {
+      const testCode = project.read(rel);
       const out = await agent.run(
-        { text: text || 'Fix the bug this test shows.', refs: await mapRefs(body.refs), mode: 'fix', test: { path: rel, code: project.read(rel), failure } },
+        { text: text || 'Fix the bug this test shows.', refs: await mapRefs(body.refs), mode: 'fix', test: { path: rel, code: testCode, failure } },
         { project, progress, signal: ctl.signal },
       );
       const latencyMs = Date.now() - started;
       if (out.kind === 'change') {
-        const change = await changes.preview({ title: out.title, summary: out.summary, said: text || 'fix it', source: agent.source, model, edits: out.edits, latencyMs });
+        // A fix is checked against the test as it was recorded: a change to that test is left out, or the test would prove nothing.
+        const normalized = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+        const kept = out.edits.filter((e) => normalized(e.path) !== normalized(rel));
+        const dropped = out.edits.length - kept.length;
+        if (!kept.length) {
+          metrics.record({ type: 'command', text: text || 'fix it', input, result: 'refused', source: agent.source, latencyMs, fix: true });
+          return { kind: 'message', tone: 'warn', text: `${aiLabel()} only changed the test, not your app. A fix is checked against the test as you recorded it, so that change was left out. If the test itself is wrong, record it again or edit it yourself.` };
+        }
+        const summary = dropped ? `${out.summary}\n\nIt also changed the test it is checked against; that part was left out, so the test still checks what you recorded.` : out.summary;
+        const change = await changes.preview({ title: out.title, summary, said: text || 'fix it', source: agent.source, model, edits: kept, latencyMs });
         metrics.record({ type: 'command', text: text || 'fix it', input, result: 'change', source: agent.source, latencyMs, fix: true, changeId: change.id });
         return { kind: 'change', change };
       }

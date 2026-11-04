@@ -1,4 +1,4 @@
-import { NAME_ATTR, SRC_ATTR, type ElementInfo, type Rect, type SourceHint } from '../protocol';
+import { dots, isSecretHint, looksSecret, maskSecrets, NAME_ATTR, secretName, SRC_ATTR, type ElementInfo, type Rect, type SourceHint } from '../protocol';
 import { hasFiber, instanceFrames, ownSite, reactFrames } from './react';
 
 const ids = new WeakMap<Element, number>();
@@ -43,37 +43,19 @@ export function collapse(s: string | null | undefined, max = 80): string {
 
 /**
  * Text as a person reads it on screen, line by line: blank lines dropped, spaces collapsed, long lines cut, whole
- * lines up to `max` characters, and card numbers masked to their last four digits.
+ * lines up to `max` characters, card numbers masked to their last four digits, and keys and tokens masked.
  */
 export function screenLines(text: string, max: number, line = 200): string {
   const out: string[] = [];
   let size = 0;
   for (const raw of text.split('\n')) {
-    const l = collapse(maskCards(raw), line);
+    const l = collapse(maskSecrets(raw), line);
     if (!l) continue;
     if (size + l.length + 1 > max) break;
     out.push(l);
     size += l.length + 1;
   }
   return out.join('\n');
-}
-
-/** A card number (13 to 19 digits that pass the Luhn check, spaces or dashes allowed) shown as •••• and its last four. */
-function maskCards(text: string): string {
-  return text.replace(/\b\d(?:[ -]?\d){12,18}\b/g, (m) => {
-    const digits = m.replace(/\D/g, '');
-    return luhn(digits) ? `•••• ${digits.slice(-4)}` : m;
-  });
-}
-
-function luhn(digits: string): boolean {
-  let sum = 0;
-  for (let i = 0; i < digits.length; i++) {
-    let d = Number(digits[digits.length - 1 - i]);
-    if (i % 2) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
-    sum += d;
-  }
-  return sum % 10 === 0;
 }
 
 /**
@@ -154,6 +136,56 @@ export function isField(el: Element): el is HTMLInputElement | HTMLTextAreaEleme
   return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
 }
 
+/** What people already mark so that session-replay tools never record it (Saywright's own mark first). */
+const PRIVATE =
+  '[data-saywright-secret], [data-private], [data-sensitive], [data-mask], [data-sentry-mask], [data-hj-suppress], [data-ph-no-capture], .rr-mask, .rr-block, .sentry-mask, .fs-mask, .fs-exclude, .hj-suppress, .ph-no-capture';
+
+/** Password fields seen as such: one that “show password” turned into a text field still holds a password. */
+const passwords = new WeakSet<Element>();
+
+/** Words that describe a field: its type, name, id, autocomplete, label, placeholder and test id. */
+function fieldHint(el: Element): string {
+  return [
+    (el as HTMLInputElement).type,
+    el.getAttribute('name'),
+    el.id,
+    el.getAttribute('autocomplete'),
+    el.getAttribute('aria-label'),
+    el.getAttribute('placeholder'),
+    el.getAttribute('data-testid'),
+    labelText(el),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+/**
+ * Whether what is typed into this field is a secret, never to be recorded or shown: a password field (also once
+ * “show password” has made it a text field), a field marked private (data-saywright-secret, or the marks other
+ * replay tools use), one called like a secret (see isSecretHint), or one holding a value that looks like one.
+ */
+export function isSecretField(el: Element): boolean {
+  if (!isField(el) || el instanceof HTMLSelectElement) return false;
+  if (el instanceof HTMLInputElement && el.type === 'password') {
+    passwords.add(el);
+    return true;
+  }
+  if (passwords.has(el) || el.closest(PRIVATE)) return true;
+  if (el instanceof HTMLInputElement && ['checkbox', 'radio', 'file', 'range', 'color', 'submit', 'button', 'reset', 'image', 'hidden'].includes(el.type)) return false;
+  return isSecretHint(fieldHint(el)) || looksSecret(el.value);
+}
+
+/** What a test calls a secret field's value: PASSWORD, CARD_NUMBER… (from its label, else its name). */
+export function secretNameOf(el: Element): string {
+  if (el instanceof HTMLInputElement && el.type === 'password' && !isSecretHint(labelText(el) || el.getAttribute('placeholder') || el.getAttribute('name') || '')) return 'PASSWORD';
+  return secretName(labelText(el) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('autocomplete') || el.getAttribute('name') || el.id || '');
+}
+
+/** What a field holds, as it may be shown or sent anywhere: a secret's value as dots, other values with any card number or key in them masked. */
+export function fieldValue(el: HTMLInputElement | HTMLTextAreaElement): string {
+  return isSecretField(el) ? dots(el.value) : maskSecrets(el.value);
+}
+
 /** Associated <label> text for a form field. */
 export function labelText(el: Element): string {
   if (!isField(el)) return '';
@@ -181,7 +213,8 @@ export function accessibleName(el: Element): string {
 
 export function visibleText(el: Element): string {
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    return collapse(el.value || el.placeholder, 80);
+    // A secret's value is never anyone's text: not the studio's, a locator's, a report's or an AI's.
+    return collapse(isSecretField(el) ? el.placeholder : el.value || el.placeholder, 80);
   }
   return collapse((el as HTMLElement).innerText ?? el.textContent, 80);
 }
@@ -190,7 +223,7 @@ function shortLabel(el: Element): string {
   const aria = el.getAttribute('aria-label');
   if (aria) return collapse(aria, 28);
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-    return collapse(labelText(el) || el.placeholder || el.value, 28);
+    return collapse(labelText(el) || el.placeholder || (isSecretField(el) ? '' : el.value), 28);
   }
   return collapse((el as HTMLElement).innerText ?? el.textContent, 28);
 }

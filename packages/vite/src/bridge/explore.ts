@@ -3,8 +3,8 @@
  * the Playwright locator the recorder would write for it, so the step Autopilot takes is replayed, recorded and
  * saved as a test exactly like a person's.
  */
-import { SRC_ATTR, type PageControl, type PageSnapshot } from '../protocol';
-import { accessibleName, annotatedAncestor, collapse, isField, isVisible, roleOf, visibleText } from './dom';
+import { maskSecrets, redactUrl, SRC_ATTR, type PageControl, type PageSnapshot } from '../protocol';
+import { accessibleName, annotatedAncestor, collapse, fieldValue, isField, isVisible, roleOf, visibleText } from './dom';
 import { buildLocator } from './locator';
 
 const CONTROLS =
@@ -20,7 +20,8 @@ function fieldOf(el: Element): PageControl['field'] | undefined {
   }
   const type = el instanceof HTMLTextAreaElement ? 'textarea' : el.type || 'text';
   if (type === 'checkbox' || type === 'radio') return { type, value: '', required: el.required, checked: (el as HTMLInputElement).checked };
-  return { type, value: type === 'password' ? (el.value ? '••••' : '') : collapse(el.value, 60), required: el.required };
+  // A secret (a password, a card number, a key) only as dots: it is never sent to an AI.
+  return { type, value: collapse(fieldValue(el), 60), required: el.required };
 }
 
 function control(el: Element, offscreen: boolean): PageControl {
@@ -47,13 +48,13 @@ export function snapshot(): PageSnapshot {
   // Where a key press goes: the control the last step left the focus on.
   const focused = listed.findIndex((p) => p.el === document.activeElement);
   return {
-    url: location.href,
+    url: redactUrl(location.href),
     title: document.title,
     headings: Array.from(document.querySelectorAll('h1, h2, h3'))
       .filter(isVisible)
       .slice(0, 12)
       .map((h) => collapse(h.textContent, 100)),
-    text: collapse((main as HTMLElement).innerText, MAX_TEXT),
+    text: collapse(maskSecrets((main as HTMLElement).innerText), MAX_TEXT),
     controls: listed.map((p) => control(p.el, p.offscreen)),
     more: Math.max(0, placed.length - MAX_CONTROLS),
     dialog: dialog ? collapse(accessibleName(dialog) || dialog.querySelector('h1, h2, h3')?.textContent, 80) || 'a dialog' : null,

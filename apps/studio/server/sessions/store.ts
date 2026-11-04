@@ -19,7 +19,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { SessionBatch, SessionEvent } from '@saywright/vite/protocol';
+import { scrubEvent, type SessionBatch, type SessionEvent } from '@saywright/vite/protocol';
 import { EMPTY_COUNTS, NO_DECISIONS, type ReportDecisions, type SessionAnalysis, type SessionLang, type SessionMeta, type SessionReport, type SessionShot, type SessionVerification, type TranscriptSegment, type VideoPart } from '../../shared/session.ts';
 import { writeFileAtomic } from '../fsx.ts';
 import { HttpError } from '../http.ts';
@@ -275,7 +275,8 @@ export class SessionStore {
       if (!e || typeof e !== 'object' || typeof e.seq !== 'number' || typeof e.t !== 'number' || typeof e.type !== 'string') continue;
       if (seen.has(e.seq)) continue;
       seen.add(e.seq);
-      fresh.push({ ...e, page });
+      // Scrubbed again as it is kept: an older plugin's events may hold a secret this version masks.
+      fresh.push(scrubEvent({ ...e, page }));
     }
     st.lastActivity = Date.now();
     if (!fresh.length) return fresh;

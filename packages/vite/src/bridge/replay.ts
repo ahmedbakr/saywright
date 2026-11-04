@@ -6,7 +6,7 @@
  * clicked, filled or pressed.
  */
 import { NAME_ATTR, SRC_ATTR } from '../protocol';
-import { accessibleName, collapse, isField, isVisible, labelText, shapeOf, visibleText } from './dom';
+import { accessibleName, collapse, fieldValue, isField, isVisible, labelText, shapeOf, visibleText } from './dom';
 import { ROLE_SELECTORS, roleFor } from './locator';
 
 /** What the recorded element was: to find it again when its place in the code has moved. */
@@ -260,15 +260,39 @@ export function find(code: string, like?: Like): { el: Element | null; reason?: 
   return el ? { el } : { el: null, reason: all.length ? 'hidden' : 'missing' };
 }
 
+/** The option a recorded choice names: by its value, else by what it says (as it was recorded, "Express"). */
+function optionFor(el: HTMLSelectElement, wanted: string): HTMLOptionElement | undefined {
+  const opts = Array.from(el.options);
+  const said = (o: HTMLOptionElement) => norm(o.label || o.text);
+  return opts.find((x) => x.value === wanted) ?? opts.find((x) => said(x) === norm(wanted)) ?? opts.find((x) => said(x).toLowerCase() === norm(wanted).toLowerCase());
+}
+
+/** Choose these options (all of them, in a list that takes several), as a person would: then input and change. */
+function choose(el: HTMLSelectElement, wanted: string[]): void {
+  const picked = wanted.map((w) => optionFor(el, w));
+  if (!picked.length || picked.some((o) => !o)) throw new Error('no-option');
+  if (el.multiple) for (const o of Array.from(el.options)) o.selected = picked.includes(o);
+  else {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    if (setter) setter.call(el, picked[0]!.value);
+    else el.value = picked[0]!.value;
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** A control a person couldn't use now: disabled (itself or its fieldset), marked so, or in an inert part of the page. */
+function unusable(el: Element): boolean {
+  if (el.matches(':disabled')) return true;
+  if (el.closest('[inert]')) return true;
+  const control = el.closest('[aria-disabled]');
+  return control?.getAttribute('aria-disabled') === 'true';
+}
+
 /** Set a field's value the way React expects (native setter, then input and change). */
 function setValue(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string): void {
   // A list's choice was recorded by what it says ("Express"): pick that option, whatever its value.
-  if (el instanceof HTMLSelectElement) {
-    const opts = Array.from(el.options);
-    const o = opts.find((x) => x.value === value) ?? opts.find((x) => norm(x.text) === norm(value)) ?? opts.find((x) => norm(x.text).toLowerCase() === norm(value).toLowerCase());
-    if (!o) throw new Error('no-option');
-    value = o.value;
-  }
+  if (el instanceof HTMLSelectElement) return choose(el, [value]);
   // Files can't be chosen for the app: the person has to.
   if (el instanceof HTMLInputElement && el.type === 'file') throw new Error('file');
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
@@ -282,8 +306,13 @@ function setValue(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
 const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0 });
 const mouse = (type: string, x: number, y: number) => new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, buttons: type === 'mousedown' ? 1 : 0, detail: 1 });
 
-/** Do one step on an element: as a person would, so the app (and its recorder) sees the same events. */
-export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean }): void {
+/**
+ * Do one step on an element: as a person would, so the app (and its recorder) sees the same events. A control a
+ * person couldn't use now (disabled, inert) is refused: clicking it would do nothing, and the replay would go on as
+ * if it had worked.
+ */
+export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] }): void {
+  if (unusable(el)) throw new Error('disabled');
   const r = el.getBoundingClientRect();
   const x = r.left + r.width / 2;
   const y = r.top + r.height / 2;
@@ -307,6 +336,7 @@ export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value
       if (el.checked !== (step.checked ?? !el.checked)) el.click();
       return;
     }
+    if (el instanceof HTMLSelectElement && step.select?.length) return choose(el, step.select);
     setValue(el, step.value ?? '');
     return;
   }
@@ -330,7 +360,8 @@ export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value
   }
 }
 
-/** What an element shows now, for checking what the tester said it should show. */
+/** What an element shows now, for checking what the tester said it should show (a secret as dots). */
 export function textOf(el: Element): string {
-  return isField(el) ? (el as HTMLInputElement).value : collapse((el as HTMLElement).innerText ?? el.textContent ?? '', 400);
+  if (el instanceof HTMLSelectElement) return Array.from(el.selectedOptions, (o) => norm(o.label || o.text)).join(', ');
+  return isField(el) ? fieldValue(el as HTMLInputElement) : collapse((el as HTMLElement).innerText ?? el.textContent ?? '', 400);
 }

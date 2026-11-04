@@ -4,6 +4,8 @@
  * message source before trusting anything.
  */
 
+export * from './redact';
+
 export const NS = 'saywright' as const;
 /**
  * The plugin in an app and the studio are updated separately, so each side
@@ -95,9 +97,15 @@ export interface LocatorInfo {
   within?: string;
 }
 
+/**
+ * A step of Write test, as the app's bridge saw it. A secret (a password, a card number…) comes as `secret`, the
+ * name a test reads it under (PASSWORD), with an empty `value`: what was typed never leaves the page. A choice in a
+ * list comes as a `fill` with `select`, the options chosen (by what they say, and `values` by their value), so a
+ * studio that doesn't know `select` still writes a step rather than leaving one out.
+ */
 export type RecordedAction =
   | { kind: 'click'; locator: string; description: string }
-  | { kind: 'fill'; locator: string; value: string; description: string }
+  | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[] }
   | { kind: 'press'; locator: string; key: string; description: string };
 
 /** An element as a test session remembers it. Cheap fields are read at once; `locator`, `description` and `path` when the browser is idle. */
@@ -140,8 +148,10 @@ export type SessionEventBody =
   | { type: 'page'; url: string; title: string; referrer: string; viewport: [number, number, number]; ua: string; lang: string; reload: boolean; timing?: { ttfb: number; dcl: number; load: number } }
   /** `disabled`: the press landed on a disabled control, which ignores it. */
   | { type: 'click'; x: number; y: number; button: number; pointer: string; el: SessionTarget; count: number; disabled?: boolean }
-  | { type: 'input'; el: SessionTarget; value: string; masked: boolean }
-  | { type: 'change'; el: SessionTarget; value: string; checked?: boolean }
+  /** `masked`: a secret (`value` is a dot per character); `secret`: the name a test would read it under (PASSWORD). */
+  | { type: 'input'; el: SessionTarget; value: string; masked: boolean; secret?: string }
+  /** `options`: what each option chosen in a list says (several, in a list that takes more than one); `value` is the first. */
+  | { type: 'change'; el: SessionTarget; value: string; checked?: boolean; options?: string[] }
   | { type: 'submit'; el: SessionTarget }
   | { type: 'key'; key: string; mods: string; el: SessionTarget | null }
   | { type: 'focus'; el: SessionTarget }
@@ -211,13 +221,23 @@ export type StudioToBridge = Base &
      * Replaying a session: find the element a recorded Playwright locator points at, bring it into view, and do
      * `step` on it (or nothing, just to show where it is). `read`: also answer with what it shows.
      */
-    | { type: 'replay'; reqId: number; locator: string; step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean }; read?: boolean; like?: { tag: string; name: string; text: string; shape?: string } }
+    | {
+        type: 'replay';
+        reqId: number;
+        locator: string;
+        /** `select`: the options to choose, by what they say or their value (all of them, in a list that takes several). */
+        step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] };
+        read?: boolean;
+        like?: { tag: string; name: string; text: string; shape?: string };
+      }
     /** Open another page of the app (same origin only), to replay a session from where it started. */
     | { type: 'goto'; url: string }
     | { type: 'click'; reqId: number; x: number; y: number }
     | { type: 'type'; reqId: number; text: string; submit: boolean }
     | { type: 'scroll'; x: number; y: number; dx: number; dy: number }
     | { type: 'record'; on: boolean }
+    /** Write test: send the steps still waiting (text being typed) now, then reply; a check said next comes after them. */
+    | { type: 'flush'; reqId: number }
     /** Report the real mouse position while the user interacts with the app directly (Use / Record modes). */
     | { type: 'mouse'; on: boolean }
     /** Forward the studio's talk and cancel keys (Space outside text fields, Escape) while the app has focus. */

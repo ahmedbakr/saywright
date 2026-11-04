@@ -210,6 +210,9 @@ export class Replayer {
       // Without the app recording it, there would be nothing to compare (and everything would look fixed).
       if (!(await this.host.bridge.session(true, replayId, location.origin, key))) throw new Error('not-recording');
       restore = this.host.enterUse();
+      // Secrets the session typed (never recorded): typed again from what you saved for them, or the replay stops there.
+      const names = [...new Set(steps.flatMap((s) => (s.secret ? [s.secret] : [])))];
+      const secrets: Record<string, string> = names.length ? ((await api.post<{ values: Record<string, string> }>('/tests/secrets/values', { names }).catch(() => ({ values: {} as Record<string, string> }))).values ?? {}) : {};
 
       let next = 0;
       const checkUpTo = async (t: number) => {
@@ -240,7 +243,12 @@ export class Replayer {
         this.host.show({ ...view });
         this.host.point(found.info, false);
         await sleep(450);
-        const r = await this.host.bridge.replay(s.locator, { kind: s.kind as 'click' | 'fill' | 'press', value: s.value, key: s.key, checked: s.checked }, false, s.like);
+        const value = s.secret ? secrets[s.secret.toUpperCase()] : s.value;
+        if (s.secret && !value) {
+          failed = { i, t: s.t, description: s.description, descriptionAr: s.descriptionAr, reason: 'secret' };
+          break;
+        }
+        const r = await this.host.bridge.replay(s.locator, { kind: s.kind as 'click' | 'fill' | 'press', value, key: s.key, checked: s.checked, select: s.select }, false, s.like);
         if (!r.ok) {
           failed = { i, t: s.t, description: s.description, descriptionAr: s.descriptionAr, reason: r.error ?? 'failed' };
           break;

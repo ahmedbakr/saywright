@@ -90,6 +90,8 @@ interface RecorderState {
   installLog: string[];
   /** A fix preview was made for the failing test and is being re-checked. */
   verifying: boolean;
+  /** The fingerprint of the test when it last failed: a fix is checked against that test, unchanged. */
+  baseline?: string;
 }
 
 interface RequestState {

@@ -117,9 +117,16 @@ export interface StatusResponse {
 }
 
 export interface RecordedStep {
-  kind: 'click' | 'fill' | 'press' | 'goto' | 'note';
+  /** `url`: the page the step before it led to, waited for (a click that navigates, whatever comes next). */
+  kind: 'click' | 'fill' | 'press' | 'goto' | 'note' | 'url';
   locator?: string;
   value?: string;
+  /** A secret typed into the field: the name its test reads it under (PASSWORD, from SAYWRIGHT_SECRET_PASSWORD). `value` is empty. */
+  secret?: string;
+  /** A choice in a list: what each option chosen says (several, in a list that takes more than one). */
+  select?: string[];
+  /** The same options' values, when the app's bridge said them. */
+  values?: string[];
   /** A checkbox or radio button: check or uncheck it. */
   checked?: boolean;
   key?: string;
@@ -133,6 +140,19 @@ export interface Expectation {
   expected: string;
   /** What the element showed when the expectation was spoken. */
   actual: string;
+  /** How many steps came before it: it is checked after them. Without it (an older studio), after the last step. */
+  after?: number;
+  /** What it was said about is a field (its value is checked) or a list (the option chosen is). */
+  field?: 'value' | 'select';
+}
+
+/** One step or check of a generated test, as a run reported it. */
+export interface RunStep {
+  /** As the test names it: “[2] Click the “Apply” button”, “[check 1] The total should show $80.80”. */
+  title: string;
+  check: boolean;
+  ok: boolean;
+  error?: string;
 }
 
 export interface TestRunResult {
@@ -142,6 +162,23 @@ export interface TestRunResult {
   expected?: string;
   received?: string;
   output?: string;
+  /**
+   * What the run shows. `verified`: it passed, on its first try, with every step and check the test has reported as
+   * run, and the test is the one it was compared with (unchanged since it failed): the only pass that proves something.
+   */
+  verified?: boolean;
+  /** Why a pass doesn't prove anything (skipped, a step or check that didn't run, the test changed since it failed). */
+  unverified?: string;
+  /** A failure at a check (the bug shows) or at a step before the checks (the test couldn't get there: not reproduced). */
+  failedAt?: 'check' | 'step';
+  /** The steps and checks the run reported, in order. */
+  steps?: RunStep[];
+  /** The test's steps and checks: how many it has, and how many ran and passed. */
+  counts?: { steps: number; checks: number; stepsPassed: number; checksPassed: number };
+  /** The test file's fingerprint when it ran: a later run compares with it, to know the test is the same. */
+  hash?: string;
+  /** Secrets the test types that aren't set (setup-needed): by name, PASSWORD. */
+  missingSecrets?: string[];
 }
 
 export interface MetricEvent {

@@ -256,7 +256,7 @@ export class BridgeClient {
    */
   async replay(
     locator: string,
-    step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean },
+    step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] },
     read = false,
     like?: { tag: string; name: string; text: string; shape?: string },
     timeout = 5000,
@@ -297,6 +297,14 @@ export class BridgeClient {
 
   record(on: boolean): void {
     this.post({ type: 'record', on });
+  }
+
+  /**
+   * Write test: have the app send the steps still waiting (text being typed) before anything else is placed after
+   * them. An app on an older plugin doesn't answer: after a moment, what was recorded so far is all there is.
+   */
+  async flushRecorder(): Promise<void> {
+    await this.request({ type: 'flush', reqId: 0 }, 400);
   }
 
   trackMouse(on: boolean): void {

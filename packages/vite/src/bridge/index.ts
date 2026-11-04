@@ -184,6 +184,10 @@ function start(): void {
       case 'record':
         recorder.setOn(m.on);
         return;
+      case 'flush':
+        // The steps go out before the reply: the studio places what comes next after them.
+        recorder.flushAll();
+        return reply(m.reqId, {});
       case 'mouse':
         mouseOn = m.on;
         return;

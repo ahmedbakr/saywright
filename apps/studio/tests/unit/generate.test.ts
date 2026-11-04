@@ -1,7 +1,7 @@
 import { parse } from '@babel/parser';
 import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
-import { generateSpec, safeLocator, writeSpec } from '../../server/tests/generate';
+import { generateSpec, safeLocator, secretsOf, urlPattern, writeSpec } from '../../server/tests/generate';
 import { focusOn, parseFailure } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
@@ -16,13 +16,87 @@ const input = {
 };
 
 describe('generateSpec', () => {
-  it('writes a readable Playwright test from the narration', () => {
+  it('writes a readable Playwright test from the narration, each step and check a numbered test.step', () => {
     const code = generateSpec(input, new Date('2026-10-13T00:00:00Z'));
     expect(code).toContain("test('total should show $80.80', async ({ page }) => {");
-    expect(code).toContain("await page.goto('/#/checkout');");
-    expect(code).toContain("await page.getByTestId('coupon-input').fill('SAVE20');");
+    expect(code).toContain("  await test.step('[1] Open /#/checkout', async () => {\n    await page.goto('/#/checkout');\n  });");
+    expect(code).toContain("  await test.step('[2] Type SAVE20', async () => {\n    await page.getByTestId('coupon-input').fill('SAVE20');\n  });");
+    expect(code).toContain("  await test.step('[3] Click Apply', async () => {");
     expect(code).toContain('// Note: the discount looks too big');
+    expect(code).toContain("  await test.step('[check 1] The total should show $80.80', async () => {");
     expect(code).toContain("await expect(page.getByTestId('summary-total')).toContainText('$80.80');");
+    // No secrets: no helper that reads the environment.
+    expect(code).not.toContain('process.env');
+  });
+
+  it('puts each check where it was said: after the steps before it, before the steps after it', () => {
+    const code = generateSpec({
+      startUrl: 'http://localhost:5174/',
+      steps: [
+        { kind: 'fill', locator: "page.getByTestId('coupon-input')", value: 'SAVE20', description: 'Type SAVE20' },
+        { kind: 'click', locator: "page.getByTestId('coupon-apply')", description: 'Click Apply' },
+        { kind: 'click', locator: "page.getByRole('link', { name: 'Checkout' })", description: 'Click Checkout' },
+        { kind: 'url', url: 'http://localhost:5174/checkout', description: 'The page is /checkout' },
+      ],
+      expectations: [
+        { locator: "page.getByTestId('summary-total')", description: 'the total', expected: '$80.80', actual: '$78.40', after: 2 },
+        { locator: "page.getByRole('heading')", description: 'the heading', expected: 'Checkout', actual: 'Cart' },
+      ],
+    });
+    const at = (s: string) => code.indexOf(s);
+    expect(at('[check 1] The total')).toBeGreaterThan(at('[3] Click Apply'));
+    expect(at('[check 1] The total')).toBeLessThan(at('[4] Click Checkout'));
+    // An older studio's check, with no place: after every step.
+    expect(at('[check 2] The heading')).toBeGreaterThan(at('[5] The page is /checkout'));
+    // A step that navigates is waited for: the next one runs on the page it led to.
+    expect(code).toContain("await expect(page).toHaveURL(new RegExp('^[a-z]+://[^/]+/checkout/?(?:[?#]|$)'));");
+  });
+
+  it('never writes a secret into the test: it types it from the environment, and says which variable', () => {
+    const code = generateSpec({
+      startUrl: 'http://localhost:5174/login',
+      steps: [
+        { kind: 'fill', locator: "page.getByLabel('Email')", value: 'me@example.com', description: 'Type “me@example.com” into the “Email” field' },
+        // Whatever an older plugin put in `value`, a secret step writes only its name.
+        { kind: 'fill', locator: "page.getByLabel('Password')", value: 'hunter2', secret: 'PASSWORD', description: 'Type ••• into the “Password” field' },
+        { kind: 'fill', locator: "page.getByLabel('Confirm password')", value: '', secret: 'password', description: 'Type ••• into the “Confirm password” field' },
+      ],
+      expectations: [{ locator: "page.getByRole('heading')", description: 'the heading', expected: 'Welcome', actual: 'Sign in' }],
+    });
+    expect(code).not.toContain('hunter2');
+    expect(code).toContain("await page.getByLabel('Password').fill(secret('PASSWORD'));");
+    expect(code).toContain("await page.getByLabel('Confirm password').fill(secret('PASSWORD'));");
+    expect(code).toContain('// Secrets are never written here: it types PASSWORD from SAYWRIGHT_SECRET_PASSWORD');
+    expect(code).toContain('const value = process.env[`SAYWRIGHT_SECRET_${name}`];');
+    expect(code).toContain('if (!value) throw new Error(');
+    expect(secretsOf(code)).toEqual(['PASSWORD']);
+    // It still parses, as a module with the helper, the import and the test.
+    expect(parse(code, { sourceType: 'module', plugins: ['typescript'] }).program.body).toHaveLength(3);
+  });
+
+  it('chooses options in a list with selectOption, never fill: by what they say, by value when that has numbers, several at once', () => {
+    const code = generateSpec({
+      startUrl: 'http://localhost:5174/',
+      steps: [
+        { kind: 'fill', locator: "page.getByLabel('Shipping')", value: 'exp', select: ['Express'], values: ['exp'], description: 'Choose “Express” in the “Shipping” menu' },
+        { kind: 'fill', locator: "page.getByLabel('Plan')", value: 'pro', select: ['Pro ($20/month)'], values: ['pro'], description: 'Choose “Pro ($20/month)”' },
+        { kind: 'fill', locator: "page.getByLabel('Toppings')", value: 'ham', select: ['Ham', 'Olives'], values: ['ham', 'olives'], description: 'Choose “Ham”, “Olives”' },
+        // An older studio's session: the choice by what it says, no values.
+        { kind: 'fill', locator: "page.getByLabel('Size')", value: 'Large', select: ['Large'], description: 'Set the “Size” menu' },
+      ],
+      expectations: [{ locator: "page.getByLabel('Shipping')", description: 'the shipping menu', expected: 'Express', actual: 'Express', field: 'select' }],
+    });
+    expect(code).not.toContain(".fill('exp')");
+    expect(code).toContain("await page.getByLabel('Shipping').selectOption({ label: 'Express' });");
+    expect(code).toContain("await page.getByLabel('Plan').selectOption('pro');");
+    expect(code).toContain("await page.getByLabel('Toppings').selectOption([{ label: 'Ham' }, { label: 'Olives' }]);");
+    expect(code).toContain("await page.getByLabel('Size').selectOption({ label: 'Large' });");
+    expect(code).toContain("await expect(page.getByLabel('Shipping').locator('option:checked')).toContainText('Express');");
+  });
+
+  it('checks a field by its value, not its text', () => {
+    const code = generateSpec({ ...input, expectations: [{ locator: "page.getByLabel('Quantity')", description: 'the quantity', expected: '2.5', actual: '1', field: 'value' }] });
+    expect(code).toContain("await expect(page.getByLabel('Quantity')).toHaveValue(new RegExp('2\\\\.5'));");
   });
 
   it('checks or unchecks a box, rather than filling it', () => {
@@ -104,6 +178,23 @@ describe('generateSpec', () => {
     const b = writeSpec(p, input);
     expect(a.path).toBe('tests/saywright/total-should-show-80-80.spec.ts');
     expect(b.path).toBe('tests/saywright/total-should-show-80-80-2.spec.ts');
+  });
+});
+
+describe('urlPattern', () => {
+  it('matches the same page on another run (ids and numbers change), and not other pages', () => {
+    const cases: [string, string[], string[]][] = [
+      ['http://localhost:5173/', ['http://localhost:5173/', 'http://localhost:5173/?x=1', 'http://127.0.0.1:4000/#top'], ['http://localhost:5173/checkout']],
+      ['http://localhost:5173/checkout', ['http://localhost:5173/checkout', 'http://localhost:5173/checkout/', 'http://x:1/checkout?step=2'], ['http://localhost:5173/checkout/done', 'http://localhost:5173/', 'http://localhost:5173/checkoutx']],
+      ['http://localhost:5173/orders/123', ['http://localhost:5173/orders/456', 'http://localhost:5173/orders/abc-1234567890abcdef'], ['http://localhost:5173/orders', 'http://localhost:5173/orders/1/items']],
+      ['http://localhost:5173/u/550e8400-e29b-41d4-a716-446655440000/edit', ['http://localhost:5173/u/0000aaaa-e29b-41d4-a716-446655440000/edit'], ['http://localhost:5173/u/1/settings']],
+      ['http://localhost:5174/#/checkout', ['http://localhost:5174/#/checkout', 'http://localhost:5174/#/checkout?x=1'], ['http://localhost:5174/#/shop', 'http://localhost:5174/checkout']],
+    ];
+    for (const [url, same, other] of cases) {
+      const re = new RegExp(urlPattern(url));
+      for (const u of same) expect(re.test(u), `${url} ~ ${u}`).toBe(true);
+      for (const u of other) expect(re.test(u), `${url} !~ ${u}`).toBe(false);
+    }
   });
 });
 
