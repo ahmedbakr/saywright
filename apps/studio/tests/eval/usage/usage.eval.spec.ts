@@ -10,6 +10,7 @@
  *             its check; on a correct app it passes, verified. A secret typed is never in the test
  *   session   a recorded session of a use: its steps, errors and failed requests are in it, and secrets aren't
  *             anywhere in its files
+ *   replay    Replay & verify on a session that ran into a problem: still happening before the fix, fixed after
  *   experts   a review of a page reports the rules the manifest names
  *   mcp       a coding agent's calls: what is selected, a file (and not one outside the project), a search, and a
  *             change it proposes, shown in the studio and undone
@@ -54,8 +55,16 @@ interface Manifest {
   tests?: { name: string; path?: string; flow: Step[]; check: { target: Target; expected: string }; secrets?: Record<string, string>; bug: boolean }[];
   sessions?: { name: string; path?: string; flow: Step[]; expect: { steps?: number; errors?: number; failedRequests?: number } }[];
   experts?: { path?: string; expect: string[] }[];
+  /** Replay & verify: a session of a use that runs into `finding`, replayed before the fix and after it. */
+  replays?: { name: string; path?: string; flow: Step[]; finding: string; break?: Patch; fix?: Patch }[];
   mcp?: { search: string; read: string };
   ai?: { name: string; target: Target; say: string; path?: string; then: Step[] }[];
+}
+/** A change to a project's file: `find`, exactly once, becomes `replace`. */
+interface Patch {
+  file: string;
+  find: string;
+  replace: string;
 }
 interface Project {
   name: string;
@@ -316,6 +325,76 @@ const session: Journey = async (page, p, out) => {
   }
 };
 
+function patch(root: string, x: Patch, undo = false): void {
+  const file = path.join(root, x.file);
+  const [from, to] = undo ? [x.replace, x.find] : [x.find, x.replace];
+  const text = fs.readFileSync(file, 'utf8');
+  if (text.split(from).length !== 2) throw new Error(`${x.file}: the patch doesn't apply`);
+  fs.writeFileSync(file, text.replace(from, to));
+}
+
+const replay: Journey = async (page, p, out) => {
+  for (const x of p.manifest.replays ?? []) {
+    const t0 = Date.now();
+    let item = `${x.name}: still happening before the fix`;
+    try {
+      if (x.break) patch(p.root, x.break);
+      await page.waitForTimeout(1500);
+      await goto(page, x.path ?? '/');
+      await page.getByRole('button', { name: 'Record session', exact: true }).click();
+      await page.getByPlaceholder('What are you testing? (optional)').fill(x.name);
+      await page.getByRole('button', { name: 'Start recording' }).click();
+      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled({ timeout: 20_000 });
+      await act(page, x.flow);
+      await page.waitForTimeout(1500);
+      await page.getByRole('button', { name: 'Stop', exact: true }).click();
+      const id = await expect
+        .poll(async () => (await api<{ sessions: { id: string; name: string; status: string }[] }>('/sessions')).sessions.find((s) => s.name === x.name && s.status === 'ready')?.id ?? null, { timeout: 5 * 60_000, intervals: [1000] })
+        .not.toBeNull()
+        .then(async () => (await api<{ sessions: { id: string; name: string }[] }>('/sessions')).sessions.find((s) => s.name === x.name)!.id);
+      await page.goto(`/report/${id}`);
+      const finding = page.locator('[data-findings] article', { hasText: x.finding }).first();
+      await expect(finding).toBeVisible({ timeout: 30_000 });
+      const verify = async (button: string) => {
+        await page.locator(button).click();
+        // Played on the stage: until it is over (the last replay's result is on the page meanwhile).
+        await expect(page.locator('[data-island="replay"]')).toBeVisible({ timeout: 15_000 });
+        await expect(page.locator('[data-island="replay"]')).toHaveCount(0, { timeout: 120_000 });
+        await expect(page.locator('[data-verification="done"]')).toBeVisible({ timeout: 30_000 });
+        return finding.getAttribute('data-verdict');
+      };
+      const before = await verify('[data-verify]');
+      out({ item, ok: before === 'still', ms: Date.now() - t0, detail: before === 'still' ? undefined : `said ${before ?? 'nothing'}` });
+      // The developer's fix.
+      item = `${x.name}: fixed after the fix`;
+      const t1 = Date.now();
+      if (x.fix) patch(p.root, x.fix);
+      else if (x.break) patch(p.root, x.break, true);
+      await page.waitForTimeout(2000);
+      const after = await verify('[data-verify-again]');
+      out({ item, ok: after === 'fixed', ms: Date.now() - t1, detail: after === 'fixed' ? undefined : `said ${after ?? 'nothing'}` });
+    } catch (err) {
+      out({ item, ok: false, ms: Date.now() - t0, detail: (err instanceof Error ? err.message.split('\n')[0] : String(err)).replace(ANSI, '') });
+    }
+    // The project as it was.
+    if (x.fix) {
+      try {
+        patch(p.root, x.fix, true);
+      } catch {
+        /* never applied */
+      }
+    } else if (x.break) {
+      try {
+        patch(p.root, x.break, true);
+      } catch {
+        /* already put back */
+      }
+    }
+    await page.goto('/');
+    await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 30_000 }).toBe(true);
+  }
+};
+
 const experts: Journey = async (page, p, out) => {
   for (const x of p.manifest.experts ?? []) {
     const t0 = Date.now();
@@ -440,6 +519,7 @@ const JOURNEYS: [string, Journey][] = [
   ['edit', edit],
   ['test', writeTest],
   ['session', session],
+  ['replay', replay],
   ['experts', experts],
   ['mcp', mcp],
   ['ai', aiChange],
