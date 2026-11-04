@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { dots, isCodeField, isSecretHint, looksSecret, maskSecrets, redactUrl, scrubEvent, secretEnvName, secretName } from '@saywright/vite/protocol';
 
+/** A key-shaped test value, put together here so that secret scanners don't take this file for one holding a real key. */
+const key = (kind: string, rest: string) => kind + rest;
+
 describe('secret fields, by what they are called', () => {
   it('knows passwords, codes, keys, tokens and card and bank details, also by autocomplete and in Arabic', () => {
     for (const hint of [
@@ -57,8 +60,8 @@ describe('secret values, by their look', () => {
     for (const v of [
       '4242 4242 4242 4242',
       '4242424242424242',
-      'sk-ant-api03-abcdefghijklmnop',
-      'ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+      key('sk-ant-', 'api03-abcdefghijklmnop'),
+      key('ghp_', 'abcdefghijklmnopqrstuvwxyz0123456789'),
       'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
       'Q2xpZW50U2VjcmV0S2V5MTIzNDU2Nzg5',
       'a8f5f167f44f4964e6c998dee827110c',
@@ -73,7 +76,7 @@ describe('secret values, by their look', () => {
   });
 
   it('masks them inside text, keeping a card’s last four digits', () => {
-    expect(maskSecrets('Paid with 4242 4242 4242 4242 (key sk-proj-abcdefghijklmnopqrst), Bearer abcdefghijklmnopqrstuvwxyz')).toBe('Paid with •••• 4242 (key •••), Bearer •••');
+    expect(maskSecrets('Paid with 4242 4242 4242 4242 (key ' + key('sk-proj-', 'abcdefghijklmnopqrst') + '), Bearer abcdefghijklmnopqrstuvwxyz')).toBe('Paid with •••• 4242 (key •••), Bearer •••');
     expect(maskSecrets('Order 1234567890123 shipped')).toBe('Order 1234567890123 shipped');
     expect(dots('hunter2')).toBe('•••••••');
     expect(dots('x'.repeat(40))).toHaveLength(12);
@@ -86,8 +89,8 @@ describe('more secrets, by their name and shape', () => {
   });
 
   it.each([
-    ['whsec_ab12CD34ef56GH78ij90KL12', '•••'],
-    ['SG.abcdefghijklmnop.qrstuvwxyzABCDEF12', '•••'],
+    [key('whsec_', 'ab12CD34ef56GH78ij90KL12'), '•••'],
+    [key('SG.', 'abcdefghijklmnop.qrstuvwxyzABCDEF12'), '•••'],
     ['aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'aws_secret_access_key=•••'],
     ['"clientSecret": "Zq7harborLanternSecret"', '"clientSecret": "•••"'],
     ['postgres://ledger_admin:T5DbPassw0rd-Ocelot@db.local:5432/ledger', 'postgres://ledger_admin:•••@db.local:5432/ledger'],
@@ -180,10 +183,10 @@ describe('session events, scrubbed as they are kept', () => {
   });
 
   it('masks addresses, response bodies, errors and what the screen said', () => {
-    expect(scrubEvent({ type: 'net', url: '/api/me?access_token=abc', body: 'invalid key sk-proj-abcdefghijklmnopqrst', ok: false })).toMatchObject({ url: '/api/me?access_token=•••', body: 'invalid key •••' });
+    expect(scrubEvent({ type: 'net', url: '/api/me?access_token=abc', body: 'invalid key ' + key('sk-proj-', 'abcdefghijklmnopqrst'), ok: false })).toMatchObject({ url: '/api/me?access_token=•••', body: 'invalid key •••' });
     expect(scrubEvent({ type: 'page', url: '/reset?token=t0k3n', referrer: 'https://mail.example.com/?sig=abc' })).toMatchObject({ url: '/reset?token=•••', referrer: 'https://mail.example.com/?sig=•••' });
     expect(scrubEvent({ type: 'error', message: 'Bad card 4242424242424242', stack: 'at pay (Bearer abcdefghijklmnopqrstuvwxyz)' })).toMatchObject({ message: 'Bad card •••• 4242', stack: 'at pay (Bearer •••)' });
-    expect(scrubEvent({ type: 'dom', url: '/', text: 'Your key: ghp_abcdefghijklmnopqrstuvwxyz0123456789', headings: ['Card 4242 4242 4242 4242'] })).toMatchObject({ text: 'Your key: •••', headings: ['Card •••• 4242'] });
-    expect(scrubEvent({ type: 'click', el: { label: 'Copy', text: 'sk-ant-api03-abcdefghijklmnop' } })).toMatchObject({ el: { text: '•••' } });
+    expect(scrubEvent({ type: 'dom', url: '/', text: 'Your key: ' + key('ghp_', 'abcdefghijklmnopqrstuvwxyz0123456789'), headings: ['Card 4242 4242 4242 4242'] })).toMatchObject({ text: 'Your key: •••', headings: ['Card •••• 4242'] });
+    expect(scrubEvent({ type: 'click', el: { label: 'Copy', text: key('sk-ant-', 'api03-abcdefghijklmnop') } })).toMatchObject({ el: { text: '•••' } });
   });
 });
