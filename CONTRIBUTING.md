@@ -48,7 +48,7 @@ Work on a branch of your own (`git switch -c fix/short-name`), and open the pull
 | `npm run test:e2e` | End-to-end tests in Chromium (minutes) |
 | `npm run check` | All of the above in a row (typecheck, lint, unit, speech, end-to-end) |
 | `npm run eval:speech` | Speech accuracy on FLEURS recordings (add `-- --fetch` the first time): see [docs/speech-accuracy.md](docs/speech-accuracy.md) |
-| `npm run eval:ai` | The real-model benchmark: four small apps with a seeded bug and a bug-free twin, through observe → reproduce → fix → verify, with your AI. Opt-in and paid: `EVAL_BUDGET` (dollars, default 3) stops it, `EVAL_RUNS` (default 2) runs each test that many times, `EVAL_APPS=invoice,todo` picks apps. Results in `.saywright/ai-eval/`. The suite is `apps/studio/tests/eval/ai/`. |
+| `npm run eval:ai` | The real-model benchmark: four small apps with a seeded bug and a bug-free twin, through observe → reproduce → fix → verify, with your AI. Opt-in and paid: `EVAL_BUDGET` (dollars, default 3) stops it, `EVAL_RUNS` (default 2) runs each test that many times, `EVAL_APPS=invoice,todo` picks apps, and `EVAL_DRY=1` runs it with the AI test stand-in, to try the benchmark itself at no cost (its numbers mean nothing then). Results in `.saywright/ai-eval/`. The suite is `apps/studio/tests/eval/ai/`. |
 | `npm run build`, then `npm start` | The npm package as it would be published, run as it would be installed |
 
 ### End-to-end tests

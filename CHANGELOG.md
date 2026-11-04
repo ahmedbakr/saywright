@@ -37,6 +37,7 @@ The core loop, made safe and honest: observe → reproduce → fix → verify. A
 
 - Regression tests for all of the above: the redaction rules, the generator, what a run proves and Replay & verify's evidence (unit), and browser tests for a password and an API key in Write test and in a session, lists, a test that can't reach its check, a fix that only weakens the test and a shared screen whose first picture is late.
 - **An opt-in real-model benchmark** (`npm run eval:ai`, with your AI and a budget): four small apps the AI has never seen, each with a seeded bug and a bug-free twin, through the whole loop. It measures how often the session report finds the bug, false positives on the twins, how reliably the generated test reproduces it, how often the AI's fix is verified (with the test untouched and values the AI never saw right), and the time and cost of each step.
+- **Its first run**, with an Anthropic API key and the studio's default models, each test run twice: the session report found 3 of the 4 bugs, and none on the bug-free twins (the invoice that leaves its last line out of the subtotal went unnoticed: nobody said what it should be). The generated test failed at its check on the bug in 8 of 8 runs, and passed on the twins in 8 of 8 with every step and check reported. All 4 fixes were verified, each in one file, with the test untouched and the values it never checked right. A report took 9.8 s and a fix 4.5 s on average (before the run that verifies it), and the whole run cost $0.26.
 
 ## [0.1.1] - 2026-11-04
 

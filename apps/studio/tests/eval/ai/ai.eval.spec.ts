@@ -62,8 +62,8 @@ async function api<T>(p: string, method = 'GET', body?: unknown): Promise<T> {
   return (text ? JSON.parse(text) : {}) as T;
 }
 
-/** What the studio's usage tracker says was spent today, in dollars. */
-const spent = async () => (await api<{ ai: { usage: { usd: number } } }>('/status')).ai.usage.usd;
+/** What the studio's usage tracker says was spent today, in dollars, on every app (the top bar's figure is the open app's). */
+const spent = async () => (await api<{ today: { usd: number } }>('/ai/usage')).today.usd;
 
 interface Row {
   app: string;
@@ -98,7 +98,12 @@ test.afterAll(() => {
 async function use(page: Page, flow: Step[]): Promise<void> {
   const app = page.frameLocator('iframe');
   for (const s of flow) {
-    const el = s.do === 'click' ? app.getByRole('button', { name: s.label, exact: true }) : app.getByLabel(s.label, { exact: true });
+    // By role and name, as Playwright names a field inside its label (a list's options aren't part of its name).
+    const el =
+      s.do === 'click' ? app.getByRole('button', { name: s.label, exact: true })
+      : s.do === 'select' ? app.getByRole('combobox', { name: s.label, exact: true })
+      : s.do === 'check' ? app.getByRole('checkbox', { name: s.label, exact: true })
+      : app.getByLabel(s.label, { exact: true });
     if (s.do === 'fill') await el.fill(s.value ?? '');
     else if (s.do === 'select') await el.selectOption({ label: s.value ?? '' });
     else if (s.do === 'check') await el.check();

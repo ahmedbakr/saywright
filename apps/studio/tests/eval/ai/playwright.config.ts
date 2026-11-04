@@ -19,6 +19,8 @@ export default defineConfig({
   use: {
     baseURL: studio,
     viewport: { width: 1440, height: 900 },
+    // A step the harness can't do fails in seconds, not at the test's end.
+    actionTimeout: 15_000,
     channel: executablePath ? undefined : 'chromium',
     // A fake microphone that plays silence: a session starts without asking, and nobody narrates.
     launchOptions: { executablePath, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${path.join(here, '../../fixtures/speech/silence.wav')}`] },
