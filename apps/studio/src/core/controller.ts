@@ -390,6 +390,7 @@ class Controller {
         key: 'key' in action ? action.key : undefined,
         ...(action.kind === 'fill' && action.secret ? { secret: action.secret } : {}),
         ...(action.kind === 'fill' && action.select ? { select: action.select, values: action.values } : {}),
+        ...(action.kind === 'fill' && action.checked !== undefined ? { checked: action.checked } : {}),
       };
       // An older plugin may still send a password in clear: it is a secret by name before it is shown or kept.
       const [clean] = sanitizeSteps([step]);

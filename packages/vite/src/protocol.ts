@@ -105,7 +105,7 @@ export interface LocatorInfo {
  */
 export type RecordedAction =
   | { kind: 'click'; locator: string; description: string }
-  | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[] }
+  | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[]; checked?: boolean }
   | { kind: 'press'; locator: string; key: string; description: string };
 
 /** An element as a test session remembers it. Cheap fields are read at once; `locator`, `description` and `path` when the browser is idle. */
