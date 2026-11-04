@@ -46,6 +46,36 @@ describe('applyEditSpecs', () => {
     expect(p.read('libs/pricing.ts')).toContain('calcTotals');
   });
 
+  it('refuses a link inside the project to where its path couldn’t go: an environment file, .git or the studio’s data', () => {
+    const p = tempShop();
+    fs.writeFileSync(path.join(p.root, '.env'), 'TOKEN=dummy-value\n');
+    fs.mkdirSync(path.join(p.root, '.saywright', 'sessions'), { recursive: true });
+    fs.writeFileSync(path.join(p.root, '.saywright', 'sessions', 'notes.json'), '{}');
+    fs.symlinkSync('../.env', path.join(p.root, 'src', 'notes.txt'));
+    fs.symlinkSync('../.saywright', path.join(p.root, 'src', 'data'));
+    expect(() => p.read('src/notes.txt')).toThrow(/off limits/);
+    expect(() => readFileTool(p, 'src/notes.txt')).toThrow(/off limits/);
+    expect(() => p.read('src/data/sessions/notes.json')).toThrow(/not editable/);
+    expect(() => applyEditSpecs(p, [{ path: 'src/notes.txt', old_string: 'dummy-value', new_string: 'x' }])).toThrow(/off limits/);
+    // The link and the file it leads to are as they were.
+    expect(fs.lstatSync(path.join(p.root, 'src', 'notes.txt')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(p.root, '.env'), 'utf8')).toBe('TOKEN=dummy-value\n');
+  });
+
+  it('writes through a link that stays inside to the file it leads to, and the link stays a link', () => {
+    const p = tempShop();
+    const real = path.join(p.root, 'src', 'lib', 'money.ts');
+    const before = fs.readFileSync(real, 'utf8');
+    fs.symlinkSync('lib/money.ts', path.join(p.root, 'src', 'money-link.ts'));
+    p.write('src/money-link.ts', `${before}// changed\n`);
+    expect(fs.lstatSync(path.join(p.root, 'src', 'money-link.ts')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe(`${before}// changed\n`);
+    // An undo writes the old text back the same way.
+    p.write('src/money-link.ts', before);
+    expect(fs.readFileSync(real, 'utf8')).toBe(before);
+    expect(fs.lstatSync(path.join(p.root, 'src', 'money-link.ts')).isSymbolicLink()).toBe(true);
+  });
+
   it('creates new files when old_string is empty', () => {
     const p = tempShop();
     const [e] = applyEditSpecs(p, [{ path: 'src/new.ts', old_string: '', new_string: 'export const a = 1;\n' }]);

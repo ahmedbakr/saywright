@@ -64,6 +64,13 @@ const COMMIT_TIMEOUT_MS = 60_000;
 /** A repository or Playwright that isn't there is looked for again after this long. */
 const RECHECK_MS = 5000;
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.devspace', '.saywright', '.next', '.nuxt', '.svelte-kit', '.astro', '.output', 'coverage', 'test-results', 'playwright-report', '.vite', '.turbo', '.vercel']);
+
+/** Refuses a path (relative to the project or its workspace) in a folder that isn't the app's code, or an environment file. */
+function offLimits(relative: string, asked: string): void {
+  const parts = relative.split(path.sep);
+  if (IGNORED_DIRS.has(parts[0]) || parts.some((p) => p === 'node_modules' || p === '.git')) throw new HttpError(400, `Path is not editable: ${asked}`);
+  if (parts.some((p) => p.startsWith('.env'))) throw new HttpError(400, 'Environment files are off limits');
+}
 const TEXT_EXT = /\.([cm]?[jt]sx?|css|scss|sass|less|styl|json|md|mdx|html?|svg|vue|svelte|astro|php|erb|ejs|hbs|handlebars|mustache|njk|liquid|twig|jinja2?|j2|cshtml|razor|py|rb|go|ya?ml|toml|xml|txt)$/i;
 
 /** Folders never searched: dependencies, builds, tools' caches and other dot folders (as listFiles walks them). */
@@ -176,23 +183,23 @@ export class Project {
     const abs = path.resolve(this.root, clean);
     const relative = this.inside(abs);
     if (!relative) throw new HttpError(400, `Path is outside the project: ${rel}`);
-    const first = relative.split(path.sep)[0];
-    if (IGNORED_DIRS.has(first) || relative.split(path.sep).some((p) => p === 'node_modules' || p === '.git')) {
-      throw new HttpError(400, `Path is not editable: ${rel}`);
-    }
-    if (/(^|\/)\.env/.test(clean)) throw new HttpError(400, 'Environment files are off limits');
-    // Where a link inside the project leads must be inside it too: a repository can carry a link to ~/.ssh.
-    if (!this.contains(abs)) throw new HttpError(400, `Path is outside the project: ${rel}`);
+    offLimits(relative, rel);
+    // Where a link inside the project leads must be inside it too (a repository can carry a link to ~/.ssh), and
+    // not where the path itself may not go: a link to .env, .git or the studio's data is refused like them.
+    const real = this.realTarget(abs);
+    if (!real) throw new HttpError(400, `Path is outside the project: ${rel}`);
+    offLimits(real, rel);
     return abs;
   }
 
   private realRoot: string | null = null;
 
   /**
-   * Whether a path stays inside the project with every link along it followed. A file that doesn't exist yet is
-   * judged by the folder it would be written in; a link that leads nowhere is refused (writing would create its target).
+   * Where a path leads with every link along it followed, relative to the project (or its workspace); null when that
+   * is outside both. A file that doesn't exist yet is judged by the folder it would be written in; a link that leads
+   * nowhere is refused (writing would create its target).
    */
-  private contains(abs: string): boolean {
+  private realTarget(abs: string): string | null {
     this.realRoot ??= fs.realpathSync(this.root);
     let probe = abs;
     const rest: string[] = [];
@@ -202,7 +209,7 @@ export class Project {
         break;
       } catch {
         const parent = path.dirname(probe);
-        if (parent === probe) return false;
+        if (parent === probe) return null;
         rest.unshift(path.basename(probe));
         probe = parent;
       }
@@ -211,13 +218,14 @@ export class Project {
     try {
       real = fs.realpathSync(probe);
     } catch {
-      return false;
+      return null;
     }
     const target = path.join(real, ...rest);
-    return [this.realRoot, this.workspace && fs.realpathSync(this.workspace)].some((root) => {
+    for (const root of [this.realRoot, this.workspace && fs.realpathSync(this.workspace)]) {
       const relative = root ? path.relative(root, target) : '';
-      return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
-    });
+      if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) return relative;
+    }
+    return null;
   }
 
   rel(abs: string): string {
@@ -240,12 +248,20 @@ export class Project {
 
   /** Atomic write: temp file + rename, so the dev server never sees half a file. */
   write(rel: string, content: string): void {
-    const abs = this.resolve(rel);
+    const asked = this.resolve(rel);
+    // Through a link, to the file it leads to (resolve checked it): renaming over the link would make it a copy.
+    let abs = asked;
+    try {
+      if (fs.lstatSync(asked).isSymbolicLink()) abs = fs.realpathSync(asked);
+    } catch {
+      /* a new file */
+    }
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     const tmp = `${abs}.saywright-tmp`;
     fs.writeFileSync(tmp, content);
     fs.renameSync(tmp, abs);
-    this.index?.forget(this.rel(abs));
+    this.index?.forget(this.rel(asked));
+    if (abs !== asked) this.index?.forget(this.rel(abs));
   }
 
   remove(rel: string): void {
