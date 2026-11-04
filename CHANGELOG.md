@@ -2,6 +2,14 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-11-04
+
+### Fixed
+
+- **`@saywright/vite`'s npm page** names the studio's package and how to start it: `npx @saywright/studio` (0.1.0's still said `npx saywright`, a name npm refused as too close to `playwright`), and links to it.
+
+The studio is the same as in 0.1.0: the two packages keep one version, so a studio and its plugin always match.
+
 ## [0.1.0] - 2026-11-03
 
 The first release: `@saywright/studio` (the studio, and its command `saywright`) and `@saywright/vite` (the Vite plugin) on npm. Both need Node.js 22.18 or newer, or 24.11 or newer (the LTS lines the Babel parser they read code with supports).
@@ -113,4 +121,5 @@ The first release: `@saywright/studio` (the studio, and its command `saywright`)
 - [Getting started](docs/getting-started.md): every feature on the sample shop, one step at a time, with a picture of each and what you should see.
 - Screenshots of the real studio throughout the documentation, taken again by `npm run media:screenshots` when the interface changes.
 
+[0.1.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.0
