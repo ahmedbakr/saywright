@@ -62,6 +62,8 @@ export interface ElementInfo {
   rect: Rect;
   /** Index of this node among elements sharing the same `src` (lists render one JSX site many times). */
   index: number;
+  /** How many elements on the page share its `src`, when more than one: a list's rows, a component's uses. An edit to it changes them all. */
+  same?: number;
   /** When `src` is null: what can find the element in the code. */
   hint?: SourceHint;
   /** Pages without source attributes: where React's development build says it came from (see SourceFrame). */

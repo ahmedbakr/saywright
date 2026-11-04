@@ -19,6 +19,8 @@ export interface RefInfo {
   frames?: SourceFrame[];
   /** `src` was found by searching the code for the element's text and attributes: likely, not certain. */
   guessed?: boolean;
+  /** How many elements on the page its code draws (a list's rows, a component's uses), when more than one. */
+  same?: number;
 }
 
 export interface DiffLine {

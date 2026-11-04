@@ -110,6 +110,56 @@ describe('quick edits in a very long component', () => {
   it('renames text in it, and refuses an element that isn’t there', () => {
     const r = quickEdit('rename this to Done', at(53), p);
     expect(r?.kind === 'edit' && r.edits[0].after).toBe(code.replace('<b>Cell 4000</b>', '<b>Done</b>'));
-    expect(quickEdit('remove this', at(9), p)).toBeNull();
+    // Nothing is written there (the code changed since it was selected): said, not guessed, nor sent to an AI unasked.
+    expect(quickEdit('remove this', at(9), p)).toMatchObject({ kind: 'message', next: [{ kind: 'ask-ai' }] });
+  });
+});
+
+describe('quick edits after the code changed under the selection', () => {
+  const code = `export function Toolbar() {
+  return (
+    <div className="toolbar">
+      <Button>Export</Button>
+      <Button>Print</Button>
+    </div>
+  );
+}
+`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-moved-'));
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src/Toolbar.tsx'), code);
+  const p = new Project(dir, 'http://localhost:5174');
+  // Selected while “Export” was on line 4.
+  const exportRef = [ref('this', 'src/Toolbar.tsx:4:7', 'Button', 'Export')];
+
+  it('another element now at its place: the one that says what was selected is edited, found again nearby', () => {
+    // Someone adds an Import button above it in their editor.
+    fs.writeFileSync(path.join(dir, 'src/Toolbar.tsx'), code.replace('      <Button>Export</Button>', '      <Button>Import</Button>\n      <Button>Export</Button>'));
+    const r = quickEdit('rename this to Download', exportRef, p);
+    expect(r?.kind).toBe('edit');
+    if (r?.kind !== 'edit') return;
+    expect(r.title).toBe('Rename “Export” Button to “Download”');
+    expect(r.edits[0].after).toContain('<Button>Import</Button>\n      <Button>Download</Button>');
+  });
+
+  it('says when the code it changes draws more than what was pointed at, and the component it is part of', () => {
+    fs.writeFileSync(path.join(dir, 'src/Toolbar.tsx'), code);
+    const r = quickEdit('rename this to Download', [{ ...exportRef[0], same: 3 }], p);
+    expect(r?.kind).toBe('edit');
+    if (r?.kind !== 'edit') return;
+    expect(r.title).toBe('Rename “Export” Button to “Download” (all 3 on this page)');
+    expect(r.summary).toMatch(/draws it 3 times on this page .*this changes them all/);
+    expect(r.component).toBe('Toolbar');
+  });
+
+  it('nothing near says what was selected (the page doesn’t show an undo yet): what is at its place is it', () => {
+    fs.writeFileSync(path.join(dir, 'src/Toolbar.tsx'), code.replace('<Button>Export</Button>', '<Button>Export all</Button>'));
+    const r = quickEdit('rename this to Download', [ref('this', 'src/Toolbar.tsx:4:7', 'Button', 'Export now')], p);
+    expect(r?.kind === 'edit' && r.edits[0].after).toContain('<Button>Download</Button>');
+  });
+
+  it('when it can’t be told which one it is, it says so', () => {
+    fs.writeFileSync(path.join(dir, 'src/Toolbar.tsx'), code.replace('      <Button>Export</Button>', '      <Button>Import</Button>\n      <Button>Export</Button>\n      <Button>Export</Button>'));
+    expect(quickEdit('remove this', exportRef, p)).toMatchObject({ kind: 'message', text: expect.stringMatching(/select it again/) });
   });
 });

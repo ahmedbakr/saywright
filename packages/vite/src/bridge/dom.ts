@@ -333,12 +333,12 @@ function shortLabel(el: Element): string {
   return collapse((el as HTMLElement).innerText ?? el.textContent, 28);
 }
 
-/** Index of `el` among nodes rendered by the same JSX site (same data-ds-src). */
-function srcIndex(el: Element, src: string | null): number {
-  if (!src) return 0;
+/** Index of `el` among nodes rendered by the same JSX site (same data-ds-src), and how many there are. */
+function srcIndex(el: Element, src: string | null): { index: number; same: number } {
+  if (!src) return { index: 0, same: 1 };
   const all = document.querySelectorAll(`[${SRC_ATTR}="${CSS.escape(src)}"]`);
-  for (let i = 0; i < all.length; i++) if (all[i] === el) return i;
-  return 0;
+  for (let i = 0; i < all.length; i++) if (all[i] === el) return { index: i, same: all.length };
+  return { index: 0, same: all.length };
 }
 
 export function describe(el: Element): ElementInfo {
@@ -360,8 +360,11 @@ export function describe(el: Element): ElementInfo {
     text: visibleText(el),
     role: roleOf(el),
     rect: rectOf(el),
-    index: srcIndex(el, src),
+    index: 0,
   };
+  const at = srcIndex(el, annotated);
+  info.index = at.index;
+  if (at.same > 1) info.same = at.same;
   if (frames.length) info.frames = frames;
   if (!src) info.hint = sourceHint(el);
   return info;

@@ -44,6 +44,7 @@ export function sanitizeRefs(raw: unknown): RefInfo[] {
     if (hint) ref.hint = hint;
     const frames = frameList(o.frames);
     if (frames.length) ref.frames = frames;
+    if (typeof o.same === 'number' && Number.isInteger(o.same) && o.same > 1) ref.same = Math.min(o.same, 1_000_000);
     return ref;
   });
 }

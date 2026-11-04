@@ -2,11 +2,12 @@ import { parseSrc } from '@saywright/vite/protocol';
 import type { NextStep, RefInfo } from '../../shared/api.ts';
 import type { FileEdit } from '../changes.ts';
 import type { ComponentProp, ComponentSpec, Project } from '../project.ts';
-import { CodemodError, ComputedTextError, elementName, findElement, moveElement, parseTsx, readProps, removeElement, setProp, setProps, setText, type Loc } from './codemods.ts';
+import { CodemodError, componentAt, ComputedTextError, elementName, findByWords, findElement, moveElement, parseTsx, readProps, removeElementTidy, setProp, setProps, setText, showsText, type Loc } from './codemods.ts';
 import { parseQuick, type QuickIntent } from '../../shared/grammar.ts';
 
 type QuickResult =
-  | { kind: 'edit'; title: string; summary: string; edits: FileEdit[] }
+  /** `component`: the component its code is part of (`Card`), to say when that is used in more places than this one. */
+  | { kind: 'edit'; title: string; summary: string; edits: FileEdit[]; component?: string }
   | { kind: 'message'; text: string; tone: 'info' | 'warn'; next?: NextStep[] }
   /** A quick edit can't do it safely, and why: the AI can (or the person, in the code at `src`). */
   | { kind: 'needs-ai'; why: string; src?: string };
@@ -66,7 +67,7 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
 
   // Without a pointed-at element there is nothing precise to edit; Claude may still find it by name.
   const a = refs[0];
-  const where = locOf(a);
+  let where = locOf(a);
   // Quick edits rewrite JSX; other markup (HTML, Vue, Svelte templates) goes to the AI.
   if (!a || !where || !/\.[jt]sx$/.test(where.file)) return null;
 
@@ -79,113 +80,149 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
   } catch {
     return null;
   }
-  const found = findElement(code, where.loc, ast);
-  if (!found) return null; // stale location (file changed); Claude can find it from the text
-  const name = elementName(found.el);
+  let found = findElement(code, where.loc, ast);
+  // The code changed since it was selected (lines added above it in an editor): what is at its place now may be
+  // another element. It is found again by its name and words when exactly one near there says them. When none does,
+  // what is there is it (the page may just not show an undo yet). Nothing there, or several that could be it: said,
+  // never guessed.
+  if (!found || !showsText(found.el, a.text)) {
+    const moved = findByWords(code, where.loc, found ? elementName(found.el) : a.name, a.text, ast);
+    if (moved && moved !== 'many') {
+      where = { file: where.file, loc: moved.loc };
+      found = moved.found;
+    } else if (!found || moved === 'many') {
+      return { kind: 'message', tone: 'info', text: `The code changed since you selected ${describeRef(a)}, so it isn’t where it was: select it again.`, next: [{ kind: 'ask-ai' }] };
+    }
+  }
+  const el = found.el;
+  const here = where;
+  const name = elementName(el);
   const config = project.config;
   const spec = project.componentSpec(name, where.file);
-  const props = readProps(found.el);
+  const props = readProps(el);
   const what = describeRef(a);
-
-  try {
-    switch (intent.kind) {
-      case 'set': {
-        if (!spec) return null;
-        const pick = pickSet(spec, intent.terms, config.synonyms);
-        if (!pick) return null;
-        const def = spec.props[pick.prop];
-        if (current(props, pick.prop, def) === pick.value) {
-          return { kind: 'message', tone: 'info', text: `${what} already uses ${pick.prop} “${pick.value}”.` };
-        }
-        const after = setProp(code, where.loc, pick.prop, valueOrNull(def, pick.value), ast);
-        const was = current(props, pick.prop, def);
-        return edit(`${what} · ${pick.prop} ${was ? `${was} → ` : '→ '}${pick.value}`, `Set ${pick.prop}="${pick.value}" on ${name} in ${where.file}.`, where.file, code, after);
-      }
-
-      case 'step': {
-        if (!spec) return null;
-        const chosen = stepProp(spec, intent.focus);
-        if (!chosen) return null;
-        const [prop, def] = chosen;
-        const now = current(props, prop, def);
-        if (now === null) return null; // computed in code
-        const steps = def.ladder ?? def.values;
-        const i = steps.indexOf(now);
-        if (i < 0) return null; // a size off the ladder ("icon"): Claude can judge it
-        const next = steps[Math.max(0, Math.min(steps.length - 1, i + intent.dir * intent.amount))];
-        if (next === now) {
-          // The design system has no bigger (or smaller) size: the AI can still do it another way, or a size can be added.
-          const ds: NextStep[] = spec.file ? [{ kind: 'open', src: `${spec.file}:1:1` }] : [];
-          return { kind: 'message', tone: 'info', text: `${what} is already the ${intent.dir > 0 ? 'largest' : 'smallest'} ${prop} (“${now}”) in your design system.`, next: [{ kind: 'ask-ai' }, ...ds] };
-        }
-        const after = setProp(code, where.loc, prop, valueOrNull(def, next), ast);
-        return edit(`${what} · ${prop} ${now} → ${next}`, `Changed ${prop} from "${now}" to "${next}" on ${name}.`, where.file, code, after);
-      }
-
-      case 'copy': {
-        const b = refs[1];
-        const bWhere = locOf(b);
-        if (!b || !bWhere) {
-          return { kind: 'message', tone: 'info', text: 'Point at a second thing for “that”, or select both first (⇧ click each).' };
-        }
-        if (!spec) return null;
-        const bCode = bWhere.file === where.file ? code : project.read(bWhere.file);
-        const bFound = findElement(bCode, bWhere.loc, bCode === code ? ast : undefined);
-        if (!bFound) return null;
-        if (elementName(bFound.el) !== name) return null; // different components: let Claude translate the look
-        const bProps = readProps(bFound.el);
-        const sets: [string, string | null][] = [];
-        const changed: string[] = [];
-        for (const [prop, def] of Object.entries(spec.props)) {
-          let target = current(bProps, prop, def);
-          if (target === null) continue;
-          if (intent.adjust && def.ordered) {
-            const steps = def.ladder ?? def.values;
-            const i = steps.indexOf(target);
-            if (i >= 0) target = steps[Math.max(0, Math.min(steps.length - 1, i + intent.adjust))];
-          }
-          if (current(props, prop, def) === target) continue;
-          sets.push([prop, valueOrNull(def, target)]);
-          changed.push(`${prop}="${target}"`);
-        }
-        if (!changed.length) return { kind: 'message', tone: 'info', text: `${what} already looks like ${describeRef(b)}.` };
-        const after = setProps(code, where.loc, sets, ast);
-        const tail = intent.adjust < 0 ? ', but smaller' : intent.adjust > 0 ? ', but bigger' : '';
-        return edit(`${what} looks like ${describeRef(b)}${tail}`, `Copied ${changed.join(', ')} from ${describeRef(b)}.`, where.file, code, after);
-      }
-
-      case 'text': {
-        const textProp = spec?.text ?? 'children';
-        let after: string;
-        try {
-          after = setText(code, where.loc, intent.value, textProp, ast);
-        } catch (err) {
-          if (!(err instanceof ComputedTextError)) throw err;
-          return { kind: 'needs-ai', why: `${what}’s text is built from code (“${childrenCode(code, found.el)}”), so changing it needs an AI.`, src: a.src ?? undefined };
-        }
-        return edit(`Rename ${what} to “${intent.value}”`, `Changed the text of ${name} in ${where.file}.`, where.file, code, after);
-      }
-
-      case 'remove': {
-        const after = removeElement(code, where.loc, ast);
-        return edit(`Remove ${what}`, `Removed the ${name} element from ${where.file}.`, where.file, code, after);
-      }
-
-      case 'move': {
-        const b = refs[1];
-        const bWhere = locOf(b);
-        if (!b || !bWhere) return { kind: 'message', tone: 'info', text: 'Say where: point at the other element while you say “that”.' };
-        if (bWhere.file !== where.file) return null;
-        const after = moveElement(code, where.loc, bWhere.loc, intent.where, ast);
-        if (after === code) return { kind: 'message', tone: 'info', text: `${what} is already ${intent.where} ${describeRef(b)}.` };
-        return edit(`Move ${what} ${intent.where} ${describeRef(b)}`, `Reordered elements in ${where.file}.`, where.file, code, after);
-      }
+  const result = attempt(intent, here);
+  if (result?.kind === 'edit') {
+    // The code changed draws more than what was pointed at: said where it shows, not found out later.
+    if (a.same && a.same > 1) {
+      result.title += ` (all ${a.same} on this page)`;
+      result.summary += ` Its code draws it ${a.same} times on this page (the rows of a list, or a component used several times): this changes them all.`;
     }
-  } catch (err) {
-    if (err instanceof CodemodError) return null;
-    throw err;
+    const component = componentAt(code, here.loc, ast);
+    if (component) result.component = component;
   }
-  return null;
+  return result;
+
+  function attempt(intent: QuickIntent, where: { file: string; loc: Loc }): QuickResult | null {
+    try {
+      switch (intent.kind) {
+        case 'set': {
+          if (!spec) return null;
+          const pick = pickSet(spec, intent.terms, config.synonyms);
+          if (!pick) return null;
+          const def = spec.props[pick.prop];
+          if (current(props, pick.prop, def) === pick.value) {
+            return { kind: 'message', tone: 'info', text: `${what} already uses ${pick.prop} “${pick.value}”.` };
+          }
+          const after = setProp(code, where.loc, pick.prop, valueOrNull(def, pick.value), ast);
+          const was = current(props, pick.prop, def);
+          return edit(`${what} · ${pick.prop} ${was ? `${was} → ` : '→ '}${pick.value}`, `Set ${pick.prop}="${pick.value}" on ${name} in ${where.file}.`, where.file, code, after);
+        }
+
+        case 'step': {
+          if (!spec) return null;
+          const chosen = stepProp(spec, intent.focus);
+          if (!chosen) return null;
+          const [prop, def] = chosen;
+          const now = current(props, prop, def);
+          if (now === null) return null; // computed in code
+          const steps = def.ladder ?? def.values;
+          const i = steps.indexOf(now);
+          if (i < 0) return null; // a size off the ladder ("icon"): Claude can judge it
+          const next = steps[Math.max(0, Math.min(steps.length - 1, i + intent.dir * intent.amount))];
+          if (next === now) {
+            // The design system has no bigger (or smaller) size: the AI can still do it another way, or a size can be added.
+            const ds: NextStep[] = spec.file ? [{ kind: 'open', src: `${spec.file}:1:1` }] : [];
+            return { kind: 'message', tone: 'info', text: `${what} is already the ${intent.dir > 0 ? 'largest' : 'smallest'} ${prop} (“${now}”) in your design system.`, next: [{ kind: 'ask-ai' }, ...ds] };
+          }
+          const after = setProp(code, where.loc, prop, valueOrNull(def, next), ast);
+          return edit(`${what} · ${prop} ${now} → ${next}`, `Changed ${prop} from "${now}" to "${next}" on ${name}.`, where.file, code, after);
+        }
+
+        case 'copy': {
+          const b = refs[1];
+          const bWhere = locOf(b);
+          if (!b || !bWhere) {
+            return { kind: 'message', tone: 'info', text: 'Point at a second thing for “that”, or select both first (⇧ click each).' };
+          }
+          if (!spec) return null;
+          const bCode = bWhere.file === where.file ? code : project.read(bWhere.file);
+          const bFound = findElement(bCode, bWhere.loc, bCode === code ? ast : undefined);
+          if (!bFound) return null;
+          if (elementName(bFound.el) !== name) return null; // different components: let Claude translate the look
+          const bProps = readProps(bFound.el);
+          const sets: [string, string | null][] = [];
+          const changed: string[] = [];
+          for (const [prop, def] of Object.entries(spec.props)) {
+            let target = current(bProps, prop, def);
+            if (target === null) continue;
+            if (intent.adjust && def.ordered) {
+              const steps = def.ladder ?? def.values;
+              const i = steps.indexOf(target);
+              if (i >= 0) target = steps[Math.max(0, Math.min(steps.length - 1, i + intent.adjust))];
+            }
+            if (current(props, prop, def) === target) continue;
+            sets.push([prop, valueOrNull(def, target)]);
+            changed.push(`${prop}="${target}"`);
+          }
+          if (!changed.length) return { kind: 'message', tone: 'info', text: `${what} already looks like ${describeRef(b)}.` };
+          const after = setProps(code, where.loc, sets, ast);
+          const tail = intent.adjust < 0 ? ', but smaller' : intent.adjust > 0 ? ', but bigger' : '';
+          return edit(`${what} looks like ${describeRef(b)}${tail}`, `Copied ${changed.join(', ')} from ${describeRef(b)}.`, where.file, code, after);
+        }
+
+        case 'text': {
+          const textProp = spec?.text ?? 'children';
+          let after: string;
+          try {
+            after = setText(code, where.loc, intent.value, textProp, ast);
+          } catch (err) {
+            if (!(err instanceof ComputedTextError)) throw err;
+            return { kind: 'needs-ai', why: `${what}’s text is built from code (“${childrenCode(code, el)}”), so changing it needs an AI.`, src: a.src ?? undefined };
+          }
+          return edit(`Rename ${what} to “${intent.value}”`, `Changed the text of ${name} in ${where.file}.`, where.file, code, after);
+        }
+
+        case 'remove': {
+          // What only it used goes with it, so the app still builds; what may do more than it needed is named.
+          const { code: after, took, unused } = removeElementTidy(code, where.loc, ast);
+          const also = took.length ? ` Also took out what only it used: ${andList(took)}.` : '';
+          const left = unused.length ? ` Now unused, and left as they are in case they do more: ${andList(unused.map((n) => `\`${n}\``))}.` : '';
+          const title = `Remove ${what}${unused.length ? ` · leaves ${unused.slice(0, 2).join(', ')}${unused.length > 2 ? '…' : ''} unused` : ''}`;
+          return edit(title, `Removed the ${name} element from ${where.file}.${also}${left}`, where.file, code, after);
+        }
+
+        case 'move': {
+          const b = refs[1];
+          const bWhere = locOf(b);
+          if (!b || !bWhere) return { kind: 'message', tone: 'info', text: 'Say where: point at the other element while you say “that”.' };
+          if (bWhere.file !== where.file) return null;
+          const after = moveElement(code, where.loc, bWhere.loc, intent.where, ast);
+          if (after === code) return { kind: 'message', tone: 'info', text: `${what} is already ${intent.where} ${describeRef(b)}.` };
+          return edit(`Move ${what} ${intent.where} ${describeRef(b)}`, `Reordered elements in ${where.file}.`, where.file, code, after);
+        }
+      }
+    } catch (err) {
+      if (err instanceof CodemodError) return null;
+      throw err;
+    }
+    return null;
+  }
+}
+
+/** “a, b and c”. */
+function andList(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 /** Set one design-system prop on the element at `src`, from the Inspector. */

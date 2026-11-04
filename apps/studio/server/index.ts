@@ -23,6 +23,7 @@ import { browserSpeechReady, ensureBrowserSpeech, modelsDir } from './assets.ts'
 import { aiHttpError, autopilotRoutes } from './autopilot.ts';
 import { inspect } from './inspect.ts';
 import { sanitizeRefs } from './refs.ts';
+import type { Project } from './project.ts';
 import { Metrics } from './metrics.ts';
 import { describeOptions, propEdit, quickEdit } from './quick/index.ts';
 import { sessionRoutes } from './sessions/routes.ts';
@@ -237,6 +238,17 @@ export async function createStudioApi(layout: StudioLayout) {
     return w ? new Tracer(w.project, w.mapper) : null;
   };
   const toSource = async (src: unknown): Promise<string | null> => (await tracer()?.toSource(src)) ?? null;
+  /** Where a component is used in the app's code (`<Card …`), its tests and stories left out; a quick look, at most USES_LIMIT. */
+  const USES_LIMIT = 20;
+  const usesOf = async (project: Project, component: string): Promise<number> => {
+    try {
+      const found = await project.search(`<${component.replace(/\$/g, '\\$')}[\\s/>]`, { regex: true, limit: USES_LIMIT * 2, budgetMs: 400 });
+      return Math.min(USES_LIMIT, found.hits.filter((h) => !/\.(test|spec|stories)\.[jt]sx?$/.test(h.path)).length);
+    } catch {
+      return 0;
+    }
+  };
+
   /** Each ref's source location: as the page said (mapped from bundles), or found in the code by what identifies it (a guess). */
   const mapRefs = async (raw: unknown, pageUrl?: string): Promise<RefInfo[]> => {
     const list = Array.isArray(raw) ? raw.slice(0, 6) : [];
@@ -305,6 +317,12 @@ export async function createStudioApi(layout: StudioLayout) {
     // "Ask the AI anyway" skips the quick edits.
     const quick = brief || body.ai === true ? null : quickEdit(text, refs, project);
     if (quick?.kind === 'edit') {
+      // A component used in other places changes there too: said before it is kept.
+      const uses = quick.component ? await usesOf(project, quick.component) : 0;
+      if (uses > 1) {
+        if (!refs[0]?.same) quick.title += ` · ${quick.component} is used in ${uses}${uses >= USES_LIMIT ? '+' : ''} places`;
+        quick.summary += ` ${quick.component} is used in ${uses}${uses >= USES_LIMIT ? ' or more' : ''} places in your code: it changes in all of them.`;
+      }
       const change = await changes.preview({ title: quick.title, summary: quick.summary, said: text, refs, source: 'quick', edits: quick.edits, latencyMs: Date.now() - started });
       metrics.record({ ...base, result: 'change', source: 'quick', latencyMs: change.latencyMs, changeId: change.id });
       return { kind: 'change', change };

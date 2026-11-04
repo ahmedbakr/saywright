@@ -1260,10 +1260,17 @@ class Controller {
     }
     const seen = new Set<number>();
     const unique = picked.filter((p) => (seen.has(p.el.id) && p.role === 'it' ? false : (seen.add(p.el.id), true)));
-    return {
-      refs: unique.map(({ el, role }) => ({ role, src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames })),
-      els: unique.map((p) => p.el),
-    };
+    return { refs: unique.map(({ el, role }) => refOf(el, role)), els: unique.map((p) => p.el) };
+  }
+
+  /**
+   * The elements a request is about, as the page shows them now: an edit in an editor, or an undo, can change what an
+   * element says (or which element a node is) while it stays selected. One that is gone is sent as it was.
+   */
+  private async freshRefs(spoken: Spoken | null): Promise<{ refs: RefInfo[]; els: ElementInfo[] }> {
+    const { refs, els } = this.refsFor(spoken);
+    const fresh = await Promise.all(els.map(async (el) => (await this.bridge.describe(el.id).catch(() => null)) ?? el));
+    return { refs: refs.map((r, i) => (fresh[i] === els[i] ? r : refOf(fresh[i], r.role))), els: fresh };
   }
 
   private pointerKind(): 'mouse' | 'none' {
@@ -1294,9 +1301,10 @@ class Controller {
     return Promise.resolve();
   }
 
-  sendIntent(text: string, spoken: Spoken | null, input: 'voice' | 'typed'): Promise<void> {
-    const { refs, els } = this.refsFor(spoken);
-    return this.intent({ text, refs, els, input, pointer: this.pointerKind(), pageUrl: get().app.url });
+  async sendIntent(text: string, spoken: Spoken | null, input: 'voice' | 'typed'): Promise<void> {
+    const pointer = this.pointerKind();
+    const { refs, els } = await this.freshRefs(spoken);
+    return this.intent({ text, refs, els, input, pointer, pageUrl: get().app.url });
   }
 
   /** What it is about is taken when it is asked, not when its turn comes. */
@@ -1915,6 +1923,11 @@ class Controller {
 }
 
 /** A check on a field reads its value, and on a list the option chosen. */
+/** An element as a request names it to the studio's server. */
+function refOf(el: ElementInfo, role: string): RefInfo {
+  return { role, src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames, ...(el.same ? { same: el.same } : {}) };
+}
+
 function fieldOf(el: { tag: string }): Pick<Expectation, 'field'> {
   return el.tag === 'input' || el.tag === 'textarea' ? { field: 'value' } : el.tag === 'select' ? { field: 'select' } : {};
 }
