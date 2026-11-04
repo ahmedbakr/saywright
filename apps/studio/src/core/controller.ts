@@ -1159,13 +1159,15 @@ class Controller {
       const dwell = this.pointedWhile(spoken);
       if (dwell) return dwell;
     }
-    if (s.selection) return s.selection;
-    if (s.hover) return s.hover;
-    // Typed in Record mode: what the mouse rested on just before.
+    // Write test boxes what the pointer is on (a click there acts in the app, it doesn't select): a check typed is
+    // about that, or what the mouse rested on just before, not a selection left from Edit mode.
     if (s.mode === 'record') {
+      if (s.hover) return s.hover;
       const recent = this.track.dwellWinner(performance.now() - 5000, performance.now());
       if (recent) return recent;
     }
+    if (s.selection) return s.selection;
+    if (s.hover) return s.hover;
     return s.pins[0] ?? null;
   }
 

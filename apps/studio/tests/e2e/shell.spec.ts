@@ -170,3 +170,21 @@ test('Write test mode boxes what the pointer is on, so a check you type attaches
   await expect(box).toBeVisible();
   await expect(box).toContainText('Total');
 });
+
+test('a check typed in Write test is about what the pointer is on, not an element left selected in Edit mode', async ({ page }) => {
+  await openStudio(page);
+  // Selected while editing, then on to writing a test.
+  const apply = await appPoint(page, 'coupon-apply');
+  await page.mouse.click(apply.x, apply.y);
+  await expect.poll(() => store<string | null>(page, 's.selection ? s.selection.name : null')).toBe('Button');
+  await page.keyboard.press('r');
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('record');
+  const total = await appPoint(page, 'summary-total', 0.85);
+  await page.mouse.move(total.x - 40, total.y);
+  await page.mouse.move(total.x, total.y, { steps: 4 });
+  await expect(page.locator('[data-hover-box="record"]')).toContainText('Total');
+  await page.getByRole('textbox', { name: 'Describe a change' }).fill('this should show $80.80');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => store<number>(page, 's.recorder.expectations.length')).toBe(1);
+  expect(await store<string>(page, 's.recorder.expectations[0].locator')).toContain('summary-total');
+});
