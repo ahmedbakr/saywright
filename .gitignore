@@ -19,3 +19,5 @@ apps/studio/public/models
 # End-to-end tests run against a throwaway copy of the sample app
 apps/studio/tests/.e2e-shop/
 apps/studio/tests/.e2e-home/
+apps/studio/tests/.eval-work/
+apps/studio/tests/.eval-home/

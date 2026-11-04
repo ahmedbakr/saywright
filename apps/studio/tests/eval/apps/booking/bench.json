@@ -1,0 +1,41 @@
+{
+  "name": "Harbor Stay bookings",
+  "about": "A room booking: a room type, two dates, the nights between them and the price.",
+  "start": "/",
+  "flow": [
+    {
+      "do": "select",
+      "label": "Room",
+      "value": "Deluxe"
+    }
+  ],
+  "check": {
+    "testId": "total",
+    "expected": "$280.00"
+  },
+  "bug": {
+    "file": "src/lib/stay.ts",
+    "words": [
+      "night",
+      "off by one",
+      "off-by-one",
+      "+ 1",
+      "extra",
+      "check-out",
+      "checkout"
+    ]
+  },
+  "twin": [
+    {
+      "file": "src/lib/stay.ts",
+      "find": " / DAY) + 1;",
+      "replace": " / DAY);"
+    }
+  ],
+  "oracle": [
+    {
+      "testId": "nights",
+      "expected": "2"
+    }
+  ]
+}

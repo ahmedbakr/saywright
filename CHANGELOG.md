@@ -2,6 +2,41 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-04
+
+The core loop, made safe and honest: observe → reproduce → fix → verify. A secret you type is never recorded, a choice in a list is chosen, a test is written in the order things happened and runs the same way every time, and a fix counts only when the evidence shows it.
+
+### Security
+
+- **Secrets are never recorded.** What you type into a password field (also after “show password”), a field marked `data-saywright-secret` (or with the marks session-replay tools use: `data-private`, `data-sentry-mask`, `.rr-mask`…), a field called like a secret (password, one-time code, API key, token, card number, CVC, IBAN…, in English and Arabic), or any value that looks like a card number, a key or a token, is kept out of sessions, Write test steps, generated tests, reports, exports, what the AI is sent, and MCP. Before, Write test recorded what you typed into any field as it was, a password too, into the test file and the prompt of **Fix with …**.
+- **One set of rules for both recorders**, in `@saywright/vite/protocol`, applied again by the studio to whatever an older plugin sends, and as a session's events are kept.
+- **Tests type secrets from the environment** (`SAYWRIGHT_SECRET_PASSWORD`): the Test tab's **Secrets** saves their values on this computer, with the studio's data, outside your code and readable by you alone. Replay & verify types them in a replay. Their values are masked out of what a run says.
+- **Masked as recorded:** keys, tokens, bearer headers and card numbers in what the screen showed, errors, console lines and failed responses; tokens, keys, signatures and sign-in codes in addresses (also `#access_token=…`).
+- **A field's secret value is never an element's text**: hovering a password field showed what was typed in it, and Autopilot and expert reviews could read it (Autopilot masked password fields only).
+
+### Fixed
+
+- **Choices in lists.** Write test recorded a drop-down as typing, so every generated test with one failed at that step (Playwright can't fill a `<select>`). A choice is now `selectOption`, by what the option says (or by its value, when that has numbers in it, like a price), and every option chosen in a list that takes several. Sessions, tests made from a report and Replay & verify do the same.
+- **Checks in the order you said them.** A check said in the middle of a flow went to the end of the test, after everything that came later. It now sits after the steps before it.
+- **Pages that a step opens are waited for** (`toHaveURL`, with the parts of the address that change from run to run left open), so the next step runs on the page it belongs to.
+- **Locators as Playwright finds them.** A password field has no role (`getByRole('textbox')` never finds it), a list that takes several choices is a `listbox`, and a label or placeholder is matched as Playwright matches it (“Password” also finds “Show password”), with `{ exact: true }` where needed.
+- **Tests run the same way every time**, with a configuration of the studio's own: Chromium, no retries, a fresh browser, and the app the studio has open as the `baseURL`. Your app's Playwright configuration (its retries, browsers, web server or missing `baseURL`) no longer changes the verdict. `tests/saywright/setup.ts`, when there, runs first, to put the data a test needs in place.
+
+### Changed
+
+- **A fix counts only with evidence.** Each step and check of a generated test is a numbered `test.step`, and a run is believed only when every one of them reported that it ran and passed, on the first try. A test that fails before its checks says it doesn't show the bug yet, instead of offering a fix for it. After a fix, the test that failed must pass unchanged: a pass of a changed test, a skipped run, a pass only on a retry or a test with no check says **Couldn’t verify**. A fix may not change the test it is checked against (that part of it is left out; a change to the test alone is refused).
+- **Replay & verify needs evidence too.** A step on a control that is disabled now stops the replay (it used to count as done, so what came after it looked fixed), and a button that did nothing and is still disabled is still a problem. A problem whose step changed nothing on screen in the replay, when it did the first time, is **Couldn’t check**, not fixed.
+- The sample shop has an account page, with a sign-in, a drop-down and a list that takes several choices.
+
+### Removed
+
+- **Hand control (Labs)**: the camera, hand tracking, gestures, calibration, the camera preview, its settings and the hand model download. It may come back later. Voice and mouse pointing are as before. Settings saved by an older studio load without it, and `saywright setup --hand` still runs (with nothing to download).
+
+### Tests
+
+- Regression tests for all of the above: the redaction rules, the generator, what a run proves and Replay & verify's evidence (unit), and browser tests for a password and an API key in Write test and in a session, lists, a test that can't reach its check and a fix that only weakens the test.
+- **An opt-in real-model benchmark** (`npm run eval:ai`, with your AI and a budget): four small apps the AI has never seen, each with a seeded bug and a bug-free twin, through the whole loop. It measures how often the session report finds the bug, false positives on the twins, how reliably the generated test reproduces it, how often the AI's fix is verified (with the test untouched and values the AI never saw right), and the time and cost of each step.
+
 ## [0.1.1] - 2026-11-04
 
 ### Fixed
@@ -121,5 +156,6 @@ The first release: `@saywright/studio` (the studio, and its command `saywright`)
 - [Getting started](docs/getting-started.md): every feature on the sample shop, one step at a time, with a picture of each and what you should see.
 - Screenshots of the real studio throughout the documentation, taken again by `npm run media:screenshots` when the interface changes.
 
+[0.2.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.0

@@ -1,0 +1,57 @@
+{
+  "name": "Lumen sign-up",
+  "about": "A sign-up form: email, password, a plan and yearly billing at 20% off, with the price shown.",
+  "start": "/",
+  "flow": [
+    {
+      "do": "fill",
+      "label": "Email",
+      "value": "ana@example.com"
+    },
+    {
+      "do": "fill",
+      "label": "Password",
+      "value": "correct-horse-9",
+      "secret": true
+    },
+    {
+      "do": "select",
+      "label": "Plan",
+      "value": "Pro"
+    },
+    {
+      "do": "check",
+      "label": "Bill yearly"
+    }
+  ],
+  "check": {
+    "testId": "price",
+    "expected": "$192.00/year"
+  },
+  "secrets": {
+    "PASSWORD": "correct-horse-9"
+  },
+  "bug": {
+    "file": "src/lib/plans.ts",
+    "words": [
+      "discount",
+      "twice",
+      "yearly",
+      "double",
+      "year"
+    ]
+  },
+  "twin": [
+    {
+      "file": "src/lib/plans.ts",
+      "find": " * (1 - YEARLY_DISCOUNT) * (1 - YEARLY_DISCOUNT);",
+      "replace": " * (1 - YEARLY_DISCOUNT);"
+    }
+  ],
+  "oracle": [
+    {
+      "testId": "price",
+      "expected": "$192.00/year"
+    }
+  ]
+}

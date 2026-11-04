@@ -48,11 +48,12 @@ Work on a branch of your own (`git switch -c fix/short-name`), and open the pull
 | `npm run test:e2e` | End-to-end tests in Chromium (minutes) |
 | `npm run check` | All of the above in a row (typecheck, lint, unit, speech, end-to-end) |
 | `npm run eval:speech` | Speech accuracy on FLEURS recordings (add `-- --fetch` the first time): see [docs/speech-accuracy.md](docs/speech-accuracy.md) |
+| `npm run eval:ai` | The real-model benchmark: four small apps with a seeded bug and a bug-free twin, through observe → reproduce → fix → verify, with your AI. Opt-in and paid: `EVAL_BUDGET` (dollars, default 3) stops it, `EVAL_RUNS` (default 2) runs each test that many times, `EVAL_APPS=invoice,todo` picks apps. Results in `.saywright/ai-eval/`. The suite is `apps/studio/tests/eval/ai/`. |
 | `npm run build`, then `npm start` | The npm package as it would be published, run as it would be installed |
 
 ### End-to-end tests
 
-`npm run test:e2e` starts a throwaway copy of the sample shop (port 5274) and the studio (port 5273), with the AI test stand-in (`SAYWRIGHT_AI=fake`) and their own data folder (`apps/studio/tests/.e2e-home`), so your settings, apps and AI are never touched. No test calls a real AI or uses your plan. The hand is simulated with landmarks recorded from real photos; speech comes from a scripted browser recogniser, and from recordings played into Chromium's fake microphone (`apps/studio/tests/fixtures/speech`).
+`npm run test:e2e` starts a throwaway copy of the sample shop (port 5274) and the studio (port 5273), with the AI test stand-in (`SAYWRIGHT_AI=fake`) and their own data folder (`apps/studio/tests/.e2e-home`), so your settings, apps and AI are never touched. No test calls a real AI or uses your plan. Speech comes from a scripted browser recogniser, and from recordings played into Chromium's fake microphone (`apps/studio/tests/fixtures/speech`).
 
 - **The browser.** Install Playwright's Chromium once (`npx playwright install chromium`, or `npm run setup`), or use one you have: `PW_CHROMIUM_PATH=/path/to/chromium npm run test:e2e`.
 - **The voice tests** use the on-device voice model: `npm run setup -- --no-speech` downloads it (28 MB) and the test browser, without the large speech models.

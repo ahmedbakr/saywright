@@ -1,0 +1,41 @@
+{
+  "name": "Listwise tasks",
+  "about": "A to-do list: tasks with a box to tick when done, and how many are left.",
+  "start": "/",
+  "flow": [
+    {
+      "do": "check",
+      "label": "Book the venue"
+    }
+  ],
+  "check": {
+    "testId": "left",
+    "expected": "2 tasks left"
+  },
+  "bug": {
+    "file": "src/lib/tasks.ts",
+    "words": [
+      "left",
+      "done",
+      "filter",
+      "count",
+      "inverted",
+      "opposite",
+      "not done",
+      "!t.done"
+    ]
+  },
+  "twin": [
+    {
+      "file": "src/lib/tasks.ts",
+      "find": "tasks.filter((t) => t.done)",
+      "replace": "tasks.filter((t) => !t.done)"
+    }
+  ],
+  "oracle": [
+    {
+      "testId": "left",
+      "expected": "2 tasks left"
+    }
+  ]
+}

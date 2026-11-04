@@ -188,15 +188,30 @@ export function fieldValue(el: HTMLInputElement | HTMLTextAreaElement): string {
   return isSecretField(el) ? dots(el.value) : maskSecrets(el.value);
 }
 
+/**
+ * A label's own words, as Playwright and screen readers name a field by it: without the fields inside it (a list's
+ * options, a text area's text), so `<label>Plan <select>…</select></label>` is “Plan”, not “Plan BasicPlus”.
+ */
+function labelWords(label: Element): string {
+  let out = '';
+  const walk = (n: Node) => {
+    if (n.nodeType === Node.TEXT_NODE) out += n.textContent ?? '';
+    else if (n instanceof Element && !isField(n) && !(n instanceof HTMLButtonElement)) for (const c of Array.from(n.childNodes)) walk(c);
+    else if (n instanceof HTMLButtonElement) out += n.textContent ?? '';
+  };
+  walk(label);
+  return out;
+}
+
 /** Associated <label> text for a form field. */
 export function labelText(el: Element): string {
   if (!isField(el)) return '';
   const parts: string[] = [];
   if (el.id) {
-    for (const l of Array.from(document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`))) parts.push(l.textContent ?? '');
+    for (const l of Array.from(document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`))) parts.push(labelWords(l));
   }
   const wrapping = el.closest('label');
-  if (wrapping) parts.push(wrapping.textContent ?? '');
+  if (wrapping) parts.push(labelWords(wrapping));
   return collapse(parts.join(' '), 60);
 }
 

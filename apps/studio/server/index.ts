@@ -417,6 +417,7 @@ export async function createStudioApi(layout: StudioLayout) {
     const body = (req.body ?? {}) as { name?: string; startUrl?: string; steps?: RecordedStep[]; expectations?: Expectation[] };
     if (!Array.isArray(body.expectations) || !body.expectations.length) throw new HttpError(400, 'Say what you expected first');
     const { project, metrics } = ws();
+    if (!project.hasCode) throw new HttpError(409, 'A test is saved with your app’s code, and this app has none on this computer: link its folder to write tests.', 'no-code');
     const spec = writeSpec(project, {
       name: body.name,
       startUrl: typeof body.startUrl === 'string' ? body.startUrl : project.url,

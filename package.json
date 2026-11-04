@@ -28,6 +28,7 @@
     "test:watch": "vitest --project unit",
     "test:e2e": "playwright test -c apps/studio/playwright.config.ts",
     "eval:speech": "node scripts/speech-eval.mjs",
+    "eval:ai": "playwright test -c apps/studio/tests/eval/ai/playwright.config.ts",
     "media:demo": "node scripts/demo/record.mjs",
     "media:screenshots": "node scripts/demo/screenshots.mjs",
     "check": "npm run typecheck && npm run lint && npm test && npm run test:speech && npm run test:e2e"

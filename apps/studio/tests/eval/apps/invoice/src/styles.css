@@ -1,0 +1,17 @@
+:root { font-family: system-ui, sans-serif; color: #1d2330; background: #f6f7f9; }
+body { margin: 0; }
+main { max-width: 560px; margin: 40px auto; background: #fff; border: 1px solid #e3e6eb; border-radius: 12px; padding: 24px; }
+h1 { font-size: 20px; margin: 0 0 16px; }
+label { display: grid; gap: 4px; font-size: 13px; color: #4a5263; margin-bottom: 10px; }
+input, select { height: 36px; border: 1px solid #c9ced8; border-radius: 8px; padding: 0 10px; font: inherit; }
+select[multiple] { height: auto; }
+button { height: 36px; border: 0; border-radius: 8px; padding: 0 14px; background: #2848c8; color: #fff; font: inherit; cursor: pointer; }
+button:disabled { background: #9aa3b5; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #eef0f3; font-size: 14px; }
+.row { display: flex; justify-content: space-between; padding: 4px 0; }
+.check { display: flex; align-items: center; gap: 8px; }
+.check input { height: auto; }
+.tabs { display: flex; gap: 6px; margin: 12px 0; }
+.tabs button[aria-pressed='true'] { background: #13256e; }
+ul { padding-left: 18px; }

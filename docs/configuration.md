@@ -125,6 +125,8 @@ The studio and the proxy listen on this computer only (`127.0.0.1`; the proxy al
 | `proxy-ports.json` | The proxy's port for each app address |
 | `google-service-account.json` | The Google service account key, if you added one (readable by you alone) |
 | `models/` | The on-device voice model |
+| `secrets/` | The values of secrets your tests type (one file per app, readable by you alone), saved from the Test tab |
+| `test-runs/` | A test run's configuration and report, while it runs |
 | `speech/` | Speech models (`SAYWRIGHT_SPEECH_DIR` moves them) |
 | `target.json` | Left by `connect`; read and removed when the studio next starts |
 

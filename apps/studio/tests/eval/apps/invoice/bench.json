@@ -1,0 +1,40 @@
+{
+  "name": "Tally invoices",
+  "about": "An invoice: quantities times prices, a subtotal and a total with 10% tax.",
+  "start": "/",
+  "flow": [
+    {
+      "do": "fill",
+      "label": "Quantity of Hosting (month)",
+      "value": "2"
+    }
+  ],
+  "check": {
+    "testId": "subtotal",
+    "expected": "$270.00"
+  },
+  "bug": {
+    "file": "src/lib/totals.ts",
+    "words": [
+      "subtotal",
+      "last",
+      "line",
+      "skip",
+      "loop",
+      "length"
+    ]
+  },
+  "twin": [
+    {
+      "file": "src/lib/totals.ts",
+      "find": "i < lines.length - 1",
+      "replace": "i < lines.length"
+    }
+  ],
+  "oracle": [
+    {
+      "testId": "total",
+      "expected": "$297.00"
+    }
+  ]
+}

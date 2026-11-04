@@ -72,13 +72,30 @@ Requests run one at a time: one you make while another is running waits its turn
 
 <img src="media/guide/write-test.png" alt="Write test: the recorded steps, a check, the generated Playwright test, and its failed run" width="880">
 
-1. Switch to **Write test** (<kbd>R</kbd>) and use your app: each click, typing and <kbd>Enter</kbd> is recorded as a step in the **Test** tab.
-2. Point at what is wrong and say what it should show: “this should show $80.80”. That becomes a check.
-3. Say “generate test” (or **Generate test**): a Playwright spec is written to `tests/saywright/` in your app's folder.
-4. Say “run test” (or **Run test**). It runs with your app's own Playwright (`@playwright/test` must be installed in the app). A test that fails proves it reproduces the bug.
-5. Say “fix it”: the AI fixes the code and the studio runs the test again with the fix. When it passes, keep the fix.
+1. Switch to **Write test** (<kbd>R</kbd>) and use your app: each click, typing, choice in a list and <kbd>Enter</kbd> is recorded as a step in the **Test** tab. A link that opens another page adds a step that waits for it.
+2. Point at what is wrong and say what it should show: “this should show $80.80”. That becomes a check, in the test where you said it: after the steps before it, before the steps after it.
+3. Say “generate test” (or **Generate test**): a Playwright spec is written to `tests/saywright/` in your app's folder. Each step and check is a numbered `test.step`.
+4. Say “run test” (or **Run test**). It runs with your app's own Playwright (`@playwright/test` installed in the app) and a configuration of the studio's own: Chromium, no retries, a fresh browser, and the app the studio has open as its `baseURL`. Your app's Playwright configuration doesn't change the verdict.
+5. Say “fix it”: the AI fixes the code and the studio runs the same test again with the fix. When it passes, verified, keep the fix.
 
-The generated test opens your app's pages by path (`page.goto('/')`), so your Playwright config needs a `baseURL`. When the studio runs the test, it sets `SAYWRIGHT_TARGET_URL` to the app's address:
+**What a run says.** A run is believed only when it shows something:
+
+| The Test tab says | It means |
+| --- | --- |
+| **The test fails at its check, so it reproduces the bug** | Every step ran and the check failed: the bug shows. **Fix with …** is offered. |
+| **It doesn’t show the bug yet** | A step before the checks failed (a field that isn’t there, a page that didn’t come): the test never got to its check. Fix the step, then run it again. |
+| **Passed: all 4 steps and 1 check ran** | Verified: it passed on the first try, every step and check reported that it ran, and (after a fix) the test is the one that failed, unchanged. |
+| **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run, it passed only when tried again, it has no check, or the test changed since it failed. |
+
+A fix may not change the test it is checked against: if the AI's change edits that test, that part is left out (and a change that only edits the test is refused), so a weakened check can't pass for a fix.
+
+**Passwords and other secrets.** What you type into a password field, or a field for a card number, a one-time code, an API key or a token, is never recorded: the step names it (`PASSWORD`, `CARD_NUMBER`), and the test types it from the environment variable `SAYWRIGHT_SECRET_PASSWORD`. The **Secrets** section of the Test tab saves its value on this computer, with the studio's data, outside your code; the studio sets it when it runs the test, and Replay & verify types it in the replay. Elsewhere (your CI), set the variable yourself. To mark a field of your own as secret, give it (or a parent) `data-saywright-secret`; the marks session-replay tools use (`data-private`, `data-sentry-mask`, `.rr-mask`, `.fs-mask`…) work too.
+
+**Lists.** A choice in a drop-down becomes `selectOption({ label: 'Express' })` (by its value when what it says has numbers in it, like a price); in a list that takes several choices, every one chosen.
+
+**Repeatable runs.** Each run starts from a fresh browser: no cookies, no storage. For data the test needs (an account, an empty cart), add `tests/saywright/setup.ts`: it runs before the test, as Playwright's global setup, to put that data in place.
+
+To run a generated test with your own Playwright configuration (in CI, say), give the configuration a `baseURL`; the studio sets `SAYWRIGHT_TARGET_URL` when it runs tests itself:
 
 ```ts
 // playwright.config.ts
@@ -106,7 +123,7 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 | **Test** | Write test: the recorded steps and checks, the generated Playwright test and its result. |
 | **Experts** | Page reviews for SEO, content, UI/UX and accessibility ([Experts](experts.md)). |
 | **Sessions** | **Record a session**, [Autopilot](autopilot.md), and your sessions with their reports ([Sessions and reports](session-report.md)). |
-| **Stats** (chart icon) | How you worked: voice or typed, hand or mouse, time to preview, how often you kept a change. **Export session (JSONL)** downloads it. |
+| **Stats** (chart icon) | How you worked: voice or typed, pointing or not, time to preview, how often you kept a change. **Export session (JSONL)** downloads it. |
 
 **The command palette** (<kbd>Ctrl</kbd>+<kbd>K</kbd>, <kbd>⌘</kbd>+<kbd>K</kbd> on a Mac, [picture](media/guide/palette.png)) lists every action by name. <kbd>Enter</kbd> runs the highlighted one; to send what you typed as a request to the AI instead, choose its own row or press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> (<kbd>⌘</kbd>+<kbd>Enter</kbd> on a Mac).
 

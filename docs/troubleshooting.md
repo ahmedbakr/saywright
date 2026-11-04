@@ -56,7 +56,10 @@ npx @saywright/studio doctor      # in a checkout: npm run doctor
 | --- | --- |
 | “Another session is recording” | One is still running in another tab, or its tab closed. In the studio, click **Stop it and start this one**. Your app's own tab can stop only a session it started: stop the other one in the studio first. A session that has sent nothing for 45 seconds is stopped for you. |
 | “Playwright needs its Chromium browser” | Click **Install test browser** in the Test tab. |
-| The test doesn't run | The generated test runs with your app's own Playwright: install `@playwright/test` in the app, and give its config a `baseURL` (see [Write test](guide.md#write-test-narrate-a-bug-get-a-playwright-test)). |
+| The test doesn't run | The generated test runs with your app's own Playwright: install `@playwright/test` in the app. The studio runs it with a configuration of its own (your app's address as `baseURL`), so your Playwright configuration isn't needed (see [Write test](guide.md#write-test-narrate-a-bug-get-a-playwright-test)). |
+| “This test types PASSWORD” | The test types a secret you typed while writing it, and never saved in it. Save its value in the Test tab's **Secrets**, or set `SAYWRIGHT_SECRET_PASSWORD`. |
+| “It doesn’t show the bug yet” | A step before the checks failed, so the test never got to its check: the run lists which step, and why. Fix that step (or record the test again), then run it. |
+| “Couldn’t verify” | The test passed, but the run doesn't prove it: the Test tab says why (a step or check that didn't run, a pass only on a retry, a test changed since it failed). |
 | The accessibility checks couldn't run | The page's Content Security Policy blocked them. Pages shown through the studio's proxy don't have that problem. |
 
 ## Reporting a problem
