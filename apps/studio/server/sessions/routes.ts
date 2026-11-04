@@ -80,6 +80,21 @@ function sendFile(res: ServerResponse, file: string, type: string, range?: strin
   });
 }
 
+/** This computer's own names: a page at 127.0.0.1:5173 is the app at localhost:5173. */
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])$/;
+
+/** Whether a page's origin is the address `url` is at (its scheme, port and name, any of this computer's names alike). */
+function sameAddress(url: string, from: string): boolean {
+  try {
+    const a = new URL(url);
+    const b = new URL(from);
+    const port = (u: URL) => u.port || (u.protocol === 'https:' ? '443' : '80');
+    return a.protocol === b.protocol && port(a) === port(b) && (a.hostname === b.hostname || (LOOPBACK.test(a.hostname) && LOOPBACK.test(b.hostname)));
+  } catch {
+    return false;
+  }
+}
+
 export function sessionRoutes(router: Router, deps: Deps): void {
   const { speech } = deps;
   const of = (id: string): Sessions => deps.forSession(id).sessions;
@@ -89,6 +104,19 @@ export function sessionRoutes(router: Router, deps: Deps): void {
     return ws;
   };
   const origin = (raw: { headers: Record<string, unknown> }) => String(raw.headers.host ? `http://${raw.headers.host}` : '');
+  /**
+   * Whether a page may start recording into the open app's sessions, or make the studio load its speech models: the
+   * studio's own page, or the open app's (at its own address, or the proxy's in front of it). Any other page on this
+   * computer could otherwise fill the app's history with what it likes, and have it reported on.
+   */
+  const fromOpenApp = (raw: Req['raw']): boolean => {
+    if (sameOrigin(raw)) return true;
+    const from = typeof raw.headers.origin === 'string' ? raw.headers.origin : '';
+    // Not a browser (a tool, a test): as the router has it.
+    if (!from) return true;
+    const ws = deps.active();
+    return !!ws && [ws.env?.url, ws.frameUrl].some((url) => !!url && sameAddress(url, from));
+  };
   /**
    * Writing to a session (or following it) from an app's page takes the session's key, given to whoever started it:
    * another page on this computer can't add to or read someone else's recording. The studio's own page needs none.
@@ -102,6 +130,7 @@ export function sessionRoutes(router: Router, deps: Deps): void {
   router.post(
     '/sessions',
     (req) => {
+      if (!fromOpenApp(req.raw)) throw new HttpError(403, 'Only the app open in the studio can record a session. Open this app in the studio first.');
       const body = (req.body ?? {}) as { name?: string; appUrl?: string; source?: string; lang?: string; replace?: boolean; replayOf?: string };
       const lang = LANGS.includes(body.lang as SessionLang) ? (body.lang as SessionLang) : 'auto';
       const replayOf = body.source === 'replay' && typeof body.replayOf === 'string' ? body.replayOf : undefined;
@@ -362,6 +391,7 @@ export function sessionRoutes(router: Router, deps: Deps): void {
   router.post(
     '/speech/warm',
     async (req) => {
+      if (!fromOpenApp(req.raw)) throw new HttpError(403, 'Only the app open in the studio can do that.');
       const mode = req.query.get('mode');
       if (mode) {
         const m = mode === 'en' ? 'en' : mode === 'ar' ? 'ar' : 'auto';

@@ -164,7 +164,8 @@ describe('taking over a recording', () => {
   const speech = { canNarrate: () => false } as unknown as SpeechService;
   const app = project();
   const sessions = new Sessions({ project: app, speech, emit: () => undefined, writer: () => null });
-  const ws = { project: app, sessions } as unknown as Workspace;
+  // The app open in the studio, in its own tab at localhost:3000.
+  const ws = { project: app, sessions, env: { url: 'http://localhost:3000/' }, frameUrl: 'http://localhost:3000/' } as unknown as Workspace;
   const router = new Router();
   sessionRoutes(router, { active: () => ws, forSession: () => ws, speech, saveSpeechChoice: () => undefined, live: () => undefined });
   const mw = router.middleware('/api');
@@ -197,6 +198,20 @@ describe('taking over a recording', () => {
     expect(mine.status).toBe(200);
     expect(recording(id)).toBe(false);
     expect(recording(mine.body.session!.id)).toBe(true);
+  });
+
+  it('a page of another site on this computer can’t start a session in the open app’s history', async () => {
+    const before = sessions.store.list().length;
+    const other = await start('http://localhost:7452', { source: 'app' });
+    expect(other.status).toBe(403);
+    expect(other.body.error).toMatch(/Only the app open in the studio/);
+    expect(sessions.store.list().length).toBe(before);
+    // Nor have the studio load its speech models.
+    const base = await ready;
+    const res = await fetch(`${base}/api/speech/warm`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'text/plain', Origin: 'http://localhost:7452' } });
+    expect(res.status).toBe(403);
+    // The open app is the same at any of this computer's names (here a session is recording already: it is told so).
+    expect((await start('http://127.0.0.1:3000', { source: 'app' })).status).toBe(409);
   });
 
   it('the studio’s own page can take over any recording', async () => {
