@@ -50,4 +50,41 @@ describe('parseQuick', () => {
   it('leaves a rename that asks for more to Claude', () => {
     expect(parseQuick('change the label to "Buy" and make it red')).toBeNull();
   });
+
+  it.each(['remove this', 'delete it', 'get rid of that button', 'please remove the VIP badge', 'hide this', 'delete', 'remove this from the page'])('removes the element when that is all that is asked: %s', (text) => {
+    expect(parseQuick(text)).toEqual({ kind: 'remove' });
+  });
+
+  it.each(['make the Delete button ask for confirmation', 'make the Delete button red', 'remove the border', 'hide this on mobile', 'delete this row when it is empty', 'remove this and move that above', 'drop the shadow'])(
+    'never removes the element for a request that only has a word like delete in it: %s',
+    (text) => {
+      expect(parseQuick(text)?.kind).not.toBe('remove');
+    },
+  );
+
+  it.each([
+    ['rename this to Remove', 'Remove'],
+    ['rename this to Remove contact forever', 'Remove contact forever'],
+    ['rename this to Hide details', 'Hide details'],
+    ['change the text to Drop files here', 'Drop files here'],
+    ['rename this to Terms and conditions', 'Terms and conditions'],
+  ])('renames to words that are also commands: %s', (text, value) => {
+    expect(parseQuick(text)).toEqual({ kind: 'text', value });
+  });
+
+  it.each(['make this bigger and red', 'make this red and rename it later', 'make it smaller then bold'])('leaves two things asked at once to the AI: %s', (text) => {
+    expect(parseQuick(text)).toBeNull();
+  });
+
+  it.each([
+    ['rename this to pay now', 'Pay now'],
+    ['rename this to iOS users first', 'iOS users first'],
+    ['rename this to "iOS users first"', 'iOS users first'],
+    ['rename this to "e-mail settings"', 'e-mail settings'],
+    ['rename this to Are you sure?', 'Are you sure?'],
+    ['rename this to Save now!', 'Save now!'],
+    ['rename this to Done.', 'Done'],
+  ])('keeps the new text as written: quoted exactly, its own capitals and its question or exclamation mark: %s', (text, value) => {
+    expect(parseQuick(text)).toEqual({ kind: 'text', value });
+  });
 });

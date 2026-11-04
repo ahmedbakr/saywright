@@ -23,8 +23,31 @@ const EVERYWHERE_AT_END = new RegExp(`\\s+(?:${EVERYWHERE.source})(?:\\s+(?:it|t
 const POLITE = /^(?:please|thanks|thank you|instead|now|for me)?[.!]*$/i;
 const MARK = /\uE000(\d+)\uE000/g;
 
+/** An unquoted new text without the quotes and the full stop around it ("Are you sure?" keeps its question mark). */
 function stripQuotes(s: string): string {
-  return s.replace(/^[\s"“'‘]+|[\s"”'’.!?]+$/g, '');
+  return s.replace(/^[\s"“'‘]+|[\s"”'’.]+$/g, '');
+}
+
+/** Words that make a removal about something of the element, or about when, rather than the element itself. */
+const NOT_THE_ELEMENT = new Set(
+  'on in at for when if unless until while after before and but or so then with without except only instead to into than border borders shadow shadows padding margin margins spacing space gap underline background bg color colour outline radius rounded rounding corner corners bold italic animation transition scrollbar placeholder tooltip focus hover opacity blur gradient style styles styling class classes wrap wrapping overflow limit validation confirmation delay duplicate duplicates uppercase lowercase'.split(' '),
+);
+
+/**
+ * What a request that starts with remove, delete, drop or hide asks to go: the element itself ("remove this", "get
+ * rid of that button", "delete the VIP badge"), or something of it ("remove the border", "hide this on mobile").
+ * Null for any other request: a word like delete in "make the Delete button ask first" is no reason to delete anything.
+ */
+function removal(asked: string): 'element' | 'other' | null {
+  const s = asked.trim().replace(/^(?:(?:please|can you|could you|would you|just|now)\s+)+/, '');
+  const verb = /^(?:remove|delete|get rid of|drop|hide)\b(.*)$/.exec(s);
+  if (!verb) return null;
+  const rest = verb[1]
+    .replace(/\b(?:please|now|entirely|completely|altogether|for me)\b/g, ' ')
+    .replace(/\bfrom (?:the |this )?(?:page|screen|view|app)\b/g, ' ')
+    .trim();
+  const words = rest ? rest.split(/\s+/) : [];
+  return words.length <= 4 && !words.some((w) => NOT_THE_ELEMENT.has(w)) ? 'element' : 'other';
 }
 
 /**
@@ -41,19 +64,31 @@ function quoted(s: string): { masked: string; values: string[] } {
   return { masked, values };
 }
 
-/** The new text a rename asks for, and whether it is for every place it appears; null when more is asked of it than a rename. */
-function newText(tail: string, values: string[]): { value: string; everywhere: boolean } | null {
+/**
+ * The new text a rename asks for, whether it is for every place it appears, and whether it was quoted (then it is
+ * taken exactly as written); null when more is asked of it than a rename.
+ */
+function newText(tail: string, values: string[]): { value: string; everywhere: boolean; quoted: boolean } | null {
   const lead = /^\s*\uE000(\d+)\uE000(.*)$/s.exec(tail);
   if (lead) {
     const value = values[Number(lead[1])].trim();
     const rest = lead[2].replace(MARK, (_m, i: string) => values[Number(i)]).trim();
-    if (EVERYWHERE.test(rest)) return { value, everywhere: true };
-    return POLITE.test(rest) ? { value, everywhere: false } : null;
+    if (EVERYWHERE.test(rest)) return { value, everywhere: true, quoted: true };
+    return POLITE.test(rest) ? { value, everywhere: false, quoted: true } : null;
   }
   let value = stripQuotes(tail.replace(MARK, (_m, i: string) => `"${values[Number(i)]}"`));
   const scope = EVERYWHERE_AT_END.exec(value);
   if (scope) value = value.slice(0, scope.index).trim();
-  return { value, everywhere: !!scope };
+  return { value, everywhere: !!scope, quoted: false };
+}
+
+/**
+ * An unquoted new text starts with a capital, as said ("rename this to pay now" \u2192 "Pay now"), unless its first word
+ * is written with capitals of its own: "iOS", "eBay", "macOS" stay as they are.
+ */
+function capitalized(value: string): string {
+  const first = value.split(/\s/)[0];
+  return /\p{Lu}|\d/u.test(first.slice(1)) ? value : value[0].toUpperCase() + value.slice(1);
 }
 
 const words = (s: string) => ' ' + s.toLowerCase().replace(/[“”"‘’']/g, '').replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
@@ -70,11 +105,7 @@ export function parseQuick(input: string): QuickIntent | null {
     return { kind: 'copy', adjust };
   }
 
-  const move = /\b(move|put|place|drag)\b.*\b(above|below|before|after|under|over|beneath|underneath)\b/.exec(asked);
-  if (move) return { kind: 'move', where: /^(below|after|under|beneath|underneath)$/.test(move[2]) ? 'below' : 'above' };
-
-  if (/\b(remove|delete|get rid of|drop|hide)\b/.test(asked)) return { kind: 'remove' };
-
+  // A rename first: its new text can have any words in it ("Remove", "Terms and conditions").
   const text =
     /\b(?:rename|relabel|call)\b.*?\b(?:to|as)\b\s+(.+)$/is.exec(masked) ??
     /\b(?:change|set|update|make)\s+(?:the\s+)?(?:text|label|copy|title|wording|words?)\b.*?\b(?:to|into)\b\s+(.+)$/is.exec(masked) ??
@@ -84,8 +115,19 @@ export function parseQuick(input: string): QuickIntent | null {
     if (!found) return null;
     // "Rename all of them to …": what is renamed says so too.
     const everywhere = found.everywhere || EVERYWHERE.test(masked.slice(0, text.index + text[0].length - text[1].length).replace(MARK, ' '));
-    if (found.value) return { kind: 'text', value: found.value[0].toUpperCase() + found.value.slice(1), ...(everywhere ? { everywhere: true as const } : {}) };
+    if (found.value) return { kind: 'text', value: found.quoted ? found.value : capitalized(found.value), ...(everywhere ? { everywhere: true as const } : {}) };
   }
+
+  // Two things asked at once ("bigger and red", "remove this and move that"): the AI does both, a quick edit only one.
+  if (/\b(?:and|then|also|plus)\b/.test(asked)) return null;
+
+  const move = /\b(move|put|place|drag)\b.*\b(above|below|before|after|under|over|beneath|underneath)\b/.exec(asked);
+  if (move) return { kind: 'move', where: /^(below|after|under|beneath|underneath)$/.test(move[2]) ? 'below' : 'above' };
+
+  const removes = removal(asked);
+  if (removes === 'element') return { kind: 'remove' };
+  // "Remove the border", "hide this on mobile": about the element, for the AI.
+  if (removes === 'other') return null;
 
   const big = /\b(bigger|larger|huge|grow|taller|wider|increase)\b/.test(t);
   const small = /\b(smaller|tiny|tinier|shrink|shorter|narrower|decrease|compact)\b/.test(t);
