@@ -314,8 +314,10 @@ export interface PageControl {
   role: string;
   /** What a person would call it: its label or its text. */
   name: string;
-  /** A field: its type, what it holds now (never a password's value), whether it must be filled, its choices. */
-  field?: { type: string; value: string; required: boolean; checked?: boolean; options?: string[] };
+  /** A field: its type, what it holds now (never a password's value), whether it must be filled, its choices, and whether what is typed into it is a secret. */
+  field?: { type: string; value: string; required: boolean; checked?: boolean; options?: string[]; secret?: boolean };
+  /** A field in a form: what pressing Enter in it sends the form with (its default button's name, else the form's). */
+  submits?: string;
   disabled: boolean;
   /** Outside what the page shows now: reached by scrolling. */
   offscreen: boolean;

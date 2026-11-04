@@ -1,5 +1,5 @@
 /** Autopilot's steps, as the studio and its server both describe them (see server/autopilot.ts). */
-import type { PageSnapshot } from '@saywright/vite/protocol';
+import { isSecretHint, looksSecret, maskSecrets, MASK, type PageSnapshot } from '@saywright/vite/protocol';
 
 // Not yet: a drag (pointer down, move, up), which canvas apps such as drawing tools need to be used at all.
 export const STEP_KINDS = ['click', 'fill', 'select', 'check', 'press', 'scroll', 'back', 'goto', 'done'] as const;
@@ -45,14 +45,28 @@ const RISKY =
 
 export const isRisky = (name: string): boolean => RISKY.test(name);
 
+/**
+ * Whether Autopilot must leave a step alone unless allowed: a control whose name is risky, or Enter in a field that
+ * sends its form with one ("Pay $45.45 and subscribe"), which is the same as pressing that button.
+ */
+export function notAllowed(action: AutopilotAction, control: { name: string; submits?: string } | undefined, allowRisky: boolean): boolean {
+  if (allowRisky || !control) return false;
+  if (isRisky(control.name)) return true;
+  return action.kind === 'press' && (action.value || 'Enter') === 'Enter' && !!control.submits && isRisky(control.submits);
+}
+
 /** A step in words, for the timeline and the next turn: Clicked “Apply”, Typed “SAVE20” into “Coupon”. */
-export function describeStep(action: AutopilotAction, control: { name: string; role: string } | undefined): string {
+export function describeStep(action: AutopilotAction, control: { name: string; role: string; field?: { secret?: boolean } } | undefined): string {
   const name = control ? `“${control.name || control.role}”` : '';
   switch (action.kind) {
     case 'click':
       return `Clicked ${name}`;
-    case 'fill':
-      return `Typed “${action.value ?? ''}” into ${name}`;
+    case 'fill': {
+      // What Autopilot types into a secret field (a card number, a code, a password) is never written down, as a person's isn't.
+      const value = action.value ?? '';
+      const secret = !!control?.field?.secret || isSecretHint(control?.name ?? '') || looksSecret(value);
+      return `Typed ${secret ? MASK : `“${maskSecrets(value)}”`} into ${name}`;
+    }
     case 'select':
       return `Chose “${action.value ?? ''}” in ${name}`;
     case 'check':

@@ -5,7 +5,7 @@
  */
 import type { PageSnapshot } from '@saywright/vite/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { describeStep, isRisky, pageStateOf } from '../../shared/autopilot';
+import { describeStep, isRisky, notAllowed, pageStateOf } from '../../shared/autopilot';
 import { autopilotRoutes, nextTurn, turnPrompt, type AutopilotTurn, type TurnInput } from '../../server/autopilot';
 import { AgentError } from '../../server/ai/types';
 import type { JsonRequest } from '../../server/ai/service';
@@ -105,6 +105,28 @@ describe('steps in words', () => {
     expect(describeStep({ kind: 'check', value: 'off' }, { name: 'Gift wrap', role: 'checkbox' })).toBe('Unticked “Gift wrap”');
     expect(describeStep({ kind: 'press' }, coupon)).toBe('Pressed Enter in “Coupon”');
     expect(describeStep({ kind: 'goto', value: '/settings' }, undefined)).toBe('Opened /settings');
+  });
+
+  it('never writes down what it typed into a secret field, or a value that looks like one', () => {
+    // The field says it is secret; its name does (an older plugin says nothing); the value is a card number.
+    expect(describeStep({ kind: 'fill', control: 1, value: '862' }, { name: 'Security digits', role: 'textbox', field: { secret: true } })).toBe('Typed ••• into “Security digits”');
+    expect(describeStep({ kind: 'fill', control: 1, value: '123' }, { name: 'CVC', role: 'textbox' })).toBe('Typed ••• into “CVC”');
+    expect(describeStep({ kind: 'fill', control: 1, value: '4242 4242 4242 4242' }, { name: 'Number', role: 'textbox' })).toBe('Typed ••• into “Number”');
+    expect(describeStep({ kind: 'fill', control: 1, value: 'sk-live-abcdefghijklmnop1234' }, { name: 'Notes', role: 'textbox' })).toBe('Typed ••• into “Notes”');
+  });
+});
+
+describe('what it leaves alone', () => {
+  const cvc = { name: 'CVC', submits: 'Pay $45.45 and subscribe' };
+  it('doesn’t press Enter in a field whose form that would send with a risky button, unless allowed', () => {
+    expect(notAllowed({ kind: 'press', control: 1 }, cvc, false)).toBe(true);
+    expect(notAllowed({ kind: 'press', control: 1, value: 'Enter' }, cvc, false)).toBe(true);
+    expect(notAllowed({ kind: 'press', control: 1 }, cvc, true)).toBe(false);
+    // Typing in that field, another key, or Enter in a form sent with a harmless button is fine.
+    expect(notAllowed({ kind: 'fill', control: 1, value: '862' }, cvc, false)).toBe(false);
+    expect(notAllowed({ kind: 'press', control: 1, value: 'Tab' }, cvc, false)).toBe(false);
+    expect(notAllowed({ kind: 'press', control: 1 }, { name: 'Coupon', submits: 'Apply' }, false)).toBe(false);
+    expect(notAllowed({ kind: 'click', control: 1 }, { name: 'Delete account' }, false)).toBe(true);
   });
 });
 

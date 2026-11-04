@@ -4,7 +4,7 @@
  * saved as a test exactly like a person's.
  */
 import { maskSecrets, redactUrl, SRC_ATTR, type PageControl, type PageSnapshot } from '../protocol';
-import { accessibleName, annotatedAncestor, collapse, fieldValue, isField, isVisible, roleOf, visibleText } from './dom';
+import { accessibleName, annotatedAncestor, collapse, fieldValue, isField, isSecretField, isVisible, roleOf, visibleText } from './dom';
 import { buildLocator } from './locator';
 
 const CONTROLS =
@@ -21,7 +21,17 @@ function fieldOf(el: Element): PageControl['field'] | undefined {
   const type = el instanceof HTMLTextAreaElement ? 'textarea' : el.type || 'text';
   if (type === 'checkbox' || type === 'radio') return { type, value: '', required: el.required, checked: (el as HTMLInputElement).checked };
   // A secret (a password, a card number, a key) only as dots: it is never sent to an AI.
-  return { type, value: collapse(fieldValue(el), 60), required: el.required };
+  return { type, value: collapse(fieldValue(el), 60), required: el.required, ...(isSecretField(el) ? { secret: true } : {}) };
+}
+
+/** What pressing Enter in a field sends its form with: the form's default button (its first submit button), else the form's own name. */
+function submitsOf(el: Element): string | undefined {
+  if (!(el instanceof HTMLInputElement) || ['checkbox', 'radio', 'file', 'submit', 'button', 'reset', 'image'].includes(el.type)) return undefined;
+  const form = el.form;
+  if (!form) return undefined;
+  const button = form.querySelector('button:not([type]), button[type="submit"], input[type="submit"], input[type="image"]');
+  const name = button ? accessibleName(button) || visibleText(button) || (button as HTMLInputElement).value : accessibleName(form);
+  return collapse(name, 60) || undefined;
 }
 
 function control(el: Element, offscreen: boolean): PageControl {
@@ -29,7 +39,8 @@ function control(el: Element, offscreen: boolean): PageControl {
   const name = collapse(accessibleName(el) || visibleText(el) || el.getAttribute('placeholder') || el.getAttribute('title'), 60);
   const src = el.getAttribute(SRC_ATTR) ?? annotatedAncestor(el)?.getAttribute(SRC_ATTR) ?? null;
   const disabled = (el as HTMLButtonElement).disabled === true || el.getAttribute('aria-disabled') === 'true';
-  return { locator: buildLocator(el, { cheap: true }).code, role, name, ...(isField(el) ? { field: fieldOf(el) } : {}), disabled, offscreen, src };
+  const submits = submitsOf(el);
+  return { locator: buildLocator(el, { cheap: true }).code, role, name, ...(isField(el) ? { field: fieldOf(el) } : {}), ...(submits ? { submits } : {}), disabled, offscreen, src };
 }
 
 export function snapshot(): PageSnapshot {

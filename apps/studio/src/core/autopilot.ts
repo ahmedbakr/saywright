@@ -4,7 +4,7 @@
  * the next step, and the step is carried out the way a replayed one is: shown, then clicked, filled or pressed.
  */
 import type { ElementInfo, PageSnapshot } from '@saywright/vite/protocol';
-import { describeStep, isRisky, pageStateOf, type AutopilotAction, type StepRecord } from '@shared/autopilot';
+import { describeStep, notAllowed, pageStateOf, type AutopilotAction, type StepRecord } from '@shared/autopilot';
 import { api } from '@/lib/api';
 import type { BridgeClient } from './bridge';
 
@@ -98,8 +98,8 @@ export class Autopilot {
           return r.ok ? { ok: true } : { ok: false, error: r.error ?? 'failed' };
         }
         if (!control) return { ok: false, error: 'not on the page' };
-        // The server marks these for the AI; this is the guarantee.
-        if (!opts.allowRisky && isRisky(control.name)) return { ok: false, error: 'not allowed' };
+        // The server marks these for the AI; this is the guarantee (Enter in a field counts as its form's button).
+        if (notAllowed(action, control, !!opts.allowRisky)) return { ok: false, error: 'not allowed' };
         const shown = await this.host.bridge.replay(control.locator, undefined, false, undefined, 2500);
         if (!shown.ok || !shown.info) return { ok: false, error: shown.error ?? 'missing' };
         this.host.point(shown.info, false);
@@ -176,7 +176,8 @@ export class Autopilot {
         // The app's response: a new page (it reconnects) or what the step changed on this one.
         await sleep(900);
         if (this.host.connections() !== loads) await this.connected(10_000);
-        const did = r.error === 'not allowed' ? `Skipped ${control ? `“${control.name}”` : 'a control'} (not allowed)` : describeStep(turn.action, control);
+        const sends = turn.action.kind === 'press' && control?.submits ? `pressing Enter in “${control.name}”, which sends the form with “${control.submits}”` : null;
+        const did = r.error === 'not allowed' ? `Skipped ${sends ?? (control ? `“${control.name}”` : 'a control')} (not allowed)` : describeStep(turn.action, control);
         history.push({ n, did, ok: r.ok, ...(r.error ? { error: r.error } : {}), url: this.host.appUrl() || page.url, page: pageStateOf(page) });
         failures = r.ok ? 0 : failures + 1;
         if (failures >= MAX_FAILURES) {
