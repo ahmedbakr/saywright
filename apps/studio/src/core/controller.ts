@@ -1697,9 +1697,11 @@ class Controller {
         startUrl: r.startUrl ?? get().app.url,
         steps: r.steps,
         expectations: r.expectations,
+        // Written again (another check, a step taken out): this test's file, if it is as the studio wrote it.
+        ...(r.spec || r.written ? { replace: r.spec ?? r.written } : {}),
       });
       // A test the studio wrote anew: its first run is judged on its own, not against the one that failed before.
-      set({ recorder: { ...get().recorder, spec, run: null, baseline: undefined } });
+      set({ recorder: { ...get().recorder, spec, written: spec, run: null, baseline: undefined } });
       settings().setUi({ panelOpen: true, panelTab: 'test' });
       this.notify(`Test saved to ${spec.path}.`, 'ok', [{ label: 'Run it', primary: true, run: () => void this.runTest() }]);
     } catch (err) {
@@ -1874,9 +1876,9 @@ class Controller {
     this.keepTimer = setTimeout(() => {
       const app = useApps.getState().active;
       if (!app) return;
-      const { startUrl, steps, expectations, spec, run, baseline } = get().recorder;
+      const { startUrl, steps, expectations, spec, run, baseline, written } = get().recorder;
       try {
-        sessionStorage.setItem(RECORDER_KEY, JSON.stringify({ app, recorder: { startUrl, steps, expectations, spec, run, baseline } }));
+        sessionStorage.setItem(RECORDER_KEY, JSON.stringify({ app, recorder: { startUrl, steps, expectations, spec, run, baseline, written } }));
       } catch {
         /* storage full or off: only this convenience is lost */
       }

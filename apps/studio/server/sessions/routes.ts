@@ -269,7 +269,7 @@ export function sessionRoutes(router: Router, deps: Deps): void {
   router.put('/sessions/:id', (req) => {
     const name = asString((req.body as { name?: unknown } | undefined)?.name, 'name', 120).trim();
     if (!name) throw new HttpError(400, 'Name it something');
-    return { session: of(req.params.id).store.update(req.params.id, { name }) };
+    return { session: of(req.params.id).store.update(req.params.id, { name, renamed: true }) };
   });
 
   router.delete('/sessions/:id', (req) => {

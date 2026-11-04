@@ -1,8 +1,11 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { parse } from '@babel/parser';
 import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
 import { generateSpec, safeLocator, secretsOf, urlPattern, writeSpec } from '../../server/tests/generate';
-import { focusOn, judge, marksOf, parseFailure } from '../../server/tests/run';
+import { focusOn, judge, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
 const input = {
@@ -227,6 +230,20 @@ describe('generateSpec', () => {
     expect(names).not.toContain('require');
   });
 
+  it('written again for the same test, it takes its own earlier file’s place, never anyone else’s', () => {
+    const p = tempShop();
+    const first = writeSpec(p, input);
+    const again = writeSpec(p, { ...input, expectations: [...input.expectations, { ...input.expectations[0], expected: '$1.00' }] }, first);
+    expect(again.path).toBe(first.path);
+    expect(p.read(first.path)).toBe(again.code);
+    // Changed since by someone else: kept, and the new version goes beside it.
+    p.write(first.path, `${again.code}\n// mine`);
+    const third = writeSpec(p, input, again);
+    expect(third.path).not.toBe(first.path);
+    // Nothing outside the tests folder is ever written over.
+    expect(writeSpec(p, input, { path: 'src/main.tsx', code: p.read('src/main.tsx') }).path).toMatch(/^tests\/saywright\//);
+  });
+
   it('never overwrites an existing test file', () => {
     const p = tempShop();
     const a = writeSpec(p, input);
@@ -300,5 +317,24 @@ describe('what a run proves', () => {
     expect(marksOf(code)).toEqual(['1', '2', '3', 'check 1']);
     const masked = judge({ status: 'failed', duration: 1, steps: [step('[2] Type ••• into the “Password” field', 'locator.fill(hunter2) timed out')] }, ['1', '2'], (t) => t?.split('hunter2').join('•••'));
     expect(masked.message).toBe('locator.fill(•••) timed out');
+  });
+});
+
+describe('a run cut short', () => {
+  it('leaves nothing behind for long: the next run sweeps its configuration and Playwright’s notes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-runs-'));
+    const old = Date.now() / 1000 - 3600;
+    for (const n of ['run-mabc12-a1b2c3.config.mjs', 'run-mabc12-a1b2c3.json']) {
+      fs.writeFileSync(path.join(dir, n), 'x');
+      fs.utimesSync(path.join(dir, n), old, old);
+    }
+    fs.mkdirSync(path.join(dir, 'run-mabc12-a1b2c3'));
+    fs.writeFileSync(path.join(dir, 'run-mabc12-a1b2c3', 'error-context.md'), 'http://localhost:5174/?token=abc');
+    fs.utimesSync(path.join(dir, 'run-mabc12-a1b2c3'), old, old);
+    // One running now, and a file of someone else's, stay.
+    fs.writeFileSync(path.join(dir, 'run-mnow99-ffffff.config.mjs'), 'x');
+    fs.writeFileSync(path.join(dir, 'notes.txt'), 'x');
+    sweepRuns(dir);
+    expect(fs.readdirSync(dir).sort()).toEqual(['notes.txt', 'run-mnow99-ffffff.config.mjs']);
   });
 });

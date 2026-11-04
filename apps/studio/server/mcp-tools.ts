@@ -18,7 +18,10 @@ export interface StudioContext {
   pageUrl: string | null;
   selection: RefInfo[];
   pins: RefInfo[];
+  /** The person's last request in the studio (not one the studio wrote for a report or a review), for which app, and when. */
   said: string | null;
+  saidApp?: string | null;
+  saidAt?: number;
   at: number;
 }
 
@@ -61,7 +64,10 @@ export function mcpTools(deps: Deps): McpTool[] {
         const c = deps.context.app === w.app.id ? deps.context : null;
         const lines = [`App: ${w.app.name} (${w.env.label}: ${w.env.url})`, w.project.hasCode ? `Code: ${w.project.root}` : 'Code: not on this computer (linked by address only)'];
         if (c?.pageUrl) lines.push(`Page: ${redactUrl(c.pageUrl)}`);
-        const refs = c ? [...c.selection.map((r) => ({ ...r, role: 'selected' })), ...c.pins.map((r) => ({ ...r, role: 'pinned' }))] : [];
+        // What is selected is often pinned too (the last of several picked): named once.
+        const key = (r: RefInfo) => `${r.src ?? ''}|${r.label}|${r.text}`;
+        const selected = new Set(c?.selection.map(key) ?? []);
+        const refs = c ? [...c.selection.map((r) => ({ ...r, role: 'selected' })), ...c.pins.filter((r) => !selected.has(key(r))).map((r) => ({ ...r, role: 'pinned' }))] : [];
         if (!refs.length) {
           lines.push('', 'Nothing is selected in the studio right now. Ask the person to point at what they mean (or select it), then call get_context again.');
           return lines.join('\n');
@@ -79,7 +85,8 @@ export function mcpTools(deps: Deps): McpTool[] {
             lines.push('```', ...text.slice(from - 1, to).map((l, k) => `${String(from + k).padStart(4)}${from + k === at.line ? '>' : ' '} ${l}`), '```');
           }
         });
-        if (c?.said) lines.push('', `Last said in the studio: “${c.said}”`);
+        const said = deps.context;
+        if (said.said && said.saidApp === w.app.id) lines.push('', `Last said in the studio (${ago(said.saidAt ?? said.at)}): “${maskSecrets(said.said)}”`);
         return lines.join('\n');
       },
     },

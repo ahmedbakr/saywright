@@ -178,6 +178,11 @@ export class Autopilot {
         if (this.host.connections() !== loads) await this.connected(10_000);
         const sends = turn.action.kind === 'press' && control?.submits ? `pressing Enter in “${control.name}”, which sends the form with “${control.submits}”` : null;
         const did = r.error === 'not allowed' ? `Skipped ${sends ?? (control ? `“${control.name}”` : 'a control')} (not allowed)` : describeStep(turn.action, control);
+        // In the timeline too: the run's report says what it left alone, and why.
+        if (r.error === 'not allowed') {
+          const event = { type: 'autopilot', did, why: 'Not allowed: “Let it delete, pay, send and sign out” is off.', t: Date.now(), seq: Date.now() * 100 + Math.floor(Math.random() * 100) };
+          void api.post(`/sessions/${session}/studio-events`, { events: [event] }).catch(() => undefined);
+        }
         history.push({ n, did, ok: r.ok, ...(r.error ? { error: r.error } : {}), url: this.host.appUrl() || page.url, page: pageStateOf(page) });
         failures = r.ok ? 0 : failures + 1;
         if (failures >= MAX_FAILURES) {

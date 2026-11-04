@@ -181,7 +181,7 @@ export class Widget {
       else void this.start();
     } else if (e.code === 'KeyM') {
       e.preventDefault();
-      this.mark();
+      this.mark('shortcut');
     } else if (e.code === 'KeyD') {
       e.preventDefault();
       this.setHidden(!this.hidden);
@@ -242,10 +242,11 @@ export class Widget {
     await this.client.stop();
   }
 
-  mark(): void {
+  /** One mark: the app's recorder logs it, the recording client adds the picture (it was logged twice, once by each). */
+  mark(via: 'shortcut' | 'button' = 'button'): void {
     if (this.client.state.status !== 'recording') return;
-    this.recorder.mark('', 'shortcut');
-    void this.client.mark('', 'app');
+    this.recorder.mark('', via);
+    this.client.moment('mark', true);
   }
 
   // ---- rendering ----------------------------------------------------------------

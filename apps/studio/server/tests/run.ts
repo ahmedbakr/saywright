@@ -184,6 +184,7 @@ export async function runSpec(project: Project, rel: string, opts: RunOptions): 
   const mask = masker(values);
 
   fs.mkdirSync(opts.workDir, { recursive: true, mode: 0o700 });
+  sweepRuns(opts.workDir);
   const id = `${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
   const configFile = path.join(opts.workDir, `run-${id}.config.mjs`);
   const reportFile = path.join(opts.workDir, `run-${id}.json`);
@@ -245,6 +246,26 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
   } finally {
     for (const f of [configFile, reportFile]) fs.rmSync(f, { force: true });
     fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+}
+
+/** A run cut short (the studio stopped meanwhile) leaves its files: its configuration, and Playwright's notes, which hold the pages' addresses. Gone the next time. */
+const LEFT_OVER_MS = 30 * 60_000;
+
+export function sweepRuns(dir: string): void {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^run-[a-z0-9]+-[0-9a-f]{6}(?:\.config\.mjs|\.json)?$/.test(n));
+  } catch {
+    return;
+  }
+  for (const n of names) {
+    const p = path.join(dir, n);
+    try {
+      if (Date.now() - fs.statSync(p).mtimeMs > LEFT_OVER_MS) fs.rmSync(p, { recursive: true, force: true });
+    } catch {
+      /* gone already */
+    }
   }
 }
 

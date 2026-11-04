@@ -271,9 +271,18 @@ export function secretsOf(code: string): string[] {
   return [...new Set(Array.from(code.matchAll(/\bsecret\('([A-Z0-9_]+)'\)/g), (m) => m[1]))];
 }
 
-export function writeSpec(project: Project, input: GenerateInput): { path: string; code: string } {
+/**
+ * Write the test to `tests/saywright/`, never over a file of someone else's. `replace`: the test this one is a new
+ * version of (written again after another check was added): it takes that file's place when the studio wrote it and
+ * nobody changed it since, rather than leaving both to run.
+ */
+export function writeSpec(project: Project, input: GenerateInput, replace?: { path: string; code: string }): { path: string; code: string } {
   const code = generateSpec(input);
   const dir = `tests/${BRAND.slug}`;
+  if (replace && replace.path.startsWith(`${dir}/`) && /^[\w./-]+\.spec\.ts$/.test(replace.path) && !replace.path.includes('..') && project.exists(replace.path) && project.read(replace.path) === replace.code) {
+    project.write(replace.path, code);
+    return { path: replace.path, code };
+  }
   const base = slug(testTitle(input));
   let rel = `${dir}/${base}.spec.ts`;
   for (let i = 2; project.exists(rel); i++) rel = `${dir}/${base}-${i}.spec.ts`;

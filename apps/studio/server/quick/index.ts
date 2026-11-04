@@ -65,8 +65,10 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
   if (!intent) return null;
   if (intent.kind === 'text' && intent.everywhere) return { kind: 'needs-ai', why: 'Changing words everywhere they appear needs an AI: a quick edit changes only what you point at.' };
 
-  // Without a pointed-at element there is nothing precise to edit; Claude may still find it by name.
+  // Without a pointed-at element there is nothing precise to edit; Claude may still find it by name. “This” with
+  // nothing pointed at names nothing: said, rather than an AI asked (and paid) to guess.
   const a = refs[0];
+  if (!a && /\b(?:this|that|these|those|it|them)\b/i.test(text)) return { kind: 'message', tone: 'info', text: 'Point at what you mean (or click it to select it), then say it again.' };
   let where = locOf(a);
   // Quick edits rewrite JSX; other markup (HTML, Vue, Svelte templates) goes to the AI.
   if (!a || !where || !/\.[jt]sx$/.test(where.file)) return null;
@@ -75,10 +77,15 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
   let ast: ReturnType<typeof parseTsx>;
   try {
     code = project.read(where.file);
+  } catch {
+    return null;
+  }
+  try {
     // Parsed once for the whole request (a long component takes a while): every step below uses this tree.
     ast = parseTsx(code);
   } catch {
-    return null;
+    // Half-written in an editor, say: a quick edit can't place itself safely, and an AI may not be what was wanted.
+    return { kind: 'message', tone: 'warn', text: `${where.file} doesn’t parse right now (a syntax error?), so a quick edit can’t be made in it. Fix it, or ask the AI.`, next: [{ kind: 'ask-ai' }, { kind: 'open', src: a.src ?? `${where.file}:1:1` }] };
   }
   let found = findElement(code, where.loc, ast);
   // The code changed since it was selected (lines added above it in an editor): what is at its place now may be

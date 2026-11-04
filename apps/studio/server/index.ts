@@ -314,7 +314,8 @@ export async function createStudioApi(layout: StudioLayout) {
     const progress = (step: string, detail?: string) => hub.emit('progress', { requestId, step, detail });
     const current = ws();
     const { project, changes, metrics } = current;
-    context.said = text;
+    // What the person asked, for MCP's get_context: not the studio's own brief for a report's or a review's findings.
+    if (!brief) Object.assign(context, { said: text, saidApp: current.app.id, saidAt: Date.now() });
     if (!project.hasCode) return addressOnly(current.app.name);
 
     // "Ask the AI anyway" skips the quick edits.
@@ -435,7 +436,7 @@ export async function createStudioApi(layout: StudioLayout) {
   const runsDir = (w: { app: { id: string } }) => path.join(dataDir, 'test-runs', w.app.id);
 
   router.post('/tests/generate', (req) => {
-    const body = (req.body ?? {}) as { name?: string; startUrl?: string; steps?: RecordedStep[]; expectations?: Expectation[] };
+    const body = (req.body ?? {}) as { name?: string; startUrl?: string; steps?: RecordedStep[]; expectations?: Expectation[]; replace?: { path?: unknown; code?: unknown } };
     if (!Array.isArray(body.expectations) || !body.expectations.length) throw new HttpError(400, 'Say what you expected first');
     const { project, metrics } = ws();
     if (!project.hasCode) throw new HttpError(409, 'A test is saved with your app’s code, and this app has none on this computer: link its folder to write tests.', 'no-code');
@@ -445,7 +446,7 @@ export async function createStudioApi(layout: StudioLayout) {
       // Whatever sent them, secrets go in as names only.
       steps: sanitizeSteps(Array.isArray(body.steps) ? body.steps.slice(0, 100) : []),
       expectations: body.expectations.slice(0, 20),
-    });
+    }, typeof body.replace?.path === 'string' && typeof body.replace.code === 'string' ? { path: body.replace.path, code: body.replace.code } : undefined);
     metrics.record({ type: 'test-generated', path: spec.path, steps: body.steps?.length ?? 0 });
     return spec;
   });
@@ -649,7 +650,7 @@ export async function createStudioApi(layout: StudioLayout) {
     context.pageUrl = pageUrl;
     context.selection = selection;
     context.pins = pins;
-    if (typeof body.said === 'string') context.said = body.said.slice(0, 500);
+    if (typeof body.said === 'string') Object.assign(context, { said: body.said.slice(0, 500), saidApp: context.app, saidAt: Date.now() });
     context.at = Date.now();
     return { ok: true };
   });

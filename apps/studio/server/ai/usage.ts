@@ -193,10 +193,18 @@ export class UsageLedger {
     return { level: 'ok', used: worst.used, message: null };
   }
 
-  /** Whether a call may go ahead. In "stop" mode, not once a limit is reached. */
-  allow(now = Date.now()): { ok: boolean; status: BudgetStatus } {
-    const status = this.status(now);
-    return { ok: !(status.level === 'over' && this.state.budget.mode === 'stop'), status };
+  /**
+   * Whether a call may go ahead. In "stop" mode, not once a limit is reached, nor when the call itself (`extraUsd`,
+   * `extraTokens`: what it is expected to cost) would go past one.
+   */
+  allow(now = Date.now(), extraUsd = 0, extraTokens = 0): { ok: boolean; status: BudgetStatus } {
+    const status = this.status(now, extraUsd, extraTokens);
+    const stop = status.level === 'over' && this.state.budget.mode === 'stop';
+    if (stop && (extraUsd > 0 || extraTokens > 0) && this.status(now).level !== 'over') {
+      const more = extraUsd > 0 ? `about ${money(extraUsd)} more` : `about ${compact(extraTokens)} more tokens`;
+      return { ok: false, status: { ...status, message: `${(status.message ?? 'Near your budget.').replace(/\.$/, '')}, and this would take ${more}.` } };
+    }
+    return { ok: !stop, status };
   }
 
   summary(now = Date.now(), appNames: Record<string, string> = {}): UsageSummary {

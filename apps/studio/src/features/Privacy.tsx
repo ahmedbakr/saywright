@@ -10,7 +10,8 @@ const PRIVACY = 'Saywright runs on your computer. Your code leaves it only when 
 const SENT: [string, string][] = [
   ['Quick edits', 'Size, variant, text, move and remove are done on this computer. Nothing is sent.'],
   ['A request to the AI', 'Your words, what you pointed at (its name, text and place in the code) and the code around it go to the AI you connected. A model on this computer keeps them here.'],
-  ['Reports and reviews', 'Written by an AI, they send it what was recorded (steps, what the screen said, errors, what was said, a few screenshots) or the page reviewed. Without one they are written here.'],
+  ['Fixing a test', '“Fix with …” sends the failing test (its steps, with what you typed in them; never a secret, which the test reads by name), how it failed, and the code it points to.'],
+  ['Reports and reviews', 'Written by an AI, they send it what was recorded (steps, what the screen said, errors, what was said, a few screenshots, with secrets as dots) or the page reviewed. Without one they are written here.'],
   ['Voice', 'The on-device model hears you on this computer. The browser’s own recogniser (in Chrome) sends the audio to Google: Settings → Voice.'],
   ['Your files', 'Changes are written to your files as previews to keep or undo. Nothing is committed unless you turn that on, and nothing is pushed.'],
   ['Keys', 'API keys stay in a file on this computer, and go only to their provider.'],

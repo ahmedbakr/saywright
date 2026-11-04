@@ -110,7 +110,7 @@ function FindingCard({ f, a, t, act, index, start, verdict, lang }: { f: ReportF
             {at != null && <span className="tabular text-[11px] text-fg-3">{fmtClock(at - start)}</span>}
             {f.confidence !== 'high' && (
               <span className="text-[11px] text-fg-3">
-                · {f.confidence} {t.confidence}
+                · {t.confidence(f.confidence)}
               </span>
             )}
           </div>

@@ -101,6 +101,17 @@ describe('a Next.js page, pointed at in the studio', () => {
     expect(text).toContain('   4>       <h1>Hello again</h1>');
   });
 
+  it('names what is selected once, though it is pinned too, and the person’s last words with when', async () => {
+    const h1 = { role: 'selection', src: bundleSrc, name: 'h1', label: '', text: 'Hello again', tag: 'h1' };
+    await json('PUT', '/context', { pageUrl: 'http://localhost:3000/users/7', selection: [h1], pins: [{ ...h1, role: 'pin' }], said: 'make this bigger' });
+    const { mcp } = await json('GET', '/ai');
+    const call = await json('POST', '/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'get_context', arguments: {} } }, { authorization: `Bearer ${mcp.token}`, accept: 'application/json, text/event-stream' });
+    const text = call.result.content[0].text as string;
+    expect(text).toContain('1. selected: h1');
+    expect(text).not.toContain('2. pinned');
+    expect(text).toMatch(/Last said in the studio \(\d+ s ago\): “make this bigger”/);
+  });
+
   it('takes a quick edit at that place', async () => {
     const r = await json('POST', '/intent', { text: 'rename this to Welcome back', refs: [{ role: 'this', src: `${PAGE}:4:7`, name: 'h1', label: '', text: 'Hello again', tag: 'h1' }] });
     expect(r.kind).toBe('change');

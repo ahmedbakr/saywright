@@ -79,7 +79,10 @@ describe('quickEdit on the sample shop', () => {
     const apply = srcOf(p, 'src/components/CouponField.tsx', '<Button variant="secondary"');
     expect(quickEdit('why is this here?', [ref('this', apply, 'Button')], p)).toBeNull();
     expect(quickEdit('make this sparkle', [ref('this', apply, 'Button')], p)).toBeNull();
-    expect(quickEdit('make this primary', [], p)).toBeNull();
+    // “This” with nothing pointed at names nothing: said, free, rather than an AI asked to guess.
+    expect(quickEdit('make this primary', [], p)).toMatchObject({ kind: 'message', text: expect.stringMatching(/Point at what you mean/) });
+    // Named in words, the AI can still find it.
+    expect(quickEdit('make the pay button primary', [], p)).toBeNull();
   });
 });
 

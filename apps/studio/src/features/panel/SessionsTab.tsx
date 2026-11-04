@@ -57,7 +57,7 @@ export function SessionsTab() {
                   {busy ? <Spinner className="size-3.5" /> : score != null ? score : <FileText className="size-4 text-fg-3" />}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[12.5px] font-medium text-fg">{m.report?.title || m.name}</span>
+                  <span className="block truncate text-[12.5px] font-medium text-fg">{m.renamed ? m.name : m.report?.title || m.name}</span>
                   <span className="block truncate text-[11.5px] text-fg-3">
                     {m.status === 'recording' ? 'Recording now' : m.status === 'processing' ? m.stage || 'Writing the report' : m.status === 'failed' ? 'Report failed' : `${ago(m.startedAt)} · ${m.endedAt ? fmtDuration(m.endedAt - m.startedAt) : '?'} · ${m.source === 'autopilot' ? `Autopilot · ${found}` : `${m.counts.speech} said · ${found}`}`}
                   </span>

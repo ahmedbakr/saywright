@@ -92,6 +92,8 @@ export interface RecorderState {
   verifying: boolean;
   /** The fingerprint of the test when it last failed: a fix is checked against that test, unchanged. */
   baseline?: string;
+  /** The file last written for this test (kept when a change to it asks for a new one): written again, it is replaced. */
+  written?: { path: string; code: string };
 }
 
 interface RequestState {

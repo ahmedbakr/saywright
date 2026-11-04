@@ -31,6 +31,24 @@ ${c.bold('saywright connect')} <app folder> [options]: connect an app to the stu
   --dry-run              show what would change, change nothing
 `;
 
+/** Where the studio that runs now listens, as it wrote when it started: null when none runs. */
+function runningStudio(dataDir: string): string | null {
+  let saved: { url?: unknown; pid?: unknown };
+  try {
+    saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'server.json'), 'utf8')) as typeof saved;
+  } catch {
+    return null;
+  }
+  if (typeof saved.url !== 'string' || !/^https?:\/\//.test(saved.url) || typeof saved.pid !== 'number') return null;
+  try {
+    process.kill(saved.pid, 0);
+  } catch (err) {
+    // Running, as another user: still the studio's address. Gone: the usual one.
+    if ((err as NodeJS.ErrnoException).code !== 'EPERM') return null;
+  }
+  return saved.url;
+}
+
 export async function connect(argv: string[], ctx: CliContext): Promise<number> {
   // --no-start answers --start, which takes a command: parseArgs only turns --no-… into "off" for switches.
   const noStart = argv.includes('--no-start');
@@ -45,7 +63,8 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
     return values.help ? 0 : 1;
   }
   const dry = !!values['dry-run'];
-  const studio = (values.studio ?? STUDIO_URL).replace(/\/+$/, '');
+  // The studio that runs now, where it said it listens (it may have moved off its usual port), else the usual place.
+  const studio = (values.studio ?? runningStudio(ctx.layout.dataDir) ?? STUDIO_URL).replace(/\/+$/, '');
   const scriptUrl = `${studio}/saywright.js`;
   const root = path.resolve(positionals[0]);
   const pkg = readPkg(root);

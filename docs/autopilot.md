@@ -2,8 +2,8 @@
 
 Autopilot lets the AI use your app the way a tester would: it reads the page, clicks, types and moves around, and notes
 anything that looks wrong. It ends in an ordinary session report, so what it found comes with the same evidence as
-a session you recorded yourself: every step, failed requests, console errors and screenshots, each finding tied to the
-code behind it.
+a session you recorded yourself: every step, what the screen said after it, failed requests and console errors, each
+finding tied to the code behind it. (It doesn't share your screen, so its report has no screenshots or video.)
 
 Use it when you want a second pair of eyes on a flow before you ship, after a big change, or on a part of the app you
 haven't clicked through in a while. It needs an AI connection (Settings → AI).
@@ -27,7 +27,8 @@ highlighted. Press **Stop Autopilot** or <kbd>Esc</kbd> at any time: a stopped r
 When the run ends, its report opens by itself. It is a normal session, listed under **Sessions**:
 
 - **Timeline**: each step in words (*Autopilot: Typed “SAVE20” into “Coupon”*, *Autopilot: Clicked “Apply”*), with
-  why it took it, between the requests, errors and screenshots of the moment.
+  why it took it, between the requests and errors of the moment, and what the screen said after it. A step it was not
+  allowed to take is there too: *Skipped “Pay now” (not allowed)*.
 - **Findings**: what Autopilot saw that looked wrong, each with what it expected and what happened, a severity, and
   the file and line of the element involved (*SAVE20 takes 20% off shipping too — expected a discount of 20% of the
   items only*). Technical problems it ran into, such as failed requests, are found the same way as in any session.

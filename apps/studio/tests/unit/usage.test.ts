@@ -78,6 +78,20 @@ describe('the usage ledger', () => {
     expect(l.totals(NOON + 1000).month.calls).toBe(2);
   });
 
+  it('a call that would go past a stopping budget isn’t sent: its expected cost is counted in', () => {
+    const l = new UsageLedger(dir());
+    l.setBudget({ dailyUsd: 0.5, monthlyUsd: null, mode: 'stop' });
+    l.record(call({ usd: 0.47 }));
+    // $0.47 of $0.50 used: a small call goes ahead, a report of 100,000 tokens doesn't.
+    expect(l.allow(NOON, 0.02).ok).toBe(true);
+    const big = l.allow(NOON, 0.24, 110_000);
+    expect(big.ok).toBe(false);
+    expect(big.status.message).toBe('Used $0.47 of your $0.50 daily budget, and this would take about $0.24 more.');
+    // Only warning: it goes ahead.
+    l.setBudget({ mode: 'warn' });
+    expect(l.allow(NOON, 0.24).ok).toBe(true);
+  });
+
   it('a daily token limit covers plans and local models too', () => {
     const l = new UsageLedger(dir());
     l.setBudget({ dailyUsd: null, monthlyUsd: null, dailyTokens: 10_000, mode: 'stop' });

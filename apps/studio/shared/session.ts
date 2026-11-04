@@ -34,6 +34,8 @@ export interface SessionMeta {
    * it records while the studio is away, and sends it once it is back).
    */
   restarts?: { at: number; resumed: boolean }[];
+  /** The person named it: the list shows that name rather than the report's title. */
+  renamed?: boolean;
   /** The report, in brief: its findings are counted (reports written before they were have no count). */
   report?: { source: 'ai' | 'claude' | 'local'; model?: string; at: number; overall: number; title: string; scores?: ScoreSummary; findings?: number };
 }

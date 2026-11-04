@@ -144,6 +144,19 @@ describe('connect', () => {
     expect(fs.readFileSync(path.join(dir, 'app/layout.tsx'), 'utf8')).toContain(`{process.env.NODE_ENV === 'development' && <script src="http://localhost:7357/saywright.js" defer />}`);
   });
 
+  it('points the script tag at the studio that runs now, wherever it moved, and at the usual place once it stops', async () => {
+    const layout = `export default function Root({ children }) {\n  return <html><body>{children}</body></html>;\n}\n`;
+    const dir = app({ 'app/layout.tsx': layout }, { next: '^16' });
+    // This process stands for a studio that started on 7440, its usual port being taken.
+    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url: 'http://localhost:7440', pid: process.pid }));
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'app/layout.tsx'), 'utf8')).toContain('<script src="http://localhost:7440/saywright.js" defer />');
+    const gone = app({ 'app/layout.tsx': layout }, { next: '^16' });
+    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url: 'http://localhost:7440', pid: 2 ** 22 + 12345 }));
+    expect(await main(['connect', gone], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(gone, 'app/layout.tsx'), 'utf8')).toContain('<script src="http://localhost:7357/saywright.js" defer />');
+  });
+
   it('points a script tag added before, for a studio at another address, at this one', async () => {
     const dir = app({ 'public/index.html': `<html><head>\n<!-- Saywright (development): remove before you deploy -->\n<script src="http://localhost:5173/saywright.js"></script></head></html>` }, { 'react-scripts': '5' });
     expect(await main(['connect', dir], ctx)).toBe(0);

@@ -61,9 +61,9 @@ export class AiService {
     return this.connections.config.effort;
   }
 
-  /** Throws when the budget says stop. */
-  gate(): void {
-    const { ok, status } = this.usage.allow();
+  /** Throws when the budget says stop (with `call`, what the call about to be made is expected to cost, counted in). */
+  gate(call?: { usd: number; tokens: number }): void {
+    const { ok, status } = this.usage.allow(Date.now(), call?.usd ?? 0, call?.tokens ?? 0);
     if (!ok) throw new AgentError(`${status.message ?? 'The AI budget is used up.'} Raise the limit or reset the count in Settings → AI to carry on.`, 'budget');
   }
 
@@ -140,7 +140,13 @@ export class AiService {
     const chat = this.connections.chatModel(c.id, r.model);
     if (!chat) throw new AgentError(`${c.label} can’t be used right now.`, 'other');
     const parts = chat.vision ? req.parts : req.parts.filter((p) => p.type === 'text');
-    return jsonFrom(chat, { ...req, parts }, () => this.gate(), (res, ms) => this.record(c, r.model, res.usage, req.feature, ms, res.usd));
+    // What the call will cost, about: its input as written (a token is about four characters, a picture about 1,600)
+    // and a typical answer. A report can be 100,000 tokens: one that would go past a stopping budget isn't sent.
+    const input = Math.ceil((req.system.length + parts.reduce((n, p) => n + (p.type === 'text' ? p.text.length : 0), 0)) / 4) + parts.filter((p) => p.type === 'image').length * 1600;
+    const output = Math.min(req.maxTokens, 4000);
+    const price = (c.models.find((m) => m.id === r.model) ?? modelInfo(c.kind, r.model))?.price;
+    const call = { usd: costOf(price, { input, output, cacheRead: 0, cacheWrite: 0 }) ?? 0, tokens: input + output };
+    return jsonFrom(chat, { ...req, parts }, () => this.gate(call), (res, ms) => this.record(c, r.model, res.usage, req.feature, ms, res.usd));
   }
 
   /** A tiny real call, to check a connection works (a few tokens). */
