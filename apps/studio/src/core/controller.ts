@@ -13,7 +13,7 @@ import type { ReportFinding, ReportSuggestion, SessionAnalysis, SessionDetail, S
 import { ApiError, api, subscribe } from '@/lib/api';
 import { apps } from './apps';
 import { fileName, plural } from '@/lib/format';
-import { focusOn } from '@shared/text';
+import { focusOn, shouldBe, stateWord } from '@shared/text';
 import { sanitizeSteps } from '@shared/steps';
 import { BridgeClient } from './bridge';
 import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
@@ -1486,14 +1486,13 @@ class Controller {
   private async addExpectation(exp: SpokenExpectation, spoken: Spoken | null): Promise<void> {
     const el = this.targetFrom(spoken);
     if (!el) return this.notify('Point at the element that shows the wrong value while you say it.', 'warn');
-    const loc = await this.bridge.locator(el.id);
-    if (!loc) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
-    const after = await this.checkPlace();
-    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected: exp.expected, actual: loc.locator.text, after, ...fieldOf(el) };
+    const e = await this.checkOf(el, exp.expected);
+    if (!e) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
     play('keep');
-    this.notify(`Check added: ${e.description} should show “${e.expected}”${e.actual ? `, it shows “${focusOn(e.actual, e.expected)?.slice(0, 40)}”` : ''}.`, 'ok', [
+    const now = e.field === 'checked' ? `, it is ${e.actual}` : e.actual ? `, it shows “${focusOn(e.actual, e.expected)?.slice(0, 40)}”` : '';
+    this.notify(`Check added: ${e.description} ${shouldBe(e)}${now}.`, 'ok', [
       { label: 'Generate test', primary: true, run: () => void this.generateTest() },
       { label: 'Add another', run: () => this.dismissIsland() },
     ]);
@@ -1501,12 +1500,29 @@ class Controller {
 
   /** From the Test tab: add a check for the selected element. */
   async addExpectationFor(el: ElementInfo, expected: string): Promise<void> {
-    const loc = await this.bridge.locator(el.id);
-    if (!loc) return this.notify('Couldn’t build a locator for that element.', 'warn');
-    const after = await this.checkPlace();
+    const e = await this.checkOf(el, expected);
+    if (!e) return this.notify('Couldn’t build a locator for that element.', 'warn');
     const r = get().recorder;
-    const e: Expectation = { locator: loc.locator.code, description: loc.locator.description, expected, actual: loc.locator.text, after, ...fieldOf(el) };
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
+  }
+
+  /**
+   * A check that `el` should show `expected`, found by what doesn't change with the fix. Said of a checkbox, a radio
+   * button or a switch (or its label) as “checked” or “not checked”, it checks that; said of an option of a list as
+   * “selected”, that the list has it chosen.
+   */
+  private async checkOf(el: ElementInfo, expected: string): Promise<Expectation | null> {
+    const state = stateWord(expected);
+    const loc = await this.bridge.locator(el.id, { expected, ...(state ? { state: true } : {}) });
+    if (!loc) return null;
+    const after = await this.checkPlace();
+    const base = { locator: loc.locator.code, description: loc.locator.description, after };
+    if (state && loc.checked !== undefined) return { ...base, expected: state, actual: loc.checked ? 'checked' : 'not checked', field: 'checked' };
+    if (state === 'checked' && loc.option && loc.chosen) return { ...base, expected: loc.option, actual: loc.chosen.join(', '), field: 'select' };
+    // Not a checkbox or a list after all: what was said is the text it should show. Found again without the state's help.
+    const plainLoc = state ? await this.bridge.locator(el.id, { expected }) : loc;
+    if (!plainLoc) return null;
+    return { locator: plainLoc.locator.code, description: plainLoc.locator.description, expected, actual: plainLoc.locator.text, after, ...fieldOf(el) };
   }
 
   // ───────────────────────────── from a session report ─────────────────────────────
@@ -1666,7 +1682,8 @@ class Controller {
         steps: r.steps,
         expectations: r.expectations,
       });
-      set({ recorder: { ...get().recorder, spec, run: null } });
+      // A test the studio wrote anew: its first run is judged on its own, not against the one that failed before.
+      set({ recorder: { ...get().recorder, spec, run: null, baseline: undefined } });
       settings().setUi({ panelOpen: true, panelTab: 'test' });
       this.notify(`Test saved to ${spec.path}.`, 'ok', [{ label: 'Run it', primary: true, run: () => void this.runTest() }]);
     } catch (err) {
@@ -1689,15 +1706,18 @@ class Controller {
 
   private async testRun(id: string, path: string): Promise<void> {
     set({ recorder: { ...get().recorder, running: true } });
-    // After a fix, the run is compared with the test that failed: a test changed since then proves nothing.
+    // Once it has failed, every run is compared with the test that failed: a test changed since then (by hand, by an
+    // AI request, by a fix) proves nothing by passing.
     const { verifying, baseline } = get().recorder;
     let res: TestRunResult;
     try {
-      res = await api.post<TestRunResult>('/tests/run', { path, ...(verifying && baseline ? { baseline } : {}) });
+      res = await api.post<TestRunResult>('/tests/run', { path, ...(baseline ? { baseline } : {}) });
     } catch (err) {
       res = { status: 'error', durationMs: 0, message: err instanceof Error ? err.message : String(err) };
     }
-    set({ recorder: { ...get().recorder, running: false, run: { ...res, at: Date.now() } } });
+    // Said once: the next run judges the test as it is now.
+    const changed = !!baseline && !!res.hash && res.hash !== baseline;
+    set({ recorder: { ...get().recorder, running: false, run: { ...res, at: Date.now() }, ...(changed && res.status === 'passed' ? { baseline: undefined } : {}) } });
     if (get().request?.id === id) set({ request: null });
     void this.refreshSummary();
     const details = { label: 'Details', run: () => (settings().setUi({ panelOpen: true, panelTab: 'test' }), this.dismissIsland()) };

@@ -111,6 +111,9 @@ export interface SpokenExpectation {
  * "it ought to say Free". Used in Record mode to turn narration into a check.
  */
 export function parseExpectation(text: string): SpokenExpectation | null {
+  // "this shouldn't be checked", "it should not be ticked": a box that must be left clear.
+  const off = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|ought to|is supposed to)\s*(?:not|n['’]t)\s+be\s+(?:checked|ticked|selected|chosen|on)[.!?]*$/i.exec(text.trim());
+  if (off) return { subject: off[1]?.toLowerCase() ?? null, expected: 'not checked' };
   const m = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|needs to|ought to|is supposed to|has to)\s+(?:be|say|show|read|display|equal|contain|have|include)\s+(.+)$/i.exec(
     text.trim(),
   );

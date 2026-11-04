@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalize, parseClientCommand, parseExpectation } from '../../src/core/commands';
+import { checkNumbers, shouldBe, stateWord } from '../../shared/text';
 
 const cmd = (t: string, failing = false) => parseClientCommand(t, { hasFailingTest: failing });
 
@@ -90,6 +91,31 @@ describe('spoken expectations (Write test mode)', () => {
     expect(parseExpectation('this should show $80.80')).toEqual({ subject: 'this', expected: '$80.80' });
     expect(parseExpectation('the total should be 80.80 dollars')).toEqual({ subject: 'the total', expected: '$80.80' });
     expect(parseExpectation('it should say “Free shipping”')).toEqual({ subject: 'it', expected: 'Free shipping' });
+  });
+
+  it('reads that a box should be checked, or not', () => {
+    expect(parseExpectation('this should be checked')).toEqual({ subject: 'this', expected: 'checked' });
+    expect(parseExpectation('it shouldn’t be ticked')).toEqual({ subject: 'it', expected: 'not checked' });
+    expect(parseExpectation('this should not be selected.')).toEqual({ subject: 'this', expected: 'not checked' });
+    expect(stateWord('checked')).toBe('checked');
+    expect(stateWord('Selected')).toBe('checked');
+    expect(stateWord('on')).toBe('checked');
+    expect(stateWord('unchecked')).toBe('not checked');
+    expect(stateWord('not checked')).toBe('not checked');
+    expect(stateWord('off')).toBe('not checked');
+    // Anything else is the text it should show.
+    expect(stateWord('Checked out')).toBeNull();
+    expect(stateWord('$80.80')).toBeNull();
+  });
+
+  it('numbers checks as the test does, in the order of the steps they follow', () => {
+    // Said in this order: one after step 3, one after step 1, one at the end, one more after step 1.
+    expect(checkNumbers([{ after: 3 }, { after: 1 }, {}, { after: 1 }], 5)).toEqual([3, 1, 4, 2]);
+    expect(checkNumbers([{ after: 9 }, { after: 0 }], 2)).toEqual([2, 1]);
+    expect(shouldBe({ expected: 'checked', field: 'checked' })).toBe('should be checked');
+    expect(shouldBe({ expected: 'not checked', field: 'checked' })).toBe('should not be checked');
+    expect(shouldBe({ expected: 'Express', field: 'select' })).toBe('should have “Express” chosen');
+    expect(shouldBe({ expected: '$80.80' })).toBe('should show “$80.80”');
   });
 
   it('understands amounts said in words', () => {

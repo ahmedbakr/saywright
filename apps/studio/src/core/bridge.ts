@@ -233,9 +233,10 @@ export class BridgeClient {
     return r.ok ? (r.info ?? null) : null;
   }
 
-  async locator(id: number): Promise<{ locator: LocatorInfo; info: ElementInfo } | null> {
-    const r = await this.request({ type: 'locator', reqId: 0, id });
-    return r.ok && r.locator && r.info ? { locator: r.locator, info: r.info } : null;
+  /** `check`: for a check that it should show `expected` (or, with `state`, be checked or chosen): see the bridge. */
+  async locator(id: number, check?: { expected: string; state?: boolean }): Promise<{ locator: LocatorInfo; info: ElementInfo; checked?: boolean; option?: string; chosen?: string[] } | null> {
+    const r = await this.request({ type: 'locator', reqId: 0, id, ...(check ? { check } : {}) });
+    return r.ok && r.locator && r.info ? { locator: r.locator, info: r.info, checked: r.checked, option: r.option, chosen: r.chosen } : null;
   }
 
   /** Out of, into, after or before an element. Null when there is nowhere to go (or the element is gone). */

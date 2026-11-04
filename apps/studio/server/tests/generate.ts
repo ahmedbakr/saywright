@@ -11,6 +11,7 @@ import { jsComment, jsString as q, maskSecrets, secretEnvName, SECRET_ENV_PREFIX
 import type { Expectation, RecordedStep } from '../../shared/api.ts';
 export { sanitizeSteps } from '../../shared/steps.ts';
 import { BRAND } from '../../shared/brand.ts';
+import { shouldBe } from '../../shared/text.ts';
 import type { Project } from '../project.ts';
 
 interface GenerateInput {
@@ -25,6 +26,11 @@ const CALLS = new Set(['getByRole', 'getByText', 'getByTestId', 'getByLabel', 'g
 /** A string as jsString writes it: single-quoted, every quote and line break escaped. */
 const STRING = /^'(?:[^'\\\r\n\u2028\u2029]|\\[^\r\n\u2028\u2029])*'/;
 const LITERAL = /^(?:-?\d+(?:\.\d+)?|true|false)/;
+/**
+ * A regular expression literal as the bridge writes one, for a name or a text with its numbers left open
+ * (`/^Pay \$\d[\d.,]* and subscribe$/`): one token as JavaScript reads it, so nothing in it runs either.
+ */
+const REGEX = /^\/(?![*/])(?:[^/\\[\r\n\u2028\u2029]|\\[^\r\n\u2028\u2029]|\[(?:[^\]\\\r\n\u2028\u2029]|\\[^\r\n\u2028\u2029])*\])+\/[imsu]*/;
 
 /**
  * Locators arrive as Playwright expressions built by the bridge, on one line; accept only that shape: `page`, then
@@ -48,7 +54,7 @@ function isLocator(code: string): boolean {
   };
   const value = (flat: boolean): boolean => {
     blank();
-    if (token(STRING) !== null || token(LITERAL) !== null) return true;
+    if (token(STRING) !== null || token(LITERAL) !== null || token(REGEX) !== null) return true;
     if (flat || code[i] !== '{') return false;
     i++;
     for (;;) {
@@ -97,8 +103,10 @@ function testTitle(input: GenerateInput): string {
   if (input.name?.trim()) return input.name.trim();
   const e = input.expectations[0];
   if (!e) return 'narrated flow';
-  return `${e.description.replace(/^the /i, '')} should show ${e.expected}`;
+  return `${e.description.replace(/^the /i, '')} ${shouldBe(e, plain)}`;
 }
+
+const plain = (s: string) => s;
 
 /** A secret's name as the test reads it: capitals, digits and underscores (PASSWORD, CARD_NUMBER). */
 const secretKey = (name: string) => secretEnvName(name).slice(SECRET_ENV_PREFIX.length);
@@ -189,11 +197,15 @@ function optionsCode(step: RecordedStep): string {
   return `[${Array.from({ length: count }, (_, i) => one(i)).join(', ')}]`;
 }
 
-/** A check, as code: text for most things, the value for a field, the option chosen for a list. */
+/**
+ * A check, as code: text for most things, the value for a field, whether a checkbox is checked, the options chosen in
+ * a list (one of them says it, however many are chosen).
+ */
 function checkCode(e: Expectation): string {
   const loc = safeLocator(e.locator);
+  if (e.field === 'checked') return `await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`;
   if (e.field === 'value') return `await expect(${loc}).toHaveValue(new RegExp(${q(escapeRe(e.expected))}));`;
-  if (e.field === 'select') return `await expect(${loc}.locator('option:checked')).toContainText(${q(e.expected)});`;
+  if (e.field === 'select') return `await expect(${loc}.locator('option:checked')).toContainText([${q(e.expected)}]);`;
   return `await expect(${loc}).toContainText(${q(e.expected)});`;
 }
 
@@ -234,8 +246,9 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
   }
   // What the page showed goes into the file only masked: a key or a card number on screen is no part of a test.
   const check = (e: Expectation) => {
-    step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} should show ${e.expected}`), [
-      `// ${jsComment(maskSecrets(`You said ${e.description} should show ${e.expected} (it showed ${e.actual || 'nothing'}).`))}`,
+    const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : `it showed ${e.actual || 'nothing'}`;
+    step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} ${shouldBe(e, plain)}`), [
+      `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(e, plain)} (${was}).`))}`,
       checkCode(e),
     ]);
   };

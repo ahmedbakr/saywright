@@ -217,7 +217,12 @@ export type StudioToBridge = Base &
     /** Sent every animation frame while pointing. `track` lists ids whose rects should be reported. */
     | { type: 'probe'; seq: number; x: number | null; y: number | null; radius: number; deep: boolean; track: number[]; sticky?: boolean }
     | { type: 'describe'; reqId: number; id: number }
-    | { type: 'locator'; reqId: number; id: number }
+    /**
+     * `check`: the locator is for a check that the element should show `expected`, so it isn't found by words the fix
+     * changes; with `state`, of whether it is checked or chosen, so it is the checkbox, radio button or list it belongs
+     * to (its label, an option of it, pointed at).
+     */
+    | { type: 'locator'; reqId: number; id: number; check?: { expected: string; state?: boolean } }
     /** Move from an element: out, in, to the next or previous one; or to the nearest one called `what` ("card"). `id` 0: from nothing. */
     | { type: 'step'; reqId: number; id: number; to: 'parent' | 'child' | 'next' | 'prev' }
     | { type: 'find'; reqId: number; id: number; what: string; where: 'any' | 'out' | 'in' }
@@ -276,6 +281,11 @@ export type BridgeToStudio = Base &
         locator?: LocatorInfo | null;
         /** What an element shows (replay, with `read`). */
         text?: string;
+        /** A state check's control: whether it is checked now. */
+        checked?: boolean;
+        /** A state check on an option of a list: what that option says; and what the options chosen now say. */
+        option?: string;
+        chosen?: string[];
         /** A page review's results. */
         review?: PageReview;
         /** What Autopilot sees of the page. */

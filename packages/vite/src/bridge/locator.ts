@@ -4,12 +4,60 @@
  * written in the code: that is only known to the dev server, and moves with every edit above it.
  */
 import { jsString as q, type LocatorInfo } from '../protocol';
-import { accessibleName, collapse, isField, labelText, roleOf, visibleText } from './dom';
+import { accessibleName, collapse, isField, labelText, NAMED_INSIDE, roleOf, visibleText } from './dom';
 
 /** Values like "$78.40", "12", "−$19.60" change when the code changes, so they make poor locators. */
 function looksVolatile(s: string): boolean {
   return /^[\s$€£¥+\-−–.,:%0-9()]*$/.test(s) || /\d/.test(s) && s.length <= 12;
 }
+
+const squash = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '').toLowerCase();
+
+/** A number as a page shows it: 12, 1,234.50, 3.5. */
+const NUMBER = /\d[\d.,]*/g;
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+
+/** Words to find an element by, with its numbers left open: as a regular expression, and as a test writes it. */
+export interface Pattern {
+  re: RegExp;
+  code: string;
+  /** Its longest fixed part, squashed (see squash): what an element's text must have for it to match. */
+  hint: string;
+}
+
+/**
+ * A name or a text with numbers in it ("Pay $91.57 and subscribe", "Like this portfolio (1)") as a pattern with the
+ * numbers left open, so a fix that changes a price or a count still finds it. Null without numbers, or when only
+ * its numbers say what it is.
+ */
+export function numbersOpen(s: string): Pattern | null {
+  if (!/\d/.test(s) || s.length > 60 || s.endsWith('…')) return null;
+  const parts = s.split(NUMBER);
+  if (parts.join('').replace(/[^\p{L}]+/gu, '').length < 3) return null;
+  const source = `^${parts.map(escapeRe).join('\\d[\\d.,]*')}$`;
+  const hint = parts.map(squash).sort((a, b) => b.length - a.length)[0] ?? '';
+  return { re: new RegExp(source), code: `/${source}/`, hint };
+}
+
+/**
+ * For a check, whether a way of finding the element by its words (a name, a text) still finds it once the fix makes
+ * it show what it should: else the test can't pass however right the fix is ("Like (1)" should show "Like (2)").
+ */
+type Keep = (words: string | Pattern) => boolean;
+const always: Keep = () => true;
+
+/** What the element will show: the expected value in place of the part of its text shaped like it, else that value alone. */
+function keeper(el: Element, expected: string): Keep {
+  const now = visibleText(el);
+  const shape = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\d+/g, '\\d+');
+  const part = /\d/.test(expected) && shape !== expected ? new RegExp(shape).exec(now)?.[0] : undefined;
+  // Already showing it (a check that passes now, to keep it so): it stays as it is.
+  const then = now.toLowerCase().includes(expected.toLowerCase()) ? now : part ? now.replace(part, () => expected) : expected;
+  return (w) => (typeof w === 'string' ? then.toLowerCase().includes(w.toLowerCase()) : w.re.test(then));
+}
+
+/** Whether its name is its own text (a button's words), not given apart from it (a label, aria-label). */
+const namedByText = (el: Element) => !el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby') && !isField(el) && !(el instanceof HTMLImageElement);
 
 export const ROLE_SELECTORS: Record<string, string> = {
   button: 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]',
@@ -55,8 +103,6 @@ export function roleFor(el: Element): string | null {
   }
 }
 
-const squash = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '').toLowerCase();
-
 /** Playwright's text matching: case-insensitive and partial (spaces collapsed), or exact. */
 function sameWords(actual: string, wanted: string, exact: boolean): boolean {
   const a = actual.replace(/\s+/g, ' ').trim();
@@ -65,19 +111,19 @@ function sameWords(actual: string, wanted: string, exact: boolean): boolean {
 }
 
 /** The elements of this role (with this name, when given) in `scope`, as getByRole matches them. */
-function byRole(scope: ParentNode, role: string, name: string | null, exact: boolean, limit = Infinity): Element[] {
+function byRole(scope: ParentNode, role: string, name: string | Pattern | null, exact: boolean, limit = Infinity): Element[] {
   const sel = ROLE_SELECTORS[role] ?? `[role="${role}"]`;
-  const needle = squash(name);
+  const needle = name === null ? '' : typeof name === 'string' ? squash(name) : name.hint;
   const out: Element[] = [];
   const all = scope.querySelectorAll(sel);
   for (let i = 0; i < all.length && out.length < limit; i++) {
     const el = all[i];
-    // The name comes from these (or a label, for fields): if none holds the words, it can't match. Costs nothing on a page of thousands.
-    if (name !== null && !isField(el) && !(el instanceof HTMLImageElement) && !el.hasAttribute('aria-labelledby') && !squash(el.textContent).includes(needle) && !squash(el.getAttribute('aria-label')).includes(needle) && !squash(el.getAttribute('title')).includes(needle)) continue;
+    // The name comes from these (or a label, for fields; an image's alt or a part's label inside): if none holds the words, it can't match. Costs nothing on a page of thousands.
+    if (name !== null && !isField(el) && !(el instanceof HTMLImageElement) && !el.hasAttribute('aria-labelledby') && !squash(el.textContent).includes(needle) && !squash(el.getAttribute('aria-label')).includes(needle) && !squash(el.getAttribute('title')).includes(needle) && !el.querySelector(NAMED_INSIDE)) continue;
     if (roleFor(el) !== role) continue;
     if (name !== null) {
       const an = accessibleName(el);
-      if (!(exact ? an === name : an.toLowerCase().includes(name.toLowerCase()))) continue;
+      if (!(typeof name !== 'string' ? name.re.test(an) : exact ? an === name : an.toLowerCase().includes(name.toLowerCase()))) continue;
     }
     out.push(el);
   }
@@ -90,8 +136,8 @@ function byRole(scope: ParentNode, role: string, name: string | null, exact: boo
  */
 const counted = new Map<string, { at: number; n: number }>();
 
-function countByRoleAndName(role: string, name: string, exact: boolean): number {
-  const key = `${role}\n${exact ? 1 : 0}\n${name}`;
+function countByRoleAndName(role: string, name: string | Pattern, exact: boolean): number {
+  const key = `${role}\n${exact ? 1 : 0}\n${typeof name === 'string' ? name : name.code}`;
   const now = performance.now();
   const hit = counted.get(key);
   if (hit && now - hit.at < 1000) return hit.n;
@@ -101,13 +147,15 @@ function countByRoleAndName(role: string, name: string, exact: boolean): number 
   return n;
 }
 
-/** Innermost elements in `scope` whose own text is exactly `text`. */
-function byText(scope: ParentNode, text: string): Element[] {
+/** Innermost elements in `scope` whose own text is exactly `text` (or matches the pattern). */
+function byText(scope: ParentNode, text: string | Pattern): Element[] {
   const out: Element[] = [];
+  const is = typeof text === 'string' ? (t: string) => t === text : (t: string) => text.re.test(t);
   const all = scope.querySelectorAll('*');
   for (let i = 0; i < all.length; i++) {
     const el = all[i] as HTMLElement;
-    if (collapse(el.innerText ?? '', 200) === text && !Array.from(el.children).some((c) => collapse((c as HTMLElement).innerText ?? '', 200) === text)) out.push(el);
+    if (typeof text !== 'string' && !squash(el.textContent).includes(text.hint)) continue;
+    if (is(collapse(el.innerText ?? '', 200)) && !Array.from(el.children).some((c) => is(collapse((c as HTMLElement).innerText ?? '', 200)))) out.push(el);
   }
   return out;
 }
@@ -134,15 +182,23 @@ interface Inner {
   count(scope: ParentNode): number;
 }
 
-function inners(el: Element): Inner[] {
+/** A tag as a person names what it holds. */
+const TAG_WORDS: Record<string, string> = { td: 'cell', th: 'heading', dd: 'value', li: 'item', span: 'text', p: 'text', strong: 'text', b: 'text', div: 'text', output: 'value', time: 'time', img: 'image' };
+
+function inners(el: Element, keep: Keep): Inner[] {
   const out: Inner[] = [];
   const testId = el.getAttribute('data-testid');
   if (testId) out.push({ code: `getByTestId(${q(testId)})`, words: testId, count: (s) => s.querySelectorAll(`[data-testid="${CSS.escape(testId)}"]`).length });
   const role = roleFor(el);
   const name = named(role) ? accessibleName(el) : '';
-  if (role && name && !looksVolatile(name) && name.length <= 60) {
-    out.push({ code: `getByRole(${q(role)}, { name: ${q(name)} })`, words: `“${name}”`, count: (s) => byRole(s, role, name, false, 2).length });
-    out.push({ code: `getByRole(${q(role)}, { name: ${q(name)}, exact: true })`, words: `“${name}”`, count: (s) => byRole(s, role, name, true, 2).length });
+  const byName = !namedByText(el) || keep === always;
+  if (role && name && name.length <= 60) {
+    const open = numbersOpen(name);
+    if (open && (byName || keep(open))) out.push({ code: `getByRole(${q(role)}, { name: ${open.code} })`, words: `“${name}”`, count: (s) => byRole(s, role, open, false, 2).length });
+    if (!looksVolatile(name) && (byName || keep(name))) {
+      out.push({ code: `getByRole(${q(role)}, { name: ${q(name)} })`, words: `“${name}”`, count: (s) => byRole(s, role, name, false, 2).length });
+      out.push({ code: `getByRole(${q(role)}, { name: ${q(name)}, exact: true })`, words: `“${name}”`, count: (s) => byRole(s, role, name, true, 2).length });
+    }
   }
   if (isField(el)) {
     const label = labelText(el);
@@ -151,10 +207,16 @@ function inners(el: Element): Inner[] {
     if (ph) out.push({ code: `getByPlaceholder(${q(ph)})`, words: `the “${ph}” field`, count: (s) => s.querySelectorAll(`[placeholder="${CSS.escape(ph)}"]`).length });
   }
   const text = visibleText(el);
-  if (!isField(el) && text && !looksVolatile(text) && text.length <= 40) out.push({ code: `getByText(${q(text)}, { exact: true })`, words: `“${text}”`, count: (s) => byText(s, text).length });
+  if (!isField(el) && text && text.length <= 40) {
+    const open = numbersOpen(text);
+    if (open && keep(open)) out.push({ code: `getByText(${open.code})`, words: `“${text}”`, count: (s) => byText(s, open).length });
+    if (!looksVolatile(text) && keep(text)) out.push({ code: `getByText(${q(text)}, { exact: true })`, words: `“${text}”`, count: (s) => byText(s, text).length });
+  }
   const tag = el.tagName.toLowerCase();
   const cls = namingClass(el);
   if (cls) out.push({ code: `locator(${q(`${tag}.${cls}`)})`, words: `the ${cls.replace(/[-_]/g, ' ')}`, count: (s) => s.querySelectorAll(`${tag}.${CSS.escape(cls)}`).length });
+  // Last, its kind alone, for the one of its kind in its card or row (the cell of a “You pay” row that holds the amount).
+  out.push({ code: `locator(${q(tag)})`, words: `the ${TAG_WORDS[tag] ?? tag}`, count: (s) => s.querySelectorAll(tag).length });
   return out;
 }
 
@@ -200,13 +262,13 @@ const SCOPE_LEVELS = 6;
  * holds only it and that its title tells apart from the others ("Celadon mug, 12 oz"). A card or a row is found by
  * its own title the same way.
  */
-function scoped(el: Element): LocatorInfo | null {
-  const ways = inners(el);
+function scoped(el: Element, keep: Keep): LocatorInfo | null {
+  const ways = inners(el, keep);
   const text = visibleText(el);
   // The element itself is the card or the row.
   const own = named(roleFor(el)) ? null : boxOf(el);
   const ownTitle = own && titleOf(el, null);
-  if (own && ownTitle && own.all().filter((c) => matchesText(c, ownTitle)).length === 1) {
+  if (own && ownTitle && keep(ownTitle) && own.all().filter((c) => matchesText(c, ownTitle)).length === 1) {
     return { code: `${own.code}.filter({ hasText: ${q(ownTitle)} })`, description: `“${ownTitle}”`, text, within: ownTitle };
   }
   let node = el.parentElement;
@@ -231,10 +293,10 @@ function matchesText(el: Element, text: string): boolean {
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
 
 /** The last resort: which of the same it is, counting from the top of the page. */
-function nth(el: Element): LocatorInfo {
+function nth(el: Element, keep: Keep): LocatorInfo {
   const text = visibleText(el);
   const role = roleFor(el);
-  const name = named(role) ? accessibleName(el) : '';
+  const name = named(role) && (!namedByText(el) || keep(accessibleName(el))) ? accessibleName(el) : '';
   const tag = el.tagName.toLowerCase();
   const cls = namingClass(el);
   const pick = (code: string, all: Element[], words: string): LocatorInfo => {
@@ -263,8 +325,11 @@ export function locatorFromInfo(role: string | null, label: string, text: string
  * exact text; then the same inside the card or row that tells it apart; and
  * last, which of the same it is.
  */
-export function buildLocator(el: Element, opts: { cheap?: boolean } = {}): LocatorInfo {
+export function buildLocator(el: Element, opts: { cheap?: boolean; check?: string } = {}): LocatorInfo {
   const text = visibleText(el);
+  // A check reads what the element shows: it isn't found by words the fix will change.
+  const keep = opts.check !== undefined ? keeper(el, opts.check) : always;
+  const byName = !namedByText(el) || keep === always;
 
   const testId = el.getAttribute('data-testid');
   if (testId && document.querySelectorAll(`[data-testid="${CSS.escape(testId)}"]`).length === 1) {
@@ -276,24 +341,38 @@ export function buildLocator(el: Element, opts: { cheap?: boolean } = {}): Locat
   const role = roleFor(el);
   if (named(role)) {
     const name = accessibleName(el);
-    if (name && !looksVolatile(name) && name.length <= 60) {
-      if (countByRoleAndName(role, name, false) === 1) {
-        return { code: `page.getByRole(${q(role)}, { name: ${q(name)} })`, description: describeRole(role, name), text };
+    if (name && name.length <= 60) {
+      // A price or a count in its name is left open: it still finds it once they change.
+      const open = numbersOpen(name);
+      if (open && (byName || keep(open)) && countByRoleAndName(role, open, true) === 1) {
+        return { code: `page.getByRole(${q(role)}, { name: ${open.code} })`, description: describeRole(role, name), text };
       }
-      if (countByRoleAndName(role, name, true) === 1) {
-        return { code: `page.getByRole(${q(role)}, { name: ${q(name)}, exact: true })`, description: describeRole(role, name), text };
+      if (!looksVolatile(name) && (byName || keep(name))) {
+        if (countByRoleAndName(role, name, false) === 1) {
+          return { code: `page.getByRole(${q(role)}, { name: ${q(name)} })`, description: describeRole(role, name), text };
+        }
+        if (countByRoleAndName(role, name, true) === 1) {
+          return { code: `page.getByRole(${q(role)}, { name: ${q(name)}, exact: true })`, description: describeRole(role, name), text };
+        }
+      }
+    } else if (name && byName) {
+      // A long name (a link that is a whole sentence) by its first words, when they tell it apart.
+      const start = name.slice(0, 50).replace(/\s+\S*$/, '');
+      if (start.length >= 12 && !looksVolatile(start) && countByRoleAndName(role, start, false) === 1) {
+        return { code: `page.getByRole(${q(role)}, { name: ${q(start)} })`, description: describeRole(role, `${start}…`), text };
       }
     }
   }
 
   if (isField(el)) {
     // Counted as Playwright finds them: a label or placeholder matches any that contains it (“Password” finds “Show
-    // password” too), unless it is exact.
-    const label = labelText(el);
+    // password” too), unless it is exact. A long label is found by its beginning.
+    const full = labelText(el);
+    const label = full.replace(/…$/, '');
     if (label) {
       const by = (exact: boolean) => Array.from(document.querySelectorAll('input, textarea, select, [aria-label]')).filter((f) => sameWords(labelText(f) || f.getAttribute('aria-label') || '', label, exact)).length;
       if (by(false) === 1) return { code: `page.getByLabel(${q(label)})`, description: `the “${label}” field`, text };
-      if (by(true) === 1) return { code: `page.getByLabel(${q(label)}, { exact: true })`, description: `the “${label}” field`, text };
+      if (label === full && by(true) === 1) return { code: `page.getByLabel(${q(label)}, { exact: true })`, description: `the “${label}” field`, text };
     }
     const ph = el.getAttribute('placeholder');
     if (ph) {
@@ -305,9 +384,11 @@ export function buildLocator(el: Element, opts: { cheap?: boolean } = {}): Locat
 
   // Counting matches by text walks the whole page: skipped when the caller can't afford it on a large page.
   const affordable = !opts.cheap || document.getElementsByTagName('*').length < 2500;
-  if (affordable && text && !looksVolatile(text) && text.length <= 40 && byText(document.body, text).length === 1) {
-    return { code: `page.getByText(${q(text)}, { exact: true })`, description: `“${text}”`, text };
+  if (affordable && text && text.length <= 40 && !isField(el)) {
+    const open = numbersOpen(text);
+    if (open && keep(open) && byText(document.body, open).length === 1) return { code: `page.getByText(${open.code})`, description: `“${text}”`, text };
+    if (!looksVolatile(text) && keep(text) && byText(document.body, text).length === 1) return { code: `page.getByText(${q(text)}, { exact: true })`, description: `“${text}”`, text };
   }
 
-  return scoped(el) ?? nth(el);
+  return scoped(el, keep) ?? nth(el, keep);
 }

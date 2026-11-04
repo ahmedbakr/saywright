@@ -227,6 +227,35 @@ function labelWords(label: Element): string {
   return out;
 }
 
+/** Roles of a control that is checked or not, as Playwright's toBeChecked reads it. */
+const TOGGLE_ROLES = new Set(['checkbox', 'radio', 'switch', 'menuitemcheckbox', 'menuitemradio']);
+
+const isToggle = (el: Element) => (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')) || TOGGLE_ROLES.has(el.getAttribute('role') ?? '');
+
+/**
+ * The control whose state something pointed at stands for: an option's list, a label's checkbox, the checkbox or
+ * switch it is part of; else itself.
+ */
+export function controlOf(el: Element): Element {
+  if (el instanceof HTMLOptionElement || el instanceof HTMLOptGroupElement) return el.closest('select') ?? el;
+  if (isToggle(el) || el instanceof HTMLSelectElement) return el;
+  const label = el.closest('label');
+  const labelled = label?.control ?? label?.querySelector('input, select');
+  if (labelled && (isToggle(labelled) || labelled instanceof HTMLSelectElement)) return labelled;
+  return el.closest('[role="checkbox"], [role="radio"], [role="switch"], [role="menuitemcheckbox"], [role="menuitemradio"]') ?? el;
+}
+
+/** A state check's facts: whether the control is checked; for an option of a list, what it says and what is chosen now. */
+export function stateOf(pointed: Element, control: Element): { checked?: boolean; option?: string; chosen?: string[] } {
+  if (control instanceof HTMLSelectElement) {
+    const option = pointed instanceof HTMLOptionElement ? collapse(pointed.label || pointed.text, 80) : undefined;
+    return { ...(option ? { option } : {}), chosen: Array.from(control.selectedOptions, (o) => collapse(o.label || o.text, 80)) };
+  }
+  if (control instanceof HTMLInputElement && isToggle(control)) return { checked: control.checked };
+  if (isToggle(control)) return { checked: control.getAttribute('aria-checked') === 'true' };
+  return {};
+}
+
 /** Associated <label> text for a form field. */
 export function labelText(el: Element): string {
   if (!isField(el)) return '';
@@ -239,17 +268,52 @@ export function labelText(el: Element): string {
   return collapse(parts.join(' '), 60);
 }
 
-/** A practical approximation of the accessible name (enough for stable test locators). */
+/** What inside an element names it besides its text: an image's alt, an icon's label. */
+export const NAMED_INSIDE = 'img[alt], [aria-label]';
+
+const NAME_MAX = 200;
+
+/**
+ * A practical approximation of the accessible name (enough for stable test locators). Whole up to 200 characters:
+ * a locator is never written from a cut one (it would find nothing).
+ */
 export function accessibleName(el: Element): string {
   const aria = el.getAttribute('aria-label');
-  if (aria) return collapse(aria, 60);
+  if (aria) return collapse(aria, NAME_MAX);
   const labelledBy = el.getAttribute('aria-labelledby');
-  if (labelledBy) return collapse(textOfIds(labelledBy), 60);
-  if (isField(el)) return labelText(el) || collapse(el.getAttribute('title'), 60);
-  if (el instanceof HTMLImageElement) return collapse(el.alt, 60);
+  if (labelledBy) return collapse(textOfIds(labelledBy), NAME_MAX);
+  if (isField(el)) return labelText(el) || collapse(el.getAttribute('title'), NAME_MAX);
+  if (el instanceof HTMLImageElement) return collapse(el.alt, NAME_MAX);
   const title = el.getAttribute('title');
-  const text = collapse((el as HTMLElement).innerText ?? el.textContent, 60);
-  return text || collapse(title, 60);
+  const text = collapse(el.querySelector(NAMED_INSIDE) ? contentName(el) : ((el as HTMLElement).innerText ?? el.textContent), NAME_MAX);
+  return text || collapse(title, NAME_MAX);
+}
+
+/**
+ * An element's name from what is inside it, as Playwright and screen readers read it: text, an image's alt, a part's
+ * own label; hidden parts left out, a block on its own words. A link that is only a picture is named by the picture.
+ */
+function contentName(el: Element): string {
+  let out = '';
+  const walk = (n: Node) => {
+    if (n.nodeType === Node.TEXT_NODE) {
+      out += n.textContent ?? '';
+      return;
+    }
+    if (!(n instanceof Element) || n.getAttribute('aria-hidden') === 'true' || n.hasAttribute('hidden')) return;
+    const display = getComputedStyle(n).display;
+    if (display === 'none') return;
+    const pad = display !== 'inline' ? ' ' : '';
+    const own = n.getAttribute('aria-label') || (n instanceof HTMLImageElement ? n.alt : null);
+    if (own !== null && own !== '') out += `${pad}${own}${pad}`;
+    else if (!(n instanceof HTMLImageElement)) {
+      out += pad;
+      for (const c of Array.from(n.childNodes)) walk(c);
+      out += pad;
+    }
+  };
+  for (const c of Array.from(el.childNodes)) walk(c);
+  return out;
 }
 
 export function visibleText(el: Element): string {

@@ -142,8 +142,11 @@ export interface Expectation {
   actual: string;
   /** How many steps came before it: it is checked after them. Without it (an older studio), after the last step. */
   after?: number;
-  /** What it was said about is a field (its value is checked) or a list (the option chosen is). */
-  field?: 'value' | 'select';
+  /**
+   * What it was said about is a field (its value is checked), a list (the option chosen is: `expected` is what that
+   * option says), or a checkbox, radio button or switch (whether it is checked: `expected` is “checked” or “not checked”).
+   */
+  field?: 'value' | 'select' | 'checked';
 }
 
 /** One step or check of a generated test, as a run reported it. */

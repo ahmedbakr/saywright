@@ -7,7 +7,7 @@ import { controller } from '@/core/controller';
 import { useStudio } from '@/core/store';
 import { cn } from '@/lib/cn';
 import { shortUrl } from '@/lib/format';
-import { focusOn } from '@shared/text';
+import { checkNumbers, focusOn, shouldBe } from '@shared/text';
 import { CodeBlock } from './DiffView';
 import { useAiName } from '@/lib/ai-name';
 import { api } from '@/lib/api';
@@ -23,6 +23,7 @@ export function TestTab() {
   const [expected, setExpected] = useState('');
   const recording = mode === 'record';
   const empty = !rec.steps.length && !rec.expectations.length;
+  const numbers = checkNumbers(rec.expectations, rec.steps.length);
 
   return (
     <div className="space-y-4 p-3">
@@ -98,14 +99,21 @@ export function TestTab() {
           <SectionTitle>Checks</SectionTitle>
           <div className="space-y-1">
             {rec.expectations.map((e, i) => {
-              const passed = rec.run?.status === 'passed';
-              const failed = rec.run?.status === 'failed';
+              // How this check did in the last run, by its number in the test: passed, failed, or never got to.
+              const ran = rec.run?.steps?.find((x) => x.check && x.title.startsWith(`[check ${numbers[i]}]`));
+              const passed = ran ? ran.ok : rec.run?.status === 'passed';
+              const failed = ran ? !ran.ok : false;
+              const skipped = !!rec.run && rec.run.status !== 'passed' && !ran && !!rec.run.steps?.length;
+              const what = shouldBe(e, (x) => x);
               return (
                 <div key={i} className="group flex items-start gap-2 rounded-[8px] bg-raised px-2 py-1.5 text-[12.5px] ring-1 ring-inset ring-line">
-                  <span className="mt-0.5 [&_svg]:size-[14px]">{passed ? <CircleCheck className="text-ok" /> : failed ? <CircleX className="text-bad" /> : <CircleCheck className="text-fg-3" />}</span>
+                  <span className="mt-0.5 [&_svg]:size-[14px]" title={skipped ? 'The last run didn’t get to this check.' : undefined}>
+                    {passed ? <CircleCheck className="text-ok" /> : failed ? <CircleX className="text-bad" /> : <CircleCheck className="text-fg-3" />}
+                  </span>
                   <span className="min-w-0 flex-1 text-fg-2">
-                    <span className="text-fg">{e.description}</span> should show <span className="font-mono text-human-fg">“{e.expected}”</span>
-                    {e.actual && <span className="block truncate text-[11.5px] text-fg-3">It showed “{focusOn(e.actual, e.expected)}”</span>}
+                    <span className="text-fg">{e.description}</span> {e.field === 'checked' ? what : <>{what.replace(/“.*”.*$/, '')}<span className="font-mono text-human-fg">“{e.expected}”</span>{e.field === 'select' ? ' chosen' : ''}</>}
+                    {e.actual && <span className="block truncate text-[11.5px] text-fg-3">{e.field === 'checked' ? `It was ${e.actual}` : e.field === 'select' ? `Chosen: ${e.actual}` : `It showed “${focusOn(e.actual, e.expected)}”`}</span>}
+                    {skipped && <span className="block text-[11.5px] text-fg-3">The last run didn’t get to it.</span>}
                   </span>
                   <button className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeExpectation(i)} aria-label="Remove check">
                     <Trash2 className="size-3.5" />

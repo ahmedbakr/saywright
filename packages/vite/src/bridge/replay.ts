@@ -19,7 +19,8 @@ export interface Like {
   shape?: string;
 }
 
-type Arg = string | number | boolean | Record<string, string | number | boolean>;
+type Value = string | number | boolean | RegExp;
+type Arg = Value | Record<string, Value>;
 export interface Call {
   name: string;
   args: Arg[];
@@ -60,9 +61,22 @@ export function parseLocator(code: string): Call[] | null {
     i++;
     return out;
   };
+  /** A regular expression literal, as the recorder writes one for a name with its numbers left open: `/^Pay \$\d[\d.,]*$/`. */
+  const regex = (): RegExp | null => {
+    const m = /^\/((?:[^/\\[\r\n]|\\.|\[(?:[^\]\\\r\n]|\\.)*\])+)\/([dgimsuy]*)/.exec(s.slice(i));
+    if (!m) return null;
+    try {
+      const re = new RegExp(m[1], m[2].replace(/[gy]/g, ''));
+      i += m[0].length;
+      return re;
+    } catch {
+      return null;
+    }
+  };
   const value = (): Arg | null => {
     ws();
     if (s[i] === "'" || s[i] === '"') return str();
+    if (s[i] === '/') return regex();
     const num = /^-?\d+(?:\.\d+)?/.exec(s.slice(i));
     if (num) {
       i += num[0].length;
@@ -76,7 +90,7 @@ export function parseLocator(code: string): Call[] | null {
     }
     if (s[i] === '{') {
       i++;
-      const obj: Record<string, string | number | boolean> = {};
+      const obj: Record<string, Value> = {};
       for (;;) {
         ws();
         if (s[i] === '}') {
@@ -88,7 +102,7 @@ export function parseLocator(code: string): Call[] | null {
         if (!key || s[i] !== ':') return null;
         i++;
         const v = value();
-        if (v === null || typeof v === 'object') return null;
+        if (v === null || (typeof v === 'object' && !(v instanceof RegExp))) return null;
         obj[key] = v;
         ws();
         if (s[i] === ',') i++;
@@ -129,23 +143,28 @@ export function parseLocator(code: string): Call[] | null {
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-/** Playwright's matching: case-insensitive and partial by default, exact (case and all) when asked. */
-function matches(actual: string, wanted: string, exact: boolean): boolean {
+/** Playwright's matching: case-insensitive and partial by default, exact (case and all) when asked; a pattern as it is. */
+function matches(actual: string, wanted: string | RegExp, exact: boolean): boolean {
   const a = norm(actual);
+  if (wanted instanceof RegExp) return wanted.test(a);
   const w = norm(wanted);
   return exact ? a === w : a.toLowerCase().includes(w.toLowerCase());
 }
 
+/** A pattern loosened to find what holds a match somewhere in its text (`^…$` let go). */
+const loose = (re: RegExp) => new RegExp(re.source.replace(/^\^/, '').replace(/(?<!\\)\$$/, ''), re.flags);
+
 /** Innermost elements whose text is (or, not exact, contains) `text`. */
-function byText(scope: ParentNode, text: string, exact: boolean): Element[] {
-  const needle = norm(text).toLowerCase();
+function byText(scope: ParentNode, text: string | RegExp, exact: boolean): Element[] {
+  const needle = typeof text === 'string' ? norm(text).toLowerCase() : '';
+  const somewhere = text instanceof RegExp ? loose(text) : null;
   const hits: Element[] = [];
   const all = scope.querySelectorAll('body *');
   for (let i = 0; i < all.length; i++) {
     const el = all[i];
     if (el instanceof HTMLScriptElement || el instanceof HTMLStyleElement) continue;
     // Cheap first: the text must be in there somewhere.
-    if (!norm(el.textContent ?? '').toLowerCase().includes(needle)) continue;
+    if (somewhere ? !somewhere.test(norm(el.textContent ?? '')) : !norm(el.textContent ?? '').toLowerCase().includes(needle)) continue;
     const own = isField(el) ? '' : visibleText(el);
     if (!matches(own, text, exact)) continue;
     hits.push(el);
@@ -201,31 +220,32 @@ function elementsFor(calls: Call[], like?: Like): Element[] | null {
   };
   for (const c of calls) {
     const [a, b] = c.args;
-    const opt = (typeof b === 'object' ? b : {}) as { name?: string; exact?: boolean };
+    const opt = (typeof b === 'object' && !(b instanceof RegExp) ? b : {}) as { name?: string | RegExp; exact?: boolean };
+    const text = (v: Arg | undefined): string | RegExp => (v instanceof RegExp ? v : String(v));
     switch (c.name) {
       case 'getByTestId':
         set = within((sc) => Array.from(sc.querySelectorAll(`[data-testid="${CSS.escape(String(a))}"]`)));
         break;
       case 'getByRole': {
         const role = String(a);
-        set = within((sc) => Array.from(sc.querySelectorAll(ROLE_SELECTORS[role] ?? `[role="${CSS.escape(role)}"]`)).filter((el) => roleFor(el) === role && (opt.name == null || matches(accessibleName(el), String(opt.name), !!opt.exact))));
+        set = within((sc) => Array.from(sc.querySelectorAll(ROLE_SELECTORS[role] ?? `[role="${CSS.escape(role)}"]`)).filter((el) => roleFor(el) === role && (opt.name == null || matches(accessibleName(el), text(opt.name), !!opt.exact))));
         break;
       }
       case 'filter': {
         // The card or row that has these words somewhere in it (or doesn't).
-        const f = (typeof a === 'object' ? a : {}) as { hasText?: string; hasNotText?: string };
+        const f = (typeof a === 'object' && !(a instanceof RegExp) ? a : {}) as { hasText?: string | RegExp; hasNotText?: string | RegExp };
         const found: Element[] = set ?? [];
-        set = found.filter((el) => (f.hasText == null || matches(el.textContent ?? '', String(f.hasText), false)) && (f.hasNotText == null || !matches(el.textContent ?? '', String(f.hasNotText), false)));
+        set = found.filter((el) => (f.hasText == null || matches(el.textContent ?? '', text(f.hasText), false)) && (f.hasNotText == null || !matches(el.textContent ?? '', text(f.hasNotText), false)));
         break;
       }
       case 'getByLabel':
-        set = within((sc) => Array.from(sc.querySelectorAll('input, textarea, select, [aria-label]')).filter((el) => matches(labelText(el) || el.getAttribute('aria-label') || '', String(a), !!opt.exact)));
+        set = within((sc) => Array.from(sc.querySelectorAll('input, textarea, select, [aria-label]')).filter((el) => matches(labelText(el) || el.getAttribute('aria-label') || '', text(a), !!opt.exact)));
         break;
       case 'getByPlaceholder':
-        set = within((sc) => Array.from(sc.querySelectorAll('[placeholder]')).filter((el) => matches(el.getAttribute('placeholder') ?? '', String(a), !!opt.exact)));
+        set = within((sc) => Array.from(sc.querySelectorAll('[placeholder]')).filter((el) => matches(el.getAttribute('placeholder') ?? '', text(a), !!opt.exact)));
         break;
       case 'getByText':
-        set = within((sc) => byText(sc, String(a), !!opt.exact));
+        set = within((sc) => byText(sc, text(a), !!opt.exact));
         break;
       case 'locator':
         try {

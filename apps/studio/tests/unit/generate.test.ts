@@ -91,7 +91,9 @@ describe('generateSpec', () => {
     expect(code).toContain("await page.getByLabel('Plan').selectOption('pro');");
     expect(code).toContain("await page.getByLabel('Toppings').selectOption([{ label: 'Ham' }, { label: 'Olives' }]);");
     expect(code).toContain("await page.getByLabel('Size').selectOption({ label: 'Large' });");
-    expect(code).toContain("await expect(page.getByLabel('Shipping').locator('option:checked')).toContainText('Express');");
+    // One of the options chosen says it, however many the list takes.
+    expect(code).toContain("await expect(page.getByLabel('Shipping').locator('option:checked')).toContainText(['Express']);");
+    expect(code).toContain("test('shipping menu should have Express chosen'");
   });
 
   it('checks a field by its value, not its text', () => {
@@ -109,6 +111,59 @@ describe('generateSpec', () => {
     });
     expect(code).toContain("await page.getByLabel('Gift wrap').check();");
     expect(code).toContain("await page.getByLabel('Newsletter').uncheck();");
+  });
+
+  it('checks whether a box is checked, not its text', () => {
+    const code = generateSpec({
+      ...input,
+      expectations: [
+        { locator: "page.getByRole('checkbox', { name: 'Remember me' })", description: 'the “Remember me” checkbox', expected: 'checked', actual: 'not checked', field: 'checked' },
+        { locator: "page.getByLabel('Newsletter')", description: 'the “Newsletter” field', expected: 'not checked', actual: 'checked', field: 'checked' },
+      ],
+    });
+    expect(code).toContain("await expect(page.getByRole('checkbox', { name: 'Remember me' })).toBeChecked();");
+    expect(code).toContain("await expect(page.getByLabel('Newsletter')).not.toBeChecked();");
+    expect(code).toContain("'[check 1] The “Remember me” checkbox should be checked'");
+    expect(code).toContain('// You said the “Remember me” checkbox should be checked (it was not checked).');
+    expect(code).toContain("'[check 2] The “Newsletter” field should not be checked'");
+    expect(code).not.toContain("toContainText('checked')");
+  });
+
+  it('finds a name or a text with its numbers left open, as a pattern nothing in runs', () => {
+    const steps = [
+      { kind: 'click' as const, locator: "page.getByRole('button', { name: /^Pay \\$\\d[\\d.,]* and subscribe$/ })", description: 'Click “Pay $91.57 and subscribe”' },
+      { kind: 'click' as const, locator: "page.getByRole('row').filter({ hasText: 'You pay' }).locator('td')", description: 'Click the cell for “You pay”' },
+    ];
+    for (const st of steps) expect(safeLocator(st.locator)).toBe(st.locator);
+    const code = generateSpec({ ...input, steps, expectations: [{ locator: 'page.getByText(/^Like this portfolio \\(\\d[\\d.,]*\\)$/)', description: '“Like this portfolio (1)”', expected: 'Like this portfolio (2)', actual: 'Like this portfolio (1)' }] });
+    expect(code).toContain("await page.getByRole('button', { name: /^Pay \\$\\d[\\d.,]* and subscribe$/ }).click();");
+    expect(code).toContain("await expect(page.getByText(/^Like this portfolio \\(\\d[\\d.,]*\\)$/)).toContainText('Like this portfolio (2)');");
+    const ast = parse(code, { sourceType: 'module', plugins: ['typescript'] });
+    const patterns: string[] = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== 'object') return;
+      const node = n as { type?: string; pattern?: string };
+      if (node.type === 'RegExpLiteral' && node.pattern) patterns.push(node.pattern);
+      for (const v of Object.values(n)) walk(v);
+    };
+    walk(ast.program);
+    expect(patterns).toEqual(['^Pay \\$\\d[\\d.,]* and subscribe$', '^Like this portfolio \\(\\d[\\d.,]*\\)$']);
+    // A pattern is one token: whatever follows its end, or a flag that makes it stateful, is refused.
+    for (const bad of [
+      "page.getByText(/a/); process.exit(1)",
+      'page.getByText(/a/.source)',
+      'page.getByText(/a/g)',
+      'page.getByText(/*/)',
+      'page.getByText(//)',
+      'page.getByText(/a\n/)',
+      'page.getByText(/a/ + process.exit(2))',
+      "page.getByText(/[/]); process.exit(3); //]/)",
+      "page.getByRole('button', { name: /a/, x: process })",
+    ]) {
+      expect(() => safeLocator(bad), bad).toThrow();
+    }
+    // A slash inside a class or escaped is part of it.
+    expect(safeLocator('page.getByText(/^a[/]b\\/c$/)')).toBe('page.getByText(/^a[/]b\\/c$/)');
   });
 
   it('rejects anything that is not a locator expression', () => {

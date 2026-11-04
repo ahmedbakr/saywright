@@ -17,7 +17,7 @@ import {
   type StudioToBridge,
 } from '../protocol';
 import { clickAt, scrollAt, typeText } from './actions';
-import { annotatedAncestor, describe, elOf, isVisible, rectOf } from './dom';
+import { annotatedAncestor, controlOf, describe, elOf, isVisible, rectOf, stateOf } from './dom';
 import { snapshot } from './explore';
 import { probe, probeSticky, releaseSticky } from './hit';
 import { buildLocator } from './locator';
@@ -125,7 +125,10 @@ function start(): void {
       }
       case 'locator': {
         const el = elOf(m.id);
-        return el ? reply(m.reqId, { locator: buildLocator(el), info: describe(el) }) : fail(m.reqId, 'gone');
+        if (!el) return fail(m.reqId, 'gone');
+        if (!m.check) return reply(m.reqId, { locator: buildLocator(el), info: describe(el) });
+        const target = m.check.state ? controlOf(el) : el;
+        return reply(m.reqId, { locator: buildLocator(target, m.check.state ? {} : { check: m.check.expected }), info: describe(target), ...(m.check.state ? stateOf(el, target) : {}) });
       }
       case 'step': {
         const el = elOf(m.id);
@@ -239,18 +242,32 @@ function start(): void {
 
   let mouseOn = false;
   let lastMouse = 0;
+  // At most one position a frame, and always the last one: a pointer flicked across the page and stopped is where it
+  // stopped, not on what it passed over on the way.
+  let pending: { x: number; y: number } | null = null;
+  let later: ReturnType<typeof setTimeout> | null = null;
+  const sendMouse = () => {
+    later = null;
+    if (!pending || !mouseOn) return;
+    lastMouse = performance.now();
+    post({ type: 'mouse', ...pending });
+    pending = null;
+  };
   window.addEventListener(
     'pointermove',
     (e) => {
       if (!mouseOn) return;
-      const now = performance.now();
-      if (now - lastMouse < 16) return;
-      lastMouse = now;
-      post({ type: 'mouse', x: e.clientX, y: e.clientY });
+      pending = { x: e.clientX, y: e.clientY };
+      const wait = 16 - (performance.now() - lastMouse);
+      if (wait <= 0) sendMouse();
+      else later ??= setTimeout(sendMouse, wait);
     },
     { passive: true, capture: true },
   );
   document.documentElement.addEventListener('pointerleave', () => {
+    pending = null;
+    if (later) clearTimeout(later);
+    later = null;
     if (mouseOn) post({ type: 'mouse', x: null, y: null });
   });
 
