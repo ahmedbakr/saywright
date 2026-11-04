@@ -169,6 +169,28 @@ describe('a studio that restarts while it records', () => {
     }
   });
 
+  it('a page that reloads meanwhile finds the recording, though its app isn’t open in the studio yet', async () => {
+    const p = project();
+    const restored = new Sessions(deps(p));
+    const meta = restored.start({ appUrl: 'http://localhost:3000', source: 'app', lang: 'en' });
+    const ws = { project: p, sessions: restored, env: { url: 'http://localhost:3000/' }, frameUrl: 'http://localhost:3000/' } as unknown as Workspace;
+    const router = new Router();
+    sessionRoutes(router, { active: () => null, forSession: () => ws, recording: () => ws, speech, saveSpeechChoice: () => undefined, live: () => undefined });
+    const mw = router.middleware('/api');
+    const server = http.createServer((req, res) => void mw(req, res, () => res.writeHead(404).end()));
+    const base = await new Promise<string>((resolve) => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
+    try {
+      const res = await fetch(`${base}/api/sessions/active`, { headers: { Origin: 'http://localhost:3000' } });
+      const body = (await res.json()) as { session: { id: string } | null; key?: string };
+      expect(body.session?.id).toBe(meta.id);
+      // Only that it runs: the key stays with the page that holds it.
+      expect(body.key).toBeUndefined();
+    } finally {
+      server.close();
+      restored.close();
+    }
+  });
+
   it('a report says where the recording ended, in either language', () => {
     expect(restartWords({ resumed: false }).en).toMatch(/ended there/);
     expect(restartWords({ resumed: true }).en).toMatch(/nothing is missing/);

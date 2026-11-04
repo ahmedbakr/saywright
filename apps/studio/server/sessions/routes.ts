@@ -21,6 +21,8 @@ interface Deps {
   active: () => Workspace | null;
   /** The workspace a session belongs to (another app's, while its report is written). */
   forSession: (id: string) => Workspace;
+  /** A workspace that is recording though its app isn't open (set up again after the studio restarted). */
+  recording?: () => Workspace | null;
   speech: SpeechService;
   saveSpeechChoice: (lang: SpeechLang, id: string | null) => void;
   /** Stream one session's live updates to a page. */
@@ -173,7 +175,9 @@ export function sessionRoutes(router: Router, deps: Deps): void {
   router.get(
     '/sessions/active',
     (req) => {
-      const ws = deps.active();
+      // The open app's; else one the studio restarted in the middle of (its page may have reloaded meanwhile).
+      const open = deps.active();
+      const ws = open?.sessions.active() ? open : (deps.recording?.() ?? open);
       const m = ws?.sessions.active() ?? null;
       if (!sameOrigin(req.raw)) return { session: m && { id: m.id, startedAt: m.startedAt, source: m.source, status: m.status }, endpoint: origin(req.raw) };
       // The studio (reloaded while recording) gives its frame the key again.

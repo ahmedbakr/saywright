@@ -280,6 +280,7 @@ export async function createStudioApi(layout: StudioLayout) {
   sessionRoutes(router, {
     active: () => apps.active(),
     forSession: (id) => apps.forSession(id),
+    recording: () => apps.all().find((w) => !!w.sessions.active()) ?? null,
     speech,
     saveSpeechChoice: (lang, id) => {
       settings.speech = { ...settings.speech, [lang]: id };
