@@ -21,3 +21,5 @@ apps/studio/tests/.e2e-shop/
 apps/studio/tests/.e2e-home/
 apps/studio/tests/.eval-work/
 apps/studio/tests/.eval-home/
+apps/studio/tests/.usage-work/
+apps/studio/tests/.usage-home/

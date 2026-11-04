@@ -1,0 +1,76 @@
+{
+  "name": "Harbor Stay bookings",
+  "about": "A room booking: a room type, two dates, the nights between them and the price.",
+  "stack": "React + TypeScript + Vite, dates and a drop-down",
+  "source": "../../../apps/booking",
+  "points": [
+    {
+      "target": {
+        "role": "heading",
+        "name": "Book a room"
+      },
+      "src": "src/App.tsx:11"
+    },
+    {
+      "target": {
+        "testId": "nights"
+      },
+      "src": "src/App.tsx:30"
+    }
+  ],
+  "edits": [
+    {
+      "target": {
+        "role": "heading",
+        "name": "Book a room"
+      },
+      "say": "rename this to Book your room",
+      "file": "src/App.tsx",
+      "contains": "Book your room"
+    }
+  ],
+  "tests": [
+    {
+      "name": "the use, then total should show $280.00",
+      "flow": [
+        {
+          "do": "select",
+          "target": {
+            "role": "combobox",
+            "name": "Room"
+          },
+          "value": "Deluxe"
+        }
+      ],
+      "check": {
+        "target": {
+          "testId": "total"
+        },
+        "expected": "$280.00"
+      },
+      "bug": true
+    }
+  ],
+  "sessions": [
+    {
+      "name": "using Harbor Stay bookings",
+      "flow": [
+        {
+          "do": "select",
+          "target": {
+            "role": "combobox",
+            "name": "Room"
+          },
+          "value": "Deluxe"
+        }
+      ],
+      "expect": {
+        "steps": 1
+      }
+    }
+  ],
+  "mcp": {
+    "search": "nightsBetween",
+    "read": "src/lib/stay.ts"
+  }
+}

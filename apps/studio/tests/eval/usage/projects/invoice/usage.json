@@ -1,0 +1,74 @@
+{
+  "name": "Tally invoices",
+  "about": "An invoice: quantities times prices, a subtotal and a total with 10% tax.",
+  "stack": "React + TypeScript + Vite, a table with inputs",
+  "source": "../../../apps/invoice",
+  "points": [
+    {
+      "target": {
+        "role": "heading",
+        "name": "Invoice #1042"
+      },
+      "src": "src/App.tsx:15"
+    },
+    {
+      "target": {
+        "testId": "subtotal"
+      },
+      "src": "src/App.tsx:38"
+    }
+  ],
+  "edits": [
+    {
+      "target": {
+        "role": "heading",
+        "name": "Invoice #1042"
+      },
+      "say": "rename this to Invoice #2048",
+      "file": "src/App.tsx",
+      "contains": "Invoice #2048"
+    }
+  ],
+  "tests": [
+    {
+      "name": "the use, then subtotal should show $270.00",
+      "flow": [
+        {
+          "do": "fill",
+          "target": {
+            "label": "Quantity of Hosting (month)"
+          },
+          "value": "2"
+        }
+      ],
+      "check": {
+        "target": {
+          "testId": "subtotal"
+        },
+        "expected": "$270.00"
+      },
+      "bug": true
+    }
+  ],
+  "sessions": [
+    {
+      "name": "using Tally invoices",
+      "flow": [
+        {
+          "do": "fill",
+          "target": {
+            "label": "Quantity of Hosting (month)"
+          },
+          "value": "2"
+        }
+      ],
+      "expect": {
+        "steps": 1
+      }
+    }
+  ],
+  "mcp": {
+    "search": "subtotalOf",
+    "read": "src/lib/totals.ts"
+  }
+}

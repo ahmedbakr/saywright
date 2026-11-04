@@ -1,0 +1,124 @@
+{
+  "name": "Lumen sign-up",
+  "about": "A sign-up form: email, password, a plan and yearly billing at 20% off, with the price shown.",
+  "stack": "React + TypeScript + Vite, a form with a password and plans",
+  "source": "../../../apps/signup",
+  "points": [
+    {
+      "target": {
+        "role": "heading",
+        "name": "Create your account"
+      },
+      "src": "src/App.tsx:12"
+    },
+    {
+      "target": {
+        "role": "button",
+        "name": "Create account"
+      },
+      "src": "src/App.tsx:49"
+    }
+  ],
+  "edits": [
+    {
+      "target": {
+        "role": "button",
+        "name": "Create account"
+      },
+      "say": "rename this to Sign up",
+      "file": "src/App.tsx",
+      "contains": "Sign up"
+    }
+  ],
+  "tests": [
+    {
+      "name": "the use, then price should show $192.00/year",
+      "flow": [
+        {
+          "do": "fill",
+          "target": {
+            "label": "Email"
+          },
+          "value": "ana@example.com"
+        },
+        {
+          "do": "fill",
+          "target": {
+            "label": "Password"
+          },
+          "value": "correct-horse-9",
+          "secret": true
+        },
+        {
+          "do": "select",
+          "target": {
+            "role": "combobox",
+            "name": "Plan"
+          },
+          "value": "Pro"
+        },
+        {
+          "do": "check",
+          "target": {
+            "role": "checkbox",
+            "name": "Bill yearly"
+          }
+        }
+      ],
+      "check": {
+        "target": {
+          "testId": "price"
+        },
+        "expected": "$192.00/year"
+      },
+      "secrets": {
+        "PASSWORD": "correct-horse-9"
+      },
+      "bug": true
+    }
+  ],
+  "sessions": [
+    {
+      "name": "using Lumen sign-up",
+      "flow": [
+        {
+          "do": "fill",
+          "target": {
+            "label": "Email"
+          },
+          "value": "ana@example.com"
+        },
+        {
+          "do": "fill",
+          "target": {
+            "label": "Password"
+          },
+          "value": "correct-horse-9",
+          "secret": true
+        },
+        {
+          "do": "select",
+          "target": {
+            "role": "combobox",
+            "name": "Plan"
+          },
+          "value": "Pro"
+        },
+        {
+          "do": "check",
+          "target": {
+            "role": "checkbox",
+            "name": "Bill yearly"
+          }
+        }
+      ],
+      "expect": {
+        "steps": 4
+      }
+    }
+  ],
+  "mcp": {
+    "search": "priceOf",
+    "read": "src/lib/plans.ts"
+  }
+}

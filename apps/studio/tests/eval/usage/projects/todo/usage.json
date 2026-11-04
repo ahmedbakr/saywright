@@ -1,0 +1,75 @@
+{
+  "name": "Listwise tasks",
+  "about": "A to-do list: tasks with a box to tick when done, and how many are left.",
+  "stack": "React + TypeScript + Vite, a list with check boxes",
+  "source": "../../../apps/todo",
+  "points": [
+    {
+      "target": {
+        "role": "heading",
+        "name": "Party plan"
+      },
+      "src": "src/App.tsx:13"
+    },
+    {
+      "target": {
+        "role": "button",
+        "name": "Add task"
+      },
+      "src": "src/App.tsx:26"
+    }
+  ],
+  "edits": [
+    {
+      "target": {
+        "role": "button",
+        "name": "Add task"
+      },
+      "say": "rename this to Add item",
+      "file": "src/App.tsx",
+      "contains": "Add item"
+    }
+  ],
+  "tests": [
+    {
+      "name": "the use, then left should show 2 tasks left",
+      "flow": [
+        {
+          "do": "check",
+          "target": {
+            "role": "checkbox",
+            "name": "Book the venue"
+          }
+        }
+      ],
+      "check": {
+        "target": {
+          "testId": "left"
+        },
+        "expected": "2 tasks left"
+      },
+      "bug": true
+    }
+  ],
+  "sessions": [
+    {
+      "name": "using Listwise tasks",
+      "flow": [
+        {
+          "do": "check",
+          "target": {
+            "role": "checkbox",
+            "name": "Book the venue"
+          }
+        }
+      ],
+      "expect": {
+        "steps": 1
+      }
+    }
+  ],
+  "mcp": {
+    "search": "leftOf",
+    "read": "src/lib/tasks.ts"
+  }
+}

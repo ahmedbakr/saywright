@@ -1,0 +1,65 @@
+{
+  "name": "Tidewell shop",
+  "about": "The sample shop: a checkout whose coupon takes off too little, and an account page with a sign-in and lists.",
+  "stack": "React + TypeScript + Vite, a design system, hash routes",
+  "source": "../../../../../../shop",
+  "points": [
+    { "target": { "testId": "coupon-apply" }, "src": "src/components/CouponField.tsx:45" },
+    { "target": { "testId": "pay-button" }, "src": "src/components/OrderSummary.tsx:25" },
+    { "target": { "role": "heading", "name": "Your account" }, "src": "src/pages/Account.tsx:21", "path": "/#/account" }
+  ],
+  "edits": [
+    { "target": { "testId": "coupon-apply" }, "say": "make it bigger", "file": "src/components/CouponField.tsx", "contains": "<Button variant=\"secondary\" type=\"submit\" data-testid=\"coupon-apply\">" },
+    { "target": { "text": "Free returns within 30 days" }, "say": "rename this to Free returns for 60 days", "file": "src/components/OrderSummary.tsx", "contains": "Free returns for 60 days" }
+  ],
+  "tests": [
+    {
+      "name": "SAVE20 takes 20% off the items",
+      "flow": [
+        { "do": "fill", "target": { "testId": "coupon-input" }, "value": "SAVE20" },
+        { "do": "click", "target": { "testId": "coupon-apply" } }
+      ],
+      "check": { "target": { "testId": "summary-total" }, "expected": "$80.80" },
+      "bug": true
+    },
+    {
+      "name": "sign in, then save a delivery and two interests",
+      "path": "/#/account",
+      "flow": [
+        { "do": "fill", "target": { "label": "Email" }, "value": "ana@example.com" },
+        { "do": "fill", "target": { "label": "Password" }, "value": "tidewell-2026", "secret": true },
+        { "do": "click", "target": { "role": "button", "name": "Sign in" } },
+        { "do": "wait", "target": { "testId": "signed-in" } },
+        { "do": "select", "target": { "label": "Delivery" }, "value": "Express" },
+        { "do": "select", "target": { "label": "Interests" }, "values": ["Ceramics", "Candles"] },
+        { "do": "click", "target": { "role": "button", "name": "Save preferences" } }
+      ],
+      "check": { "target": { "testId": "preferences-saved" }, "expected": "Saved: Express · Ceramics, Candles" },
+      "secrets": { "PASSWORD": "tidewell-2026" },
+      "bug": false
+    }
+  ],
+  "sessions": [
+    {
+      "name": "coupon on the checkout",
+      "flow": [
+        { "do": "fill", "target": { "testId": "coupon-input" }, "value": "SAVE20" },
+        { "do": "click", "target": { "testId": "coupon-apply" } }
+      ],
+      "expect": { "steps": 2 }
+    },
+    {
+      "name": "signing in",
+      "path": "/#/account",
+      "flow": [
+        { "do": "fill", "target": { "label": "Email" }, "value": "ana@example.com" },
+        { "do": "fill", "target": { "label": "Password" }, "value": "tidewell-2026", "secret": true },
+        { "do": "click", "target": { "role": "button", "name": "Sign in" } },
+        { "do": "wait", "target": { "testId": "signed-in" } }
+      ],
+      "expect": { "steps": 3 }
+    }
+  ],
+  "experts": [{ "expect": ["SEO-19", "axe:color-contrast"] }],
+  "mcp": { "search": "SAVE20", "read": "src/lib/pricing.ts" }
+}
