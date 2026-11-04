@@ -1,4 +1,4 @@
-import { dots, isSecretHint, looksSecret, maskSecrets, NAME_ATTR, secretName, SRC_ATTR, type ElementInfo, type Rect, type SourceHint } from '../protocol';
+import { dots, isCodeField, isSecretHint, looksSecret, maskSecrets, NAME_ATTR, secretName, SRC_ATTR, type ElementInfo, type Rect, type SourceHint } from '../protocol';
 import { hasFiber, instanceFrames, ownSite, reactFrames } from './react';
 
 const ids = new WeakMap<Element, number>();
@@ -139,7 +139,7 @@ export function isField(el: Element): el is HTMLInputElement | HTMLTextAreaEleme
 }
 
 /** What people already mark so that session-replay tools never record it (Saywright's own mark first). */
-const PRIVATE =
+export const PRIVATE =
   '[data-saywright-secret], [data-private], [data-sensitive], [data-mask], [data-sentry-mask], [data-hj-suppress], [data-ph-no-capture], .rr-mask, .rr-block, .sentry-mask, .fs-mask, .fs-exclude, .hj-suppress, .ph-no-capture';
 
 /** Password fields seen as such: one that “show password” turned into a text field still holds a password. */
@@ -174,12 +174,22 @@ export function isSecretField(el: Element): boolean {
   }
   if (passwords.has(el) || el.closest(PRIVATE)) return true;
   if (el instanceof HTMLInputElement && ['checkbox', 'radio', 'file', 'range', 'color', 'submit', 'button', 'reset', 'image', 'hidden'].includes(el.type)) return false;
-  return isSecretHint(fieldHint(el)) || looksSecret(el.value);
+  const hint = fieldHint(el);
+  return isSecretHint(hint) || looksSecret(el.value) || codeField(el, hint);
+}
+
+/** A short numeric code asked for to sign in (“Code”, “Enter the 6-digit code we emailed you”), though nothing says one-time. */
+function codeField(el: HTMLInputElement | HTMLTextAreaElement, hint: string): boolean {
+  if (!(el instanceof HTMLInputElement)) return false;
+  const mode = (el.getAttribute('inputmode') ?? '').toLowerCase();
+  const numeric = mode === 'numeric' || mode === 'decimal' || el.type === 'tel' || el.type === 'number' || /\\d|\[0-9/.test(el.pattern);
+  return isCodeField(hint, { numeric, shortMax: el.maxLength >= 4 && el.maxLength <= 8 }, location.pathname);
 }
 
 /** What a test calls a secret field's value: PASSWORD, CARD_NUMBER… (from its label, else its name). */
 export function secretNameOf(el: Element): string {
   if (el instanceof HTMLInputElement && el.type === 'password' && !isSecretHint(labelText(el) || el.getAttribute('placeholder') || el.getAttribute('name') || '')) return 'PASSWORD';
+  if (isField(el) && !(el instanceof HTMLSelectElement) && !isSecretHint(fieldHint(el)) && codeField(el, fieldHint(el))) return 'ONE_TIME_CODE';
   return secretName(labelText(el) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('autocomplete') || el.getAttribute('name') || el.id || '');
 }
 

@@ -16,6 +16,7 @@
  */
 import { dots, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
 import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, roleOf, screenLines, secretNameOf, sourceHint } from './dom';
+import { maskScreen } from './mask';
 import { EnterSubmits, formLabel } from './forms';
 import { buildLocator, locatorFromInfo } from './locator';
 import { bodies, KEEPALIVE_BYTES, Outbox, slim, type Delivery } from './outbox';
@@ -231,6 +232,7 @@ export class SessionRecorder {
     writeJson(ACTIVE_KEY, null);
     this.active = null;
     this.outbox = null;
+    maskScreen(false);
     // Everything left goes now, in as many batches as it takes.
     void outbox?.retire();
     this.report();
@@ -242,6 +244,7 @@ export class SessionRecorder {
     writeJson(ACTIVE_KEY, null);
     this.active = null;
     this.outbox = null;
+    maskScreen(false);
     this.report();
   }
 
@@ -265,6 +268,8 @@ export class SessionRecorder {
 
   private begin(info: SessionInfo, resumed: boolean): void {
     this.active = info;
+    // The shared screen never shows a secret (its screenshots and video are of the screen).
+    maskScreen(true);
     this.outbox = new Outbox(this.page, {
       post: (body, keepalive) => deliver(eventsUrl(info), body, keepalive),
       ended: () => this.endedElsewhere(info.id),
@@ -523,7 +528,8 @@ export class SessionRecorder {
   private onInput = (e: Event): void => {
     if (!this.active || !(e.target instanceof Element) || !isField(e.target) || ours(e.target)) return;
     const el = e.target;
-    if (el instanceof HTMLInputElement && ['checkbox', 'radio', 'file', 'range', 'color'].includes(el.type)) return;
+    // A choice in a list is a choice (onChange), not typing: Chrome sends `input` before `change` for a <select>.
+    if (el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && ['checkbox', 'radio', 'file', 'range', 'color'].includes(el.type))) return;
     // One event per pause in typing: the value as it stood, when it was typed.
     this.fieldTimes.set(el, eventTime(e));
     const prev = this.fieldTimers.get(el);
@@ -660,7 +666,10 @@ export class SessionRecorder {
     if (!this.active || location.href === this.lastNavUrl) return;
     this.lastNavUrl = location.href;
     this.flushFields();
-    this.record({ type: 'nav', url: location.href, title: document.title, how }, now(), true);
+    // The title as the new page sets it: a router's page sets it once it has rendered, after the address changed.
+    const at = now();
+    const url = location.href;
+    setTimeout(() => this.active && this.record({ type: 'nav', url, title: document.title, how }, at, true), 120);
     setTimeout(() => this.snapshot('navigation'), 700);
   }
 

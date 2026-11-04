@@ -117,8 +117,8 @@ export function secretEnvName(name: string): string {
   return SECRET_ENV_PREFIX + (name.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'SECRET');
 }
 
-/** Card numbers: 13 to 19 digits, spaces or dashes between them, that pass the Luhn check. */
-const CARD = /\b\d(?:[ -]?\d){12,18}\b/g;
+/** What may be a card number: digits with spaces or dashes between them (isCard decides). */
+const CARD = /\b\d(?:[ -]?\d){12,22}\b/g;
 
 /** Keys and tokens by their shape. */
 const TOKENS: RegExp[] = [
@@ -150,13 +150,34 @@ function luhn(digits: string): boolean {
   return sum % 10 === 0;
 }
 
+/**
+ * Whether digits are written as a card number is: 13 to 19 of them, starting with 2 to 6 (as cards of every network
+ * do), passing the Luhn check, and either unbroken or in groups of 4 to 6 (the last one shorter) with one kind of
+ * separator. Not a date with a number either side of it, an order row or a timestamp.
+ */
+function isCard(text: string): boolean {
+  const d = text.replace(/\D/g, '');
+  if (d.length < 13 || d.length > 19 || !/^[2-6]/.test(d) || !luhn(d)) return false;
+  if (/^\d+$/.test(text)) return true;
+  if (text.includes(' ') && text.includes('-')) return false;
+  const groups = text.split(/[ -]/);
+  return groups.every((g) => /^\d+$/.test(g)) && groups.slice(0, -1).every((g) => g.length >= 4 && g.length <= 6) && groups[groups.length - 1].length <= 6;
+}
+
+/** A card number in `run` (digits with spaces or dashes), with what follows it kept: the longest first part that is one. */
+function maskCard(run: string): string {
+  const parts = run.split(/(?<=\d)(?=[ -])/);
+  for (let k = parts.length; k > 0; k--) {
+    const head = parts.slice(0, k).join('');
+    if (isCard(head)) return `•••• ${head.replace(/\D/g, '').slice(-4)}${parts.slice(k).join('')}`;
+  }
+  return run;
+}
+
 /** Text with every card number (kept: its last four digits) and every key- or token-shaped string in it masked. */
 export function maskSecrets(text: string): string {
   if (!text) return text;
-  let out = text.replace(CARD, (m) => {
-    const d = m.replace(/\D/g, '');
-    return luhn(d) ? `•••• ${d.slice(-4)}` : m;
-  });
+  let out = text.replace(CARD, maskCard);
   for (const re of TOKENS) out = out.replace(re, (m) => (m.startsWith('Bearer') ? `Bearer ${MASK}` : MASK));
   return out;
 }
@@ -179,6 +200,25 @@ const SECRET_PARAM =
   /^(?:access_?token|refresh_?token|id_?token|auth_?token|token|auth|authorization|api_?key|apikey|key|secret|client_?secret|password|passwd|pwd|pass|otp|code_?verifier|jwt|session|session_?id|sessionid|sid|signature|sig|x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential)$/i;
 /** Addresses of sign-in steps, where `code`, `state` and `nonce` carry what lets someone in. */
 const AUTH_PATH = /(?:^|\/)(?:callback|oauth2?|auth|authorize|sso|login|signin|sign-in|verify|magic|reset|confirm)(?:[/?#.]|$)/i;
+
+/** Whether a page's path is a sign-in step's (/login, /verify, /auth/callback…): a code asked for there lets someone in. */
+export function isAuthPath(pathname: string): boolean {
+  return AUTH_PATH.test(pathname);
+}
+
+/** Codes that are not secrets: a test needs them as typed (SAVE20, a postal code, a colour). */
+const PLAIN_CODE = /\b(?:coupon|promo|promotion|discount|voucher|gift|referral|invite|invitation|postal|post|zip|area|country|dialling|dialing|product|sku|item|colou?r|tracking|order|booking|reference|ref|course|class|group|room|seat|ticket|event|campaign|source|language|currency|qr|bar|barcode|html|css|snippet|embed|promotional)\b/;
+
+/**
+ * Whether a field described so asks for a code that lets someone in, by its look: called a code or a PIN (“Code”,
+ * “Enter the 6-digit code we emailed you”), not a coupon or a postal code, and short and numeric (its input mode,
+ * type, pattern or length), or asked for on a sign-in step's page.
+ */
+export function isCodeField(hint: string, field: { numeric: boolean; shortMax: boolean }, pathname = ''): boolean {
+  const w = words(hint);
+  if (!/\b(?:code|codes|pin|passcode)\b/.test(w) || PLAIN_CODE.test(w)) return false;
+  return field.numeric || field.shortMax || isAuthPath(pathname);
+}
 
 function decoded(s: string): string {
   try {

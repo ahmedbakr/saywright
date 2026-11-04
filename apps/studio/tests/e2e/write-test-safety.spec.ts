@@ -166,10 +166,17 @@ test('a session never records a typed password or key; its steps name the secret
   await app.getByLabel('Email').fill('me@example.com');
   await app.getByLabel('Password', { exact: true }).fill(PASSWORD);
   await app.getByLabel('API key').fill('sk-live-abcdefghijklmnop1234');
+  // The screen it records shows them as dots: its screenshots and video are pictures of the screen.
+  const shown = (label: string) => app.getByLabel(label, { exact: true }).evaluate((el) => getComputedStyle(el).getPropertyValue('-webkit-text-security'));
+  await expect.poll(() => shown('API key')).toBe('disc');
+  await expect.poll(() => shown('Password')).toBe('disc');
+  expect(await shown('Email')).not.toBe('disc');
   await app.getByRole('button', { name: 'Sign in' }).click();
   await expect(app.getByTestId('signed-in')).toBeVisible();
   await page.waitForTimeout(1500);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  // Once the session stops, the app looks as it did.
+  await expect.poll(() => shown('API key')).not.toBe('disc');
   await page.getByRole('button', { name: 'Report ready' }).click({ timeout: 120_000 });
   const id = new URL(page.url()).pathname.split('/').pop()!;
   const res = await fetch(`${STUDIO}/api/sessions/${id}`);

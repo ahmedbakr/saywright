@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dots, isSecretHint, looksSecret, maskSecrets, redactUrl, scrubEvent, secretEnvName, secretName } from '@saywright/vite/protocol';
+import { dots, isCodeField, isSecretHint, looksSecret, maskSecrets, redactUrl, scrubEvent, secretEnvName, secretName } from '@saywright/vite/protocol';
 
 describe('secret fields, by what they are called', () => {
   it('knows passwords, codes, keys, tokens and card and bank details, also by autocomplete and in Arabic', () => {
@@ -77,6 +77,56 @@ describe('secret values, by their look', () => {
     expect(maskSecrets('Order 1234567890123 shipped')).toBe('Order 1234567890123 shipped');
     expect(dots('hunter2')).toBe('•••••••');
     expect(dots('x'.repeat(40))).toHaveLength(12);
+  });
+});
+
+describe('card numbers, as they are written', () => {
+  it.each([
+    ['Card 4242 4242 4242 4242', 'Card •••• 4242'],
+    ['4242-4242-4242-4242', '•••• 4242'],
+    ['4242424242424242', '•••• 4242'],
+    ['Amex 3782 822463 10005', 'Amex •••• 0005'],
+    // A card followed by more numbers: the card is masked, the rest kept.
+    ['4242 4242 4242 4242 2026-10-29', '•••• 4242 2026-10-29'],
+  ])('masks %s', (text, masked) => {
+    expect(maskSecrets(text)).toBe(masked);
+  });
+
+  it.each([
+    // An order row's cells, run together as the screen's text: a date between numbers is no card.
+    'BR-1042 2026-10-29 2 $34.50',
+    // A timestamp in milliseconds, and an order id: no card starts with 1, or mixes spaces and dashes.
+    'at 1793806331937 ms',
+    '4242 4242-4242 4242',
+    // Groups too short for a card.
+    '42 42 42 42 42 42 42 42',
+  ])('leaves %s as it is', (text) => {
+    expect(maskSecrets(text)).toBe(text);
+  });
+});
+
+describe('codes that let someone in', () => {
+  const numeric = { numeric: true, shortMax: true };
+  const plain = { numeric: false, shortMax: false };
+  it.each([
+    ['Code', numeric, ''],
+    ['Enter the 6-digit code we emailed you', numeric, ''],
+    ['code', { numeric: false, shortMax: true }, ''],
+    ['Code', plain, '/verify'],
+    ['Code', plain, '/auth/callback'],
+  ])('a field called %s is one', (hint, field, page) => {
+    expect(isCodeField(hint, field, page)).toBe(true);
+  });
+
+  it.each([
+    ['Coupon code', numeric, ''],
+    ['Promo code', numeric, '/checkout'],
+    ['ZIP code', numeric, ''],
+    ['Postal code', numeric, '/login'],
+    ['Code', plain, '/checkout'],
+    ['Discount code', plain, '/verify'],
+  ])('a field called %s is not', (hint, field, page) => {
+    expect(isCodeField(hint, field, page)).toBe(false);
   });
 });
 
