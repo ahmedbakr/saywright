@@ -20,7 +20,8 @@ export default defineConfig({
     baseURL: studio,
     viewport: { width: 1440, height: 900 },
     channel: executablePath ? undefined : 'chromium',
-    launchOptions: { executablePath },
+    // A fake microphone that plays silence: a session starts without asking, and nobody narrates.
+    launchOptions: { executablePath, args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${path.join(here, '../../fixtures/speech/silence.wav')}`] },
   },
   webServer: {
     command: `node ${JSON.stringify(path.join(here, 'serve.mjs'))}`,

@@ -20,7 +20,9 @@ fs.rmSync(WORK, { recursive: true, force: true });
 fs.mkdirSync(WORK, { recursive: true });
 process.env.SAYWRIGHT_HOME = path.join(STUDIO, 'tests/.eval-home');
 fs.rmSync(process.env.SAYWRIGHT_HOME, { recursive: true, force: true });
-delete process.env.SAYWRIGHT_AI;
+// EVAL_DRY=1: the AI test stand-in, to try the benchmark itself at no cost (its numbers mean nothing).
+if (process.env.EVAL_DRY) process.env.SAYWRIGHT_AI = 'fake';
+else delete process.env.SAYWRIGHT_AI;
 
 const servers = [];
 const apps = [];

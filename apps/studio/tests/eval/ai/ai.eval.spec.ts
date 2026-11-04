@@ -26,6 +26,8 @@ const STUDIO = `http://localhost:${process.env.EVAL_STUDIO_PORT || 5373}`;
 const RUNS = Number(process.env.EVAL_RUNS || 2);
 const BUDGET = Number(process.env.EVAL_BUDGET || 3);
 const OUT = path.join(ROOT, '.saywright', 'ai-eval');
+// oxlint-disable-next-line no-control-regex -- the escape character starts the terminal's colour codes
+const ANSI = /\x1b\[[0-9;]*m/g;
 
 interface Step {
   do: 'fill' | 'select' | 'check' | 'click';
@@ -72,7 +74,11 @@ interface Row {
   fix?: { verified: boolean; testUntouched: boolean; oracle: boolean; files: string[]; seconds: number; usd: number; outcome: string } | { skipped: string };
   error?: string;
 }
-const rows: Row[] = [];
+/** Every result, as each app finishes: a worker that restarts after a failure keeps adding to the same run. */
+const RUN = process.env.EVAL_RUN_ID ?? new Date().toISOString().replace(/[:.]/g, '-');
+process.env.EVAL_RUN_ID = RUN;
+const ROWS = path.join(OUT, `results-${RUN}.jsonl`);
+const rows = (): Row[] => (fs.existsSync(ROWS) ? fs.readFileSync(ROWS, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
 test.beforeAll(async () => {
   const status = await api<{ ai: { ready: boolean; who: { label: string; model: string } | null } }>('/status');
@@ -81,10 +87,11 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(() => {
+  const all = rows();
+  const file = ROWS.replace(/\.jsonl$/, '.md');
   fs.mkdirSync(OUT, { recursive: true });
-  const file = path.join(OUT, `results-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  fs.writeFileSync(file, JSON.stringify(rows, null, 2));
-  console.log(`\n${summary(rows)}\nResults: ${path.relative(ROOT, file)}`);
+  fs.writeFileSync(file, `${summary(all)}\n\n${all.map((r) => JSON.stringify(r)).join('\n')}\n`);
+  console.log(`\n${summary(all)}\nResults: ${path.relative(ROOT, ROWS)}`);
 });
 
 /** Do what someone using the app does (in the studio's frame). */
@@ -103,6 +110,8 @@ async function use(page: Page, flow: Step[]): Promise<void> {
 async function link(page: Page, a: App): Promise<void> {
   const { probe } = await api<{ probe: unknown }>('/apps/probe', 'POST', { folder: a.root });
   await api('/apps', 'POST', { probe, url: a.url, start: null, name: `${a.bench.name} (${a.variant})` });
+  // A session with no countdown and no narration (the microphone plays silence).
+  await page.addInitScript(() => localStorage.setItem('saywright.session.prefs', JSON.stringify({ lang: 'en', mic: false, screen: false, video: false, countdown: 0 })));
   await openStudio(page);
   await expect.poll(() => store<string>(page, 's.app.url'), { timeout: 30_000 }).toContain(new URL(a.url).host);
 }
@@ -110,7 +119,6 @@ async function link(page: Page, a: App): Promise<void> {
 for (const a of fs.existsSync(path.join(WORK, 'apps.json')) ? apps() : []) {
   test(`${a.bench.name}, ${a.variant === 'bug' ? 'with its bug' : 'its bug-free twin'}`, async ({ page }) => {
     const row: Row = { app: a.name, variant: a.variant };
-    rows.push(row);
     try {
       await link(page, a);
       row.model = (await api<{ ai: { who: { model: string } | null } }>('/status')).ai.who?.model;
@@ -118,7 +126,6 @@ for (const a of fs.existsSync(path.join(WORK, 'apps.json')) ? apps() : []) {
       // ---- observe: a session of the same use, and its AI report ----
       if ((await spent()) >= BUDGET) row.observe = { skipped: 'budget' };
       else {
-        await page.evaluate(() => localStorage.setItem('saywright.session.prefs', JSON.stringify({ lang: 'en', mic: false, screen: false, video: false, countdown: 0 })));
         const usd0 = await spent();
         await page.getByRole('button', { name: 'Record session', exact: true }).click();
         await page.getByRole('button', { name: 'Start recording' }).click();
@@ -184,17 +191,19 @@ for (const a of fs.existsSync(path.join(WORK, 'apps.json')) ? apps() : []) {
         await expect.poll(() => store<string | undefined>(page, 's.recorder.run && s.recorder.run.status'), { timeout: 120_000 }).toBe('failed');
         const usd0 = await spent();
         const t0 = Date.now();
+        const failedAt = await store<number>(page, 's.recorder.run.at');
         await page.evaluate(() => (window as any).__saywright.fix());
-        // Settled: the verifying run is back (any verdict), or the fix ended without a change.
-        await expect
-          .poll(async () => {
-            const s = await store<{ verifying: boolean; running: boolean; at: number }>(page, '({ verifying: s.recorder.verifying, running: s.recorder.running, at: s.recorder.run ? s.recorder.run.at : 0 })');
-            const busy = await store<boolean>(page, '!!s.request');
-            return !busy && !s.running && !s.verifying && s.at > t0;
-          }, { timeout: 8 * 60_000, intervals: [2000] })
-          .toBe(true)
-          .catch(() => undefined);
+        // The fix request, until it is over (it starts at once, and can take minutes).
+        await expect.poll(() => store<boolean>(page, '!!s.request || s.recorder.verifying'), { timeout: 10_000 }).toBe(true).catch(() => undefined);
+        await expect.poll(() => store<boolean>(page, '!!s.request && s.request.kind === "fix"'), { timeout: 8 * 60_000, intervals: [1000] }).toBe(false);
         const seconds = (Date.now() - t0) / 1000;
+        // A change came: the studio runs the test again with it; that run, until it is back.
+        if (await store<boolean>(page, 's.recorder.verifying')) {
+          await expect
+            .poll(() => store<boolean>(page, `!s.recorder.verifying && !s.recorder.running && !!s.recorder.run && s.recorder.run.at > ${failedAt}`), { timeout: 4 * 60_000, intervals: [1000] })
+            .toBe(true)
+            .catch(() => undefined);
+        }
         const run = await store<{ status: string; verified?: boolean; unverified?: string } | null>(page, 's.recorder.run');
         const changes = await store<{ id: string; status: string; files: { path: string }[] }[]>(page, 's.changes.map((c) => ({ id: c.id, status: c.status, files: (c.files ?? []).map((f) => ({ path: f.path })) }))');
         const preview = changes.find((c) => c.status === 'preview');
@@ -223,9 +232,12 @@ for (const a of fs.existsSync(path.join(WORK, 'apps.json')) ? apps() : []) {
         if (preview) await api('/changes/undo', 'POST', { id: preview.id, via: 'eval' }).catch(() => undefined);
       }
     } catch (err) {
-      row.error = err instanceof Error ? err.message.split('\n')[0] : String(err);
-      throw err;
+      // A result like any other: kept and counted, so one app's trouble doesn't stop the others.
+      row.error = (err instanceof Error ? err.message.split('\n')[0] : String(err)).replace(ANSI, '');
+      test.info().annotations.push({ type: 'error', description: row.error });
     } finally {
+      fs.mkdirSync(OUT, { recursive: true });
+      fs.appendFileSync(ROWS, `${JSON.stringify(row)}\n`);
       console.log(JSON.stringify(row));
       await api('/apps/close', 'POST', {}).catch(() => undefined);
     }
@@ -258,5 +270,6 @@ function summary(all: Row[]): string {
     `  Fixed (verified, test untouched, oracle right): ${pct(fixed, fixes.length)}`,
     `  Report time: ${mean(all.flatMap((r) => (obs(r) ? [obs(r)!.seconds] : [])))} s on average · fix time: ${mean(fixes.map((r) => fix(r)!.seconds))} s on average`,
     `  Cost: $${usd.toFixed(3)} in all`,
+    ...all.filter((r) => r.error).map((r) => `  Could not finish ${r.app} (${r.variant}): ${r.error}`),
   ].join('\n');
 }
