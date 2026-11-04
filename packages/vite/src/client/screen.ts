@@ -13,6 +13,9 @@ export interface Shot {
   h: number;
 }
 
+/** How long starting waits for the shared picture's first frame. */
+const FIRST_FRAME_WAIT_MS = 1500;
+
 type CropTargetCtor = { fromElement(el: Element): Promise<unknown> };
 type CroppableTrack = MediaStreamTrack & { cropTo?: (target: unknown) => Promise<void> };
 
@@ -72,8 +75,10 @@ export class ScreenCapture {
     video.muted = true;
     video.playsInline = true;
     video.srcObject = stream;
-    await video.play().catch(() => undefined);
     this.video = video;
+    // Playing waits for the first frame, and a still page cropped to an element may send none until something on it
+    // changes: the start waits for it briefly, not for ever.
+    await Promise.race([video.play().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, FIRST_FRAME_WAIT_MS))]);
   }
 
   /** Start the video (when `video`): the session has begun. */
@@ -97,7 +102,12 @@ export class ScreenCapture {
   /** Take a screenshot now (at most one every 2.5 s, and 150 per session, unless forced). */
   shoot(reason: string, force = false): void {
     const video = this.video;
-    if (!video || !this.active || !video.videoWidth) return;
+    if (!video || !this.active) return;
+    if (!video.videoWidth) {
+      // No frame yet: a picture that must be taken (the start's) is taken with the first.
+      if (force) video.addEventListener('loadeddata', () => this.video === video && this.shoot(reason, true), { once: true });
+      return;
+    }
     const now = Date.now();
     if (!force && (now - this.lastShot < 2500 || this.shotCount >= 150)) return;
     this.lastShot = now;

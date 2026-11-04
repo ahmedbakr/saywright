@@ -1,7 +1,8 @@
 /**
  * Starting a test session always works: right after stopping one, while its
  * report is being written, once it is ready, and after the studio's live
- * connection to its server dropped and came back.
+ * connection to its server dropped and came back, and when the shared screen’s
+ * first picture is late.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { openStudio, resetAll, STUDIO } from './helpers';
@@ -133,4 +134,29 @@ test('a start stuck on sharing the screen can be cancelled, and gives up with wh
   await page.clock.fastForward('00:31');
   await expect(page.getByText(/Sharing the screen didn’t start within 30 seconds\. Start again, or turn off “Record the screen”\./)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start recording' })).toBeVisible();
+});
+
+test('a shared screen whose first picture is late doesn’t hold the start up, and the start’s picture comes with it', async ({ page }) => {
+  // A share that sends no frame until its picture changes, as a still page cropped to the app can: a canvas that draws
+  // only when told.
+  await page.addInitScript(() => {
+    localStorage.setItem('saywright.session.prefs', JSON.stringify({ lang: 'en', mic: false, screen: true, video: false, countdown: 0 }));
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 400;
+    const stream = canvas.captureStream(0);
+    const firstFrame = () => {
+      const g = canvas.getContext('2d')!;
+      g.fillStyle = '#3a7';
+      g.fillRect(0, 0, 640, 400);
+      (stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack).requestFrame();
+    };
+    Object.assign(window, { __firstFrame: firstFrame });
+    navigator.mediaDevices.getDisplayMedia = async () => stream;
+  });
+  await openStudio(page);
+  await record(page, 'Late picture');
+  const shot = page.waitForRequest((r) => /\/shots\?.*reason=start/.test(r.url()));
+  await page.evaluate(() => (window as unknown as { __firstFrame: () => void }).__firstFrame());
+  await shot;
 });

@@ -204,9 +204,11 @@ function Secrets({ names, missing }: { names: string[]; missing: string[] }) {
   const [set, setSet] = useState<{ saved: string[]; environment: string[] } | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [value, setValue] = useState('');
+  // Asked again when a run finds others missing.
+  const missingNow = missing.join();
   useEffect(() => {
     void api.get<{ saved: string[]; environment: string[] }>('/tests/secrets').then(setSet).catch(() => undefined);
-  }, [missing.join()]);
+  }, [missingNow]);
   const save = async (name: string) => {
     setSet(await api.put<{ saved: string[]; environment: string[] }>('/tests/secrets', { name, value }));
     setEditing(null);

@@ -21,6 +21,7 @@ The core loop, made safe and honest: observe → reproduce → fix → verify. A
 - **Pages that a step opens are waited for** (`toHaveURL`, with the parts of the address that change from run to run left open), so the next step runs on the page it belongs to.
 - **Locators as Playwright finds them.** A password field has no role (`getByRole('textbox')` never finds it), a list that takes several choices is a `listbox`, and a label or placeholder is matched as Playwright matches it (“Password” also finds “Show password”), with `{ exact: true }` where needed.
 - **Tests run the same way every time**, with a configuration of the studio's own: Chromium, no retries, a fresh browser, and the app the studio has open as the `baseURL`. Your app's Playwright configuration (its retries, browsers, web server or missing `baseURL`) no longer changes the verdict. `tests/saywright/setup.ts`, when there, runs first, to put the data a test needs in place.
+- **A session that records the screen starts at once.** Starting waited for the shared picture's first frame, and a still page cropped to the app can send none until something on it changes: the session then stayed on “Starting…” for 30 seconds and said sharing the screen didn't start. It now waits for that frame for 1.5 seconds at most, and the start's picture is taken with the first frame.
 
 ### Changed
 
@@ -34,7 +35,7 @@ The core loop, made safe and honest: observe → reproduce → fix → verify. A
 
 ### Tests
 
-- Regression tests for all of the above: the redaction rules, the generator, what a run proves and Replay & verify's evidence (unit), and browser tests for a password and an API key in Write test and in a session, lists, a test that can't reach its check and a fix that only weakens the test.
+- Regression tests for all of the above: the redaction rules, the generator, what a run proves and Replay & verify's evidence (unit), and browser tests for a password and an API key in Write test and in a session, lists, a test that can't reach its check, a fix that only weakens the test and a shared screen whose first picture is late.
 - **An opt-in real-model benchmark** (`npm run eval:ai`, with your AI and a budget): four small apps the AI has never seen, each with a seeded bug and a bug-free twin, through the whole loop. It measures how often the session report finds the bug, false positives on the twins, how reliably the generated test reproduces it, how often the AI's fix is verified (with the test untouched and values the AI never saw right), and the time and cost of each step.
 
 ## [0.1.1] - 2026-11-04
