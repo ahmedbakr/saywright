@@ -30,13 +30,13 @@ test('“make this look like that” binds each word to what the mouse was on', 
   await page.mouse.move(apply.x, apply.y);
   await expect.poll(() => store<string | null>(page, 's.hover && s.hover.label')).toContain('Apply');
   await page.waitForTimeout(400);
+  // One sentence, said as the mouse moves: “this” while it is on Apply, “that” once it is on Pay.
   await page.keyboard.down('Space');
-  await page.evaluate(() => (window as any).__speech.say('make this'));
-  await page.waitForTimeout(600);
+  await expect.poll(() => store<string>(page, 's.voice.state')).toBe('listening');
+  await page.evaluate(() => void (window as any).__speech.say('make this look like that', 500));
+  await page.waitForTimeout(1000);
   await page.mouse.move(pay.x, pay.y, { steps: 4 });
-  await page.waitForTimeout(500);
-  await page.evaluate(() => (window as any).__speech.say('make this look like that'));
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(1800);
   await page.keyboard.up('Space');
   await expectIsland(page, /Apply.*looks like.*Pay/);
   await page.keyboard.press('Control+z');

@@ -153,3 +153,8 @@ button, input { font: inherit; color: inherit; }
 .product-meta span { color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .product small { color: var(--ink-3); }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; box-shadow: var(--shadow-md); }
+
+/* Account: sign-in and preferences, one column. */
+.account { max-width: 520px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+select.ds-input[multiple] { height: auto; padding: 6px 8px; }

@@ -93,13 +93,15 @@ export function roleOf(el: Element): string | null {
       return el.hasAttribute('href') ? 'link' : null;
     case 'input': {
       const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
-      if (type === 'hidden') return null;
+      // A password field has no role (as Playwright and screen readers see it): getByRole('textbox') never finds it.
+      if (type === 'hidden' || type === 'password') return null;
       return INPUT_ROLES[type] ?? 'textbox';
     }
     case 'textarea':
       return 'textbox';
     case 'select':
-      return 'combobox';
+      // A list that takes several choices, or shows several rows, is a listbox; a drop-down, a combobox.
+      return (el as HTMLSelectElement).multiple || (el as HTMLSelectElement).size > 1 ? 'listbox' : 'combobox';
     case 'img':
       return el.getAttribute('alt') ? 'img' : null;
     case 'nav':

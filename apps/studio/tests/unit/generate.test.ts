@@ -2,7 +2,7 @@ import { parse } from '@babel/parser';
 import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
 import { generateSpec, safeLocator, secretsOf, urlPattern, writeSpec } from '../../server/tests/generate';
-import { focusOn, parseFailure } from '../../server/tests/run';
+import { focusOn, judge, marksOf, parseFailure } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
 const input = {
@@ -209,5 +209,41 @@ describe('parseFailure', () => {
     expect(focusOn('Shipping 12 days', '3 days')).toBe('12 days');
     expect(focusOn('Free shipping', 'Paid shipping')).toBe('Free shipping');
     expect(focusOn(undefined, '$1')).toBeUndefined();
+  });
+});
+
+describe('what a run proves', () => {
+  const mask = (t: string | undefined) => t;
+  const marks = ['1', '2', '3', 'check 1'];
+  const step = (title: string, error?: string) => ({ title, ...(error ? { error: { message: error } } : {}) });
+  const all = [step('[1] Open /'), step('[2] Type SAVE20'), step('[3] Click Apply'), step('[check 1] The total should show $80.80')];
+
+  it('a pass is verified only when every step and check reported running, on the first try', () => {
+    expect(judge({ status: 'passed', duration: 1, steps: all }, marks, mask)).toMatchObject({ status: 'passed', verified: true, counts: { steps: 3, checks: 1, stepsPassed: 3, checksPassed: 1 } });
+    // A check that never ran (an edited test, a step skipped): not verified, and it says which.
+    const missing = judge({ status: 'passed', duration: 1, steps: all.slice(0, 3) }, marks, mask);
+    expect(missing).toMatchObject({ status: 'passed', verified: false });
+    expect(missing.unverified).toMatch(/\[check 1\]/);
+    // Passed only when retried.
+    expect(judge({ status: 'passed', retry: 1, duration: 1, steps: all }, marks, mask)).toMatchObject({ verified: false, unverified: 'The test passed only when tried again.' });
+    // No checks at all: its steps ran, nothing was checked.
+    expect(judge({ status: 'passed', duration: 1, steps: all.slice(0, 3) }, ['1', '2', '3'], mask)).toMatchObject({ verified: false });
+    // An older test, with no numbered steps: a pass shows less.
+    expect(judge({ status: 'passed', duration: 1, steps: [] }, [], mask).unverified).toMatch(/no numbered steps/);
+  });
+
+  it('a skipped test proves nothing; a failure says whether it was at a check (the bug shows) or a step before', () => {
+    expect(judge({ status: 'skipped', duration: 0, steps: [] }, marks, mask)).toMatchObject({ status: 'error', message: 'The test was skipped, so it shows nothing.' });
+    const atCheck = judge({ status: 'failed', duration: 1, steps: [...all.slice(0, 3), step('[check 1] The total should show $80.80', 'Expected substring: "$80.80"\nReceived string: "$78.40"')] }, marks, mask);
+    expect(atCheck).toMatchObject({ status: 'failed', failedAt: 'check' });
+    const atStep = judge({ status: 'failed', duration: 1, steps: [all[0], step('[2] Type SAVE20', 'Timeout 15000ms exceeded waiting for getByTestId(\'coupon-input\')')] }, marks, mask);
+    expect(atStep).toMatchObject({ status: 'failed', failedAt: 'step', counts: { stepsPassed: 1, checksPassed: 0 } });
+  });
+
+  it('knows a generated test’s steps and checks from its code, and masks the secrets it was given out of what a run says', () => {
+    const code = generateSpec(input);
+    expect(marksOf(code)).toEqual(['1', '2', '3', 'check 1']);
+    const masked = judge({ status: 'failed', duration: 1, steps: [step('[2] Type ••• into the “Password” field', 'locator.fill(hunter2) timed out')] }, ['1', '2'], (t) => t?.split('hunter2').join('•••'));
+    expect(masked.message).toBe('locator.fill(•••) timed out');
   });
 });

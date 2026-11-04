@@ -205,3 +205,41 @@ describe('an amount a finding expects after a step, with nothing said', () => {
     expect(screenCheck({ ...finding, expected: 'The discount should not include the $12.00 shipping.' }, first, run('e', screen(['Total', '$80.80'])))).toBeNull();
   });
 });
+
+describe('a replay calls nothing fixed without evidence the steps did what they did', () => {
+  const URL = 'http://localhost:5174/#/checkout';
+  const dom = (ms: number, reason: string, text: string) => ({ seq: ++seq, t: at(ms), page: 'p', type: 'dom', reason, url: URL, title: 'Checkout', headings: [], text });
+  const session = (withChange: boolean, withError: boolean) =>
+    analyze(
+      meta(withError ? 'first' : 'again'),
+      [
+        page,
+        dom(300, 'start', 'Total\n$98.00'),
+        click(1000, APPLY),
+        ...(withChange ? [dom(1600, 'after', 'Total\n$78.40')] : []),
+        ...(withError ? [{ seq: ++seq, t: at(1200), page: 'p', type: 'error', kind: 'error', message: 'Cannot read total of undefined' }] : []),
+      ] as unknown as StoredEvent[],
+      [],
+      [],
+    );
+
+  it('a problem gone after a step that changed nothing on screen this time (it did the first time) can’t be judged', () => {
+    const first = session(true, true);
+    const error = first.issues.find((i) => i.kind === 'error')!;
+    // The replay pressed Apply, and nothing happened: no new total, no error. Not “fixed”: the step did nothing.
+    const idle = verify(first, null, session(false, false), outcome({ steps: { total: 1, done: 1 } }), 'r1');
+    expect(idle.issues[error.id]).toMatchObject({ verdict: 'unknown' });
+    expect(idle.issues[error.id].why).toMatch(/changed nothing on screen in the replay/);
+    // The same step changed the screen in the replay too, and the error didn't come: fixed.
+    const worked = verify(first, null, session(true, false), outcome({ steps: { total: 1, done: 1 } }), 'r2');
+    expect(worked.issues[error.id]).toMatchObject({ verdict: 'fixed' });
+  });
+
+  it('a button that did nothing because it was disabled, and still is, is still a problem; anything after it can’t be judged', () => {
+    const dead = before.issues.find((i) => i.key?.startsWith('dead:'))!;
+    const pay = before.steps.findIndex((s) => s.description.includes('Pay'));
+    const v = verify(before, report, before, outcome({ steps: { total: 2, done: pay, failed: { i: pay, t: before.steps[pay].t, description: before.steps[pay].description, reason: 'disabled' } } }), 'r3');
+    expect(v.issues[dead.id]).toMatchObject({ verdict: 'still' });
+    expect(v.issues[dead.id].why).toMatch(/still disabled/);
+  });
+});

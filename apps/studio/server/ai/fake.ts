@@ -31,6 +31,12 @@ export class FakeProvider implements AgentProvider {
       return { kind: 'change', title: 'Adds a meta description', summary: 'index.html now describes the shop for search results and link previews.', edits };
     }
 
+    // A stand-in that “fixes” a failing test by weakening the test itself: what the studio must never take for a fix.
+    if (input.mode === 'fix' && input.test && /\b(?:change|edit) the test\b/i.test(input.text)) {
+      const edits = applyEditSpecs(ctx.project, [{ path: input.test.path, old_string: "toContainText('$80.80')", new_string: "toContainText('$')" }]);
+      return { kind: 'change', title: 'Loosens the check', summary: 'The test now accepts any amount.', edits };
+    }
+
     if (input.mode === 'fix' || /\bfix\b/.test(t)) {
       ctx.progress('Reading', 'src/lib/pricing.ts');
       await sleep(150);

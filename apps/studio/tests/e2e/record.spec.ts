@@ -84,8 +84,10 @@ test('a step on one of several identical buttons is written so a test finds the 
   await app.getByRole('link', { name: 'Checkout', exact: true }).click();
   await app.getByTestId('coupon-input').fill('SAVE20');
   await app.getByTestId('coupon-apply').click();
-  await expect.poll(() => store<number>(page, 's.recorder.steps.length')).toBe(5);
-  expect(await store<string>(page, 's.recorder.steps[1].description')).toBe('Click “Add to cart” for “Celadon mug, 12 oz”');
+  // Each link that opens another page is followed by a wait for it.
+  await expect.poll(() => store<string[]>(page, 's.recorder.steps.map((x) => x.kind)')).toEqual(['click', 'url', 'click', 'click', 'url', 'fill', 'click']);
+  expect(await store<string>(page, 's.recorder.steps[2].description')).toBe('Click “Add to cart” for “Celadon mug, 12 oz”');
+  expect(await store<string>(page, 's.recorder.steps[4].description')).toBe('Wait for #/checkout');
 
   const total = await appPoint(page, 'summary-total', 0.85);
   await page.mouse.move(total.x, total.y);
@@ -98,6 +100,9 @@ test('a step on one of several identical buttons is written so a test finds the 
   const spec = fs.readFileSync(path.join(E2E_SHOP, await store<string>(page, 's.recorder.spec.path')), 'utf8');
   expect(spec).toContain("await page.getByRole('article').filter({ hasText: 'Celadon mug, 12 oz' }).getByRole('button', { name: 'Add to cart' }).click();");
   expect(spec).not.toMatch(/data-ds-src|\.tsx:\d+|\.nth\(/);
+  expect(spec).toContain("await expect(page).toHaveURL(new RegExp('^[^#]*#/checkout/?(?:[?]|$)'));");
+  // The check is where it was said: after the last step.
+  expect(spec.indexOf('[check 1]')).toBeGreaterThan(spec.indexOf("test.step('[8] "));
   // Playwright follows every step to the wrong total.
   await page.getByRole('button', { name: 'Run it' }).click();
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);

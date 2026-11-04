@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 
-export type Route = 'checkout' | 'shop';
+export type Route = 'checkout' | 'shop' | 'account';
 
 function read(): Route {
-  return window.location.hash.startsWith('#/shop') ? 'shop' : 'checkout';
+  const hash = window.location.hash;
+  return hash.startsWith('#/shop') ? 'shop' : hash.startsWith('#/account') ? 'account' : 'checkout';
 }
 
 export function useRoute(): Route {

@@ -15,10 +15,11 @@ export const ROLE_SELECTORS: Record<string, string> = {
   button: 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]',
   link: 'a[href], [role="link"]',
   heading: 'h1, h2, h3, h4, h5, h6, [role="heading"]',
-  textbox: 'input:not([type]), input[type="text"], input[type="email"], input[type="url"], input[type="tel"], input[type="password"], textarea, [role="textbox"]',
+  textbox: 'input:not([type]), input[type="text"], input[type="email"], input[type="url"], input[type="tel"], textarea, [role="textbox"]',
   checkbox: 'input[type="checkbox"], [role="checkbox"]',
   radio: 'input[type="radio"], [role="radio"]',
   combobox: 'select, [role="combobox"]',
+  listbox: 'select, [role="listbox"]',
   tab: '[role="tab"]',
   menuitem: '[role="menuitem"]',
   // What holds one of several identical controls: a product's card, a row, an item of a list.
@@ -55,6 +56,13 @@ export function roleFor(el: Element): string | null {
 }
 
 const squash = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '').toLowerCase();
+
+/** Playwright's text matching: case-insensitive and partial (spaces collapsed), or exact. */
+function sameWords(actual: string, wanted: string, exact: boolean): boolean {
+  const a = actual.replace(/\s+/g, ' ').trim();
+  const w = wanted.replace(/\s+/g, ' ').trim();
+  return exact ? a === w : a.toLowerCase().includes(w.toLowerCase());
+}
 
 /** The elements of this role (with this name, when given) in `scope`, as getByRole matches them. */
 function byRole(scope: ParentNode, role: string, name: string | null, exact: boolean, limit = Infinity): Element[] {
@@ -105,7 +113,7 @@ function byText(scope: ParentNode, text: string): Element[] {
 }
 
 function describeRole(role: string, name: string): string {
-  const noun: Record<string, string> = { button: 'button', link: 'link', heading: 'heading', textbox: 'field', checkbox: 'checkbox', radio: 'option', combobox: 'menu', tab: 'tab' };
+  const noun: Record<string, string> = { button: 'button', link: 'link', heading: 'heading', textbox: 'field', checkbox: 'checkbox', radio: 'option', combobox: 'menu', listbox: 'list', tab: 'tab' };
   return `the “${name}” ${noun[role] ?? role}`;
 }
 
@@ -279,10 +287,20 @@ export function buildLocator(el: Element, opts: { cheap?: boolean } = {}): Locat
   }
 
   if (isField(el)) {
+    // Counted as Playwright finds them: a label or placeholder matches any that contains it (“Password” finds “Show
+    // password” too), unless it is exact.
     const label = labelText(el);
-    if (label && Array.from(document.querySelectorAll('input, textarea, select')).filter((f) => labelText(f) === label).length === 1) return { code: `page.getByLabel(${q(label)})`, description: `the “${label}” field`, text };
+    if (label) {
+      const by = (exact: boolean) => Array.from(document.querySelectorAll('input, textarea, select, [aria-label]')).filter((f) => sameWords(labelText(f) || f.getAttribute('aria-label') || '', label, exact)).length;
+      if (by(false) === 1) return { code: `page.getByLabel(${q(label)})`, description: `the “${label}” field`, text };
+      if (by(true) === 1) return { code: `page.getByLabel(${q(label)}, { exact: true })`, description: `the “${label}” field`, text };
+    }
     const ph = el.getAttribute('placeholder');
-    if (ph && document.querySelectorAll(`[placeholder="${CSS.escape(ph)}"]`).length === 1) return { code: `page.getByPlaceholder(${q(ph)})`, description: `the “${ph}” field`, text };
+    if (ph) {
+      const by = (exact: boolean) => Array.from(document.querySelectorAll('[placeholder]')).filter((f) => sameWords(f.getAttribute('placeholder') ?? '', ph, exact)).length;
+      if (by(false) === 1) return { code: `page.getByPlaceholder(${q(ph)})`, description: `the “${ph}” field`, text };
+      if (by(true) === 1) return { code: `page.getByPlaceholder(${q(ph)}, { exact: true })`, description: `the “${ph}” field`, text };
+    }
   }
 
   // Counting matches by text walks the whole page: skipped when the caller can't afford it on a large page.

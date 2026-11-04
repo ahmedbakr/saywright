@@ -78,7 +78,7 @@ const KINDS: Record<string, string[]> = {
   link: ['a', 'link'],
   image: ['img', 'image', 'picture', 'photo', 'svg', 'icon', 'avatar', 'thumbnail', 'logo'],
   heading: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'heading', 'title', 'headline'],
-  field: ['input', 'textarea', 'select', 'textbox', 'searchbox', 'combobox', 'field'],
+  field: ['input', 'textarea', 'select', 'textbox', 'searchbox', 'combobox', 'listbox', 'field'],
   list: ['ul', 'ol', 'list'],
   item: ['li', 'listitem', 'item', 'row', 'tr'],
   text: ['p', 'span', 'paragraph', 'text', 'label'],
