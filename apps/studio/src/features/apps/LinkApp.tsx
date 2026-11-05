@@ -116,6 +116,7 @@ function FolderPicker({ onProbe }: { onProbe: (p: AppProbe) => void }) {
   };
   useEffect(() => {
     void go();
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- the first listing, once, when the picker opens
   }, []);
   const use = async (folder: string) => {
     const p = await run(() => apps.probeFolder(folder));

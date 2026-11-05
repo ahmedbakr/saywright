@@ -210,6 +210,7 @@ function Coach() {
       return;
     }
     setSaid(`Step ${index + 1} of ${steps.length}: ${text.title}. ${text.body}`);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- said once per step: its words changing (the AI connected meanwhile) aren't a new step
   }, [step, started]);
 
   // Escape ends the tour, unless the studio is running something Escape stops; text fields keep their own Escape.

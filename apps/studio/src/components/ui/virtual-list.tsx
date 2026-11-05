@@ -53,9 +53,11 @@ export function VirtualList<T>({
     // oxlint-disable-next-line unicorn/no-new-array -- filled right below; one allocation for long lists
     const o = new Array<number>(items.length + 1);
     o[0] = 0;
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- keyOf and estimate are the caller's (often new each render): offsets follow the items and the heights learnt
     for (let i = 0; i < items.length; i++) o[i + 1] = o[i] + (heights.current.get(keyOf(items[i])) ?? estimate(items[i]));
     return o;
     // `measured` changes when a row's real height is learnt.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- `measured` is that signal: the heights themselves are in a ref
   }, [items, measured]);
 
   const first = items.length ? firstBelow(offsets, view.top - overscan) : 0;
@@ -63,7 +65,9 @@ export function VirtualList<T>({
   while (last < items.length - 1 && offsets[last + 1] < view.top + view.height + overscan) last++;
   const shown = items.slice(first, last + 1);
 
-  // Learn the real height of the rows on the page.
+  // Learn the real height of the rows on the page: after every render, as rows change; it sets state only when a
+  // height did, so it settles.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- runs after every render on purpose
   useLayoutEffect(() => {
     const rows = inner.current?.children;
     if (!rows) return;
@@ -108,6 +112,7 @@ export function VirtualList<T>({
     const bottom = offsets[i + 1];
     if (top < el.scrollTop) el.scrollTop = Math.max(0, top - 8);
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight + 8;
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- only when another row is asked for: the list scrolling on its own isn't a reason to jump back
   }, [reveal]);
 
   const onScroll = () => {

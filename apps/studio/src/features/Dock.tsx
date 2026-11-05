@@ -82,6 +82,7 @@ export function Dock() {
   // Check before sending: what you said arrives here to fix or send.
   useEffect(() => {
     if (draft) fill(draft.text);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- each draft once, when it arrives (its number changes): editing it isn't a new one
   }, [draft?.n]);
 
   const suggestions = useMemo(() => {

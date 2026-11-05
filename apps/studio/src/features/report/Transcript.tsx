@@ -38,6 +38,7 @@ export function Transcript({
   const active = current == null ? null : segments.reduce<TranscriptSegment | null>((best, s) => (s.start <= current + 300 ? s : best), null);
   useEffect(() => {
     if (active && editing == null) box.current?.querySelector(`[data-seg="${active.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- only when another sentence plays: finishing an edit doesn't scroll
   }, [active?.id]);
 
   return (
