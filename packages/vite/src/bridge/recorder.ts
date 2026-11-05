@@ -1,5 +1,5 @@
 import { MASK, maskSecrets, type RecordedAction } from '../protocol';
-import { collapse, editableOf, editedText, isField, isSecretField, secretNameOf } from './dom';
+import { collapse, editableOf, editedText, isField, isSecretEditor, isSecretField, secretNameOf } from './dom';
 import { EnterSubmits } from './forms';
 import { buildLocator } from './locator';
 
@@ -187,8 +187,13 @@ export class Recorder {
     }
     const editor = editableOf(el);
     if (editor === el) {
-      // A rich text editor: its text as a whole, as fill puts it back (any card number or key in it masked).
       const loc = buildLocator(editor);
+      if (isSecretEditor(editor)) {
+        // Marked private or called like a secret: by its name only, as a secret field is, typed from the environment.
+        this.emit({ kind: 'fill', locator: loc.code, value: '', secret: secretNameOf(editor), description: `Type ${MASK} into ${loc.description}` });
+        return;
+      }
+      // A rich text editor: its text as a whole, as fill puts it back (any card number or key in it masked).
       const value = maskSecrets(editedText(editor));
       this.emit({ kind: 'fill', locator: loc.code, value, description: `Type “${collapse(value, 60)}” into ${loc.description}` });
       return;

@@ -15,7 +15,7 @@
  *   so nothing is lost or doubled.
  */
 import { dots, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
-import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, roleOf, screenLines, secretNameOf, sourceHint } from './dom';
+import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, publicText, roleOf, screenLines, screenText, secretNameOf, sourceHint } from './dom';
 import { maskScreen } from './mask';
 import { EnterSubmits, formLabel } from './forms';
 import { buildLocator, locatorFromInfo } from './locator';
@@ -391,7 +391,8 @@ export class SessionRecorder {
     const anchor = annotatedAncestor(el);
     const tag = el.tagName.toLowerCase();
     const field = isField(el);
-    const text = field ? '' : collapse(el.textContent, 80);
+    // What a part marked private says, or a secret editor holds, stays on the page (also inside what holds them).
+    const text = field ? '' : collapse(publicText(el), 80);
     const label =
       el.getAttribute('aria-label') ||
       (field ? labelText(el) || el.getAttribute('placeholder') || el.getAttribute('name') || '' : '') ||
@@ -991,7 +992,7 @@ export class SessionRecorder {
   private readScreen(reason: string, at?: number): void {
     const started = performance.now();
     const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
-      .map((h) => collapse(h.textContent, 80))
+      .map((h) => collapse(publicText(h), 80))
       .filter(Boolean)
       .slice(0, 12);
     let text = '';
@@ -999,7 +1000,7 @@ export class SessionRecorder {
       const room = SCREEN_CHARS - text.length - 1;
       if (room < 40) break;
       // A huge page's text is cut before it is split into lines: only the first few thousand characters are kept.
-      const part = screenLines(el.innerText.slice(0, room * 4), room);
+      const part = screenLines(screenText(el).slice(0, room * 4), room);
       if (part) text = text ? `${text}\n${part}` : part;
     }
     this.readMs = performance.now() - started;

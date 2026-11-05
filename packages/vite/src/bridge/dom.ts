@@ -208,6 +208,16 @@ export function isField(el: Element): el is HTMLInputElement | HTMLTextAreaEleme
 export const PRIVATE =
   '[data-saywright-secret], [data-private], [data-sensitive], [data-mask], [data-sentry-mask], [data-hj-suppress], [data-ph-no-capture], .rr-mask, .rr-block, .sentry-mask, .fs-mask, .fs-exclude, .hj-suppress, .ph-no-capture';
 
+/** Whether `el` is in a part of the page marked private (see PRIVATE), also through the shadow roots it is in. */
+export function inPrivate(el: Element): boolean {
+  for (let n: Element | null = el; n; ) {
+    if (n.closest(PRIVATE)) return true;
+    const root = n.getRootNode();
+    n = root instanceof ShadowRoot ? root.host : null;
+  }
+  return false;
+}
+
 /** Password fields seen as such: one that “show password” turned into a text field still holds a password. */
 const passwords = new WeakSet<Element>();
 
@@ -238,10 +248,21 @@ export function isSecretField(el: Element): boolean {
     passwords.add(el);
     return true;
   }
-  if (passwords.has(el) || el.closest(PRIVATE)) return true;
+  if (passwords.has(el) || inPrivate(el)) return true;
   if (el instanceof HTMLInputElement && ['checkbox', 'radio', 'file', 'range', 'color', 'submit', 'button', 'reset', 'image', 'hidden'].includes(el.type)) return false;
   const hint = fieldHint(el);
   return isSecretHint(hint) || looksSecret(el.value) || codeField(el, hint);
+}
+
+/**
+ * Whether what is typed into a rich text editor (contenteditable) is a secret, as for a field (see isSecretField): one
+ * marked private, itself or a part of the page it is in, one called like a secret, or one holding what looks like one.
+ */
+export function isSecretEditor(el: Element): boolean {
+  if (editableOf(el) !== el) return false;
+  if (inPrivate(el)) return true;
+  const hint = [el.getAttribute('aria-label'), el.getAttribute('aria-placeholder'), el.getAttribute('data-placeholder'), el.getAttribute('title'), el.id, el.getAttribute('data-testid')].filter(Boolean).join(' ');
+  return isSecretHint(hint) || looksSecret(editedText(el as HTMLElement));
 }
 
 /** A short numeric code asked for to sign in (“Code”, “Enter the 6-digit code we emailed you”), though nothing says one-time. */
@@ -393,7 +414,55 @@ export function visibleText(el: Element): string {
   }
   // A list shows what is chosen in it, not every option it has.
   if (el instanceof HTMLSelectElement) return collapse(Array.from(el.selectedOptions, (o) => o.label || o.text).join(', '), 80);
-  return collapse((el as HTMLElement).innerText ?? el.textContent, 80);
+  // Nor is what a secret editor holds, or what a part marked private says (its pictures blur it).
+  const editor = editableOf(el);
+  if (editor && isSecretEditor(editor)) return collapse(editor.getAttribute('aria-placeholder') ?? editor.getAttribute('data-placeholder'), 80);
+  if (inPrivate(el)) return '';
+  // An element that holds such a part says the rest of what it says.
+  return collapse(screenText(el as HTMLElement, ''), 80);
+}
+
+/** Whether what `el` says is kept to the page: it is in a part marked private, or in a secret rich text editor. */
+export function hidesText(el: Element): boolean {
+  const editor = editableOf(el);
+  return inPrivate(el) || (!!editor && isSecretEditor(editor));
+}
+
+/** What can be marked private, or edited as a whole: where what an element says is looked through for what to leave out. */
+const HIDDEN_PARTS = `${PRIVATE}, [contenteditable]:not([contenteditable="false"])`;
+
+/** A part whose words are kept to the page: marked private, or a secret rich text editor. */
+const hidden = (part: Element) => part.matches(PRIVATE) || (editableOf(part) === part && isSecretEditor(part));
+
+/**
+ * What an element says on screen, as a session's text and Autopilot read it: what a part marked private says, and what
+ * is typed into a secret editor, left out (as its pictures blur it), each line of it replaced by `mark`.
+ */
+export function screenText(el: HTMLElement, mark = '•••'): string {
+  const text = el.innerText ?? el.textContent ?? '';
+  if (inPrivate(el)) return mark;
+  if (!el.querySelector(HIDDEN_PARTS)) return text;
+  let out = text;
+  for (const part of Array.from(el.querySelectorAll<HTMLElement>(HIDDEN_PARTS))) {
+    if (!hidden(part)) continue;
+    for (const line of (part.innerText ?? part.textContent ?? '').split('\n')) {
+      const l = line.trim();
+      if (l) out = out.split(l).join(mark);
+    }
+  }
+  return out;
+}
+
+/** An element's words as its text holds them (textContent: cheap, no layout), without what its private parts hold. */
+export function publicText(el: Element): string {
+  if (hidesText(el)) return '';
+  if (!el.querySelector(HIDDEN_PARTS)) return el.textContent ?? '';
+  let out = '';
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n instanceof Element && hidden(n) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.nodeType === Node.TEXT_NODE) out += n.textContent ?? '';
+  return out;
 }
 
 function shortLabel(el: Element): string {

@@ -6,7 +6,7 @@
  * clicked, filled or pressed.
  */
 import { NAME_ATTR, SRC_ATTR } from '../protocol';
-import { accessibleName, collapse, deepAll, fieldValue, isField, isVisible, labelText, shapeOf, visibleText } from './dom';
+import { accessibleName, collapse, deepAll, fieldValue, isField, isVisible, labelText, shapeOf } from './dom';
 import { ROLE_SELECTORS, roleFor } from './locator';
 import { scriptedInput } from './own';
 
@@ -166,7 +166,8 @@ function byText(scope: ParentNode, text: string | RegExp, exact: boolean): Eleme
     if (el instanceof HTMLScriptElement || el instanceof HTMLStyleElement) continue;
     // Cheap first: the text must be in there somewhere.
     if (somewhere ? !somewhere.test(norm(el.textContent ?? '')) : !norm(el.textContent ?? '').toLowerCase().includes(needle)) continue;
-    const own = isField(el) ? '' : visibleText(el);
+    // What it says, as Playwright reads it (also a part marked private, which the studio never writes from).
+    const own = isField(el) ? '' : collapse((el as HTMLElement).innerText ?? el.textContent, 80);
     if (!matches(own, text, exact)) continue;
     hits.push(el);
   }

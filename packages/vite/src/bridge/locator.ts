@@ -4,7 +4,7 @@
  * written in the code: that is only known to the dev server, and moves with every edit above it.
  */
 import { jsString as q, type LocatorInfo } from '../protocol';
-import { accessibleName, collapse, deepAll, deepLists, editableOf, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
+import { accessibleName, collapse, deepAll, deepLists, editableOf, inPrivate, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
 
 /** Values like "$78.40", "12", "−$19.60" change when the code changes, so they make poor locators. */
 function looksVolatile(s: string): boolean {
@@ -237,6 +237,8 @@ function boxOf(node: Element): { code: string; all: () => Element[] } | null {
 function titleOf(node: Element, inside: Element | null): string | null {
   const words = (el: Element): string | null => {
     if (inside && (inside.contains(el) || el.contains(inside))) return null;
+    // What a part marked private says is never written into a test.
+    if (inPrivate(el)) return null;
     const t = collapse((el as HTMLElement).innerText ?? el.textContent, 200);
     // A shorter piece of it still finds the card (hasText matches part of its text).
     return t && !looksVolatile(t) ? (t.length <= 40 ? t : t.slice(0, 40).replace(/\s+\S*$/, '')) : null;

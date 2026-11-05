@@ -4,7 +4,7 @@
  * saved as a test exactly like a person's.
  */
 import { maskSecrets, redactUrl, SRC_ATTR, type PageControl, type PageSnapshot } from '../protocol';
-import { accessibleName, annotatedAncestor, collapse, fieldValue, isField, isSecretField, isVisible, roleOf, visibleText } from './dom';
+import { accessibleName, annotatedAncestor, collapse, fieldValue, isField, isSecretField, isVisible, publicText, roleOf, screenText, visibleText } from './dom';
 import { buildLocator } from './locator';
 
 const CONTROLS =
@@ -64,8 +64,8 @@ export function snapshot(): PageSnapshot {
     headings: Array.from(document.querySelectorAll('h1, h2, h3'))
       .filter(isVisible)
       .slice(0, 12)
-      .map((h) => collapse(h.textContent, 100)),
-    text: collapse(maskSecrets((main as HTMLElement).innerText), MAX_TEXT),
+      .map((h) => collapse(publicText(h), 100)),
+    text: collapse(maskSecrets(screenText(main as HTMLElement)), MAX_TEXT),
     controls: listed.map((p) => control(p.el, p.offscreen)),
     more: Math.max(0, placed.length - MAX_CONTROLS),
     dialog: dialog ? collapse(accessibleName(dialog) || dialog.querySelector('h1, h2, h3')?.textContent, 80) || 'a dialog' : null,
