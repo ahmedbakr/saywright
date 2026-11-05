@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Plugin } from 'vite';
 import { AI_TASKS, type AiEffort, type AiTask, type Budget } from '../shared/ai.ts';
-import type { IntentResult, NextStep, RefInfo, StatusResponse } from '../shared/api.ts';
+import type { Change, IntentResult, NextStep, RefInfo, StatusResponse } from '../shared/api.ts';
 import { AppManager, appAddress } from './apps/manager.ts';
 import { envFor } from './apps/registry.ts';
 import { appRoutes } from './apps/routes.ts';
@@ -75,6 +75,11 @@ async function discoverRoot(url: string): Promise<string | null> {
     await new Promise((r) => setTimeout(r, 500));
   }
   return null;
+}
+
+/** A change refused because a file it changes was saved while it was being made: said, with the way to ask again. */
+function staleResult(err: unknown): IntentResult | null {
+  return err instanceof HttpError && err.code === 'stale' ? { kind: 'message', text: err.message, tone: 'warn', next: [{ kind: 'retry' }] } : null;
 }
 
 export async function createStudioApi(layout: StudioLayout) {
@@ -342,7 +347,15 @@ export async function createStudioApi(layout: StudioLayout) {
         if (!refs[0]?.same) quick.title += ` · ${quick.component} is used in ${uses}${uses >= USES_LIMIT ? '+' : ''} places`;
         quick.summary += ` ${quick.component} is used in ${uses}${uses >= USES_LIMIT ? ' or more' : ''} places in your code: it changes in all of them.`;
       }
-      const change = await changes.preview({ title: quick.title, summary: quick.summary, said: text, refs, source: 'quick', edits: quick.edits, latencyMs: Date.now() - started });
+      let change: Change;
+      try {
+        change = await changes.preview({ title: quick.title, summary: quick.summary, said: text, refs, source: 'quick', edits: quick.edits, latencyMs: Date.now() - started });
+      } catch (err) {
+        const refused = staleResult(err);
+        if (!refused) throw err;
+        metrics.record({ ...base, result: 'stale', source: 'quick' });
+        return refused;
+      }
       metrics.record({ ...base, result: 'change', source: 'quick', latencyMs: change.latencyMs, changeId: change.id });
       return { kind: 'change', change };
     }
@@ -379,6 +392,11 @@ export async function createStudioApi(layout: StudioLayout) {
       return { kind: 'answer', text: out.text, source: agent.source, model, latencyMs };
     } catch (err) {
       if (err instanceof HttpError && err.status === 422) return { kind: 'message', text: 'The change didn’t modify anything. Try rephrasing.', tone: 'info' };
+      const refused = staleResult(err);
+      if (refused) {
+        metrics.record({ ...base, result: 'stale', source: agent.source, model });
+        return refused;
+      }
       const e = err instanceof AgentError ? err : new AgentError(err instanceof Error ? err.message : String(err), 'other');
       metrics.record({ ...base, result: 'error', code: e.code });
       if (e.code === 'no-key' || e.code === 'auth') return { kind: 'needs-key', text: e.message };
@@ -397,7 +415,14 @@ export async function createStudioApi(layout: StudioLayout) {
     const { project, changes, metrics } = ws();
     const r = propEdit(project, src, prop, value);
     if (r.kind === 'message') return { kind: 'message', text: r.text, tone: r.tone };
-    const change = await changes.preview({ title: r.title, summary: r.summary, said: `${prop}: ${value}`, source: 'quick', edits: r.edits, latencyMs: Date.now() - started });
+    let change: Change;
+    try {
+      change = await changes.preview({ title: r.title, summary: r.summary, said: `${prop}: ${value}`, source: 'quick', edits: r.edits, latencyMs: Date.now() - started });
+    } catch (err) {
+      const refused = staleResult(err);
+      if (refused) return refused;
+      throw err;
+    }
     metrics.record({ type: 'command', text: `${prop}=${value}`, words: 1, input: 'inspector', pointer: 'none', refs: 1, result: 'change', source: 'quick', latencyMs: change.latencyMs, changeId: change.id });
     return { kind: 'change', change };
   });
@@ -551,6 +576,8 @@ export async function createStudioApi(layout: StudioLayout) {
       }
       return { kind: 'answer', text: out.text, source: agent.source, model, latencyMs };
     } catch (err) {
+      const refused = staleResult(err);
+      if (refused) return refused;
       const e = err instanceof AgentError ? err : new AgentError(err instanceof Error ? err.message : String(err), 'other');
       if (e.code === 'no-key' || e.code === 'auth') return { kind: 'needs-key', text: e.message };
       return { kind: 'message', text: e.message, tone: e.code === 'aborted' ? 'info' : e.code === 'budget' ? 'warn' : 'error' };

@@ -69,7 +69,8 @@ export interface Change {
  * words to the AI, past the quick edits; connect-ai: Settings → AI; link-folder: link the app's code folder; open:
  * that code (file:line:col) in the editor.
  */
-export type NextStep = { kind: 'ask-ai' } | { kind: 'connect-ai' } | { kind: 'link-folder' } | { kind: 'open'; src: string };
+/** `retry`: ask the same again (a file it changes was saved while it was being made, so it wasn’t written). */
+export type NextStep = { kind: 'ask-ai' } | { kind: 'connect-ai' } | { kind: 'link-folder' } | { kind: 'open'; src: string } | { kind: 'retry' };
 
 export type IntentResult =
   | { kind: 'change'; change: Change }

@@ -43,6 +43,8 @@ const HISTORY = 200;
  * Previews stack: "make this bigger", then "and red", then "keep it" keeps
  * both. Undo always peels off the newest preview first, restoring the exact
  * previous content, and refuses if the file was edited elsewhere meanwhile.
+ * A change is written only over the files it was made from: one saved while it
+ * was being made is never written over.
  *
  * The list is journaled in the app's data folder before any file is touched, so previews outlive a restart or a
  * crash of the studio: they come back as previews, still undoable.
@@ -76,11 +78,25 @@ export class ChangeStore {
   /**
    * Put files in place as one change. With several, the app's dev server is asked first to hold the page's updates
    * until all of them are written (the Saywright plugin does), and each is written beside its place before any is
-   * moved in: a page never runs half of a change.
+   * moved in: a page never runs half of a change. `check` runs last, right before the writing, with nothing waited
+   * on in between: what it finds is what is written over.
    */
-  private async land(files: { path: string; content: string | null }[]): Promise<void> {
+  private async land(files: { path: string; content: string | null }[], check: () => void = () => undefined): Promise<void> {
     if (files.length > 1) await this.holdUpdates(this.project.url, files.map((f) => this.project.resolve(f.path)));
+    check();
     writeTogether(this.project, files);
+  }
+
+  /**
+   * Each file still as the change was made from it. Otherwise it was written since (in an editor, by a formatter, by
+   * another change), and writing the change would lose that: it is refused, and nothing is written.
+   */
+  private unchanged(edits: FileEdit[]): void {
+    for (const e of edits) {
+      if (this.current(e.path) === e.before) continue;
+      const what = e.before === null ? `${e.path} was created` : this.project.exists(e.path) ? `${e.path} changed` : `${e.path} was deleted`;
+      throw new HttpError(409, `${what} while this change was being made (in your editor, or by another change), so it wasn’t written and nothing was lost. Ask again to make it on the file as it is now.`, 'stale');
+    }
   }
 
   private current(rel: string): string | null {
@@ -108,6 +124,7 @@ export class ChangeStore {
   private async write(input: NewChange): Promise<Change> {
     const edits = input.edits.filter((e) => e.before !== e.after);
     if (!edits.length) throw new HttpError(422, 'That change would not modify any file');
+    this.unchanged(edits);
     const change: Change = {
       id: randomUUID().slice(0, 8),
       title: input.title,
@@ -125,11 +142,19 @@ export class ChangeStore {
     this.changes.push(change);
     this.edits.set(change.id, edits);
     this.save();
+    let writing = false;
     try {
-      await this.land(edits.map((e) => ({ path: e.path, content: e.after })));
+      // Checked again once the page's updates are held: a file saved meanwhile is never written over.
+      await this.land(
+        edits.map((e) => ({ path: e.path, content: e.after })),
+        () => {
+          this.unchanged(edits);
+          writing = true;
+        },
+      );
     } catch (err) {
-      // Put back any file already in place, so the project is never half-changed.
-      for (const e of edits) {
+      // Put back any file already in place, so the project is never half-changed (none was, when it was refused).
+      for (const e of writing ? edits : []) {
         if (this.current(e.path) !== e.after) continue;
         if (e.before === null) this.project.remove(e.path);
         else this.project.write(e.path, e.before);
@@ -184,24 +209,29 @@ export class ChangeStore {
       throw new HttpError(409, 'That change was kept in an earlier run of the studio, so its previous code isn’t stored any more. Undo it in your editor or with git.');
     }
 
-    if (!opts.force) {
-      // Simulate the rollback in memory to make sure nothing else touched these files.
+    // Simulate the rollback in memory to make sure nothing else touched these files: before, and again right before
+    // the files are written.
+    const untouched = () => {
       const expected = new Map<string, string | null>();
       for (const c of stack) {
         for (const e of (this.edits.get(c.id) ?? []).slice().reverse()) {
-          const current = expected.has(e.path) ? expected.get(e.path)! : this.project.exists(e.path) ? this.project.read(e.path) : null;
+          const current = expected.has(e.path) ? expected.get(e.path)! : this.current(e.path);
           if (current !== e.after) {
             throw new HttpError(409, `${e.path} was edited after this change, so undoing it here could lose work. Undo it in your editor instead.`, 'conflict');
           }
           expected.set(e.path, e.before);
         }
       }
-    }
+    };
+    if (!opts.force) untouched();
 
     // Each file as it was before the oldest of these changes, put back together.
     const restored = new Map<string, string | null>();
     for (const c of stack) for (const e of (this.edits.get(c.id) ?? []).slice().reverse()) restored.set(e.path, e.before);
-    await this.land([...restored].map(([p, content]) => ({ path: p, content })));
+    await this.land(
+      [...restored].map(([p, content]) => ({ path: p, content })),
+      opts.force ? undefined : untouched,
+    );
     const now = Date.now();
     for (const c of stack) {
       c.status = 'undone';

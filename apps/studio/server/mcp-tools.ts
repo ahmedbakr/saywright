@@ -10,6 +10,7 @@ import { ProposeChange } from './ai/agent.ts';
 import { jsonSchemaOf } from './ai/llm/types.ts';
 import { applyEditSpecs, listFilesTool, readFileTool, searchTool } from './ai/tools.ts';
 import { appAddress, type AppManager } from './apps/manager.ts';
+import { HttpError } from './http.ts';
 import type { McpTool } from './mcp.ts';
 
 export interface StudioContext {
@@ -102,7 +103,11 @@ export function mcpTools(deps: Deps): McpTool[] {
         const parsed = ProposeChange.safeParse(args);
         if (!parsed.success) throw new Error(`The change didn’t match the expected shape: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
         const edits = applyEditSpecs(w.project, parsed.data.edits);
-        const change = await w.changes.preview({ title: parsed.data.title.slice(0, 80), summary: parsed.data.summary, said: `From ${caller.name}`, source: 'ai', model: caller.name, edits, latencyMs: 0 });
+        const change = await w.changes.preview({ title: parsed.data.title.slice(0, 80), summary: parsed.data.summary, said: `From ${caller.name}`, source: 'ai', model: caller.name, edits, latencyMs: 0 }).catch((err: unknown) => {
+          // A file saved meanwhile: never written over, and the caller is told to start from it as it is now.
+          if (err instanceof HttpError && err.code === 'stale') throw new Error(`${err.message.replace(/ Ask again.*$/, '')} Read the file again and propose the change on it as it is now.`);
+          throw err;
+        });
         deps.emit('change', { change, via: caller.name });
         return { text: `The change is live in Saywright (${change.files.map((f) => f.path).join(', ')}). The person will keep or undo it there.`, data: { id: change.id, files: change.files.map((f) => f.path) } };
       },

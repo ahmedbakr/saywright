@@ -95,6 +95,73 @@ describe('ChangeStore', () => {
   });
 });
 
+describe('a change made from files saved since', () => {
+  it('is never written over what was saved: refused, nothing written, and undo has nothing of it to put back', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    const original = p.read('src/lib/money.ts');
+    // Made from the file as it was, then the file is saved in an editor before the change is written.
+    const prepared = edit(p, 'toFixed(2)', 'toFixed(3)');
+    const saved = `${original}// saved in the editor\n`;
+    p.write('src/lib/money.ts', saved);
+    const refused = await store.preview({ title: 'late', source: 'ai', edits: [prepared] }).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 409, code: 'stale', message: expect.stringMatching(/^src\/lib\/money\.ts changed while this change was being made .* nothing was lost\. Ask again/) });
+    expect(p.read('src/lib/money.ts')).toBe(saved);
+    expect(store.list()).toEqual([]);
+    await expect(store.undo()).rejects.toThrow(/Nothing to undo/);
+    expect(p.read('src/lib/money.ts')).toBe(saved);
+  });
+
+  it('two changes made from the same file at once: the second is refused, not written over the first', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    const a = edit(p, 'toFixed(2)', 'toFixed(3)');
+    const b = edit(p, '$${n', 'USD ${n');
+    const [first, second] = await Promise.allSettled([store.preview({ title: 'a', source: 'ai', edits: [a] }), store.preview({ title: 'b', source: 'quick', edits: [b] })]);
+    expect(first.status).toBe('fulfilled');
+    expect(second).toMatchObject({ status: 'rejected', reason: { code: 'stale' } });
+    expect(p.read('src/lib/money.ts')).toBe(a.after);
+    expect(store.previews().map((c) => c.title)).toEqual(['a']);
+  });
+
+  it('a file to be created that was created meanwhile, or one deleted meanwhile, is refused too', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    p.write('src/lib/new.ts', 'export const mine = 1;\n');
+    await expect(store.preview({ title: 'new', source: 'ai', edits: [{ path: 'src/lib/new.ts', before: null, after: 'export const theirs = 2;\n' }] })).rejects.toThrow(/^src\/lib\/new\.ts was created while/);
+    expect(p.read('src/lib/new.ts')).toBe('export const mine = 1;\n');
+    const money = edit(p, 'toFixed(2)', 'toFixed(3)');
+    fs.unlinkSync(p.resolve('src/lib/money.ts'));
+    await expect(store.preview({ title: 'gone', source: 'ai', edits: [money] })).rejects.toThrow(/^src\/lib\/money\.ts was deleted while/);
+    expect(p.exists('src/lib/money.ts')).toBe(false);
+  });
+
+  it('is checked again right before writing: a file saved while the page’s updates were being held is not written over', async () => {
+    const p = tempShop();
+    const cart = p.read('src/lib/cart.ts');
+    const saved = `${cart}// saved while waiting\n`;
+    // The app takes a moment to hold its page's updates, and the file is saved in that moment.
+    const store = new ChangeStore(p, async () => void p.write('src/lib/cart.ts', saved));
+    const money = p.read('src/lib/money.ts');
+    await expect(store.preview({ title: 'two files', source: 'ai', edits: [edit(p, 'toFixed(2)', 'toFixed(3)'), { path: 'src/lib/cart.ts', before: cart, after: `${cart}// added\n` }] })).rejects.toMatchObject({ code: 'stale' });
+    expect([p.read('src/lib/money.ts'), p.read('src/lib/cart.ts')]).toEqual([money, saved]);
+    expect(store.list()).toEqual([]);
+  });
+
+  it('undo is checked again right before writing too', async () => {
+    const p = tempShop();
+    let save: (() => void) | null = null;
+    const store = new ChangeStore(p, async () => save?.());
+    const cart = p.read('src/lib/cart.ts');
+    await store.preview({ title: 'two files', source: 'ai', edits: [edit(p, 'toFixed(2)', 'toFixed(3)'), { path: 'src/lib/cart.ts', before: cart, after: `${cart}// added\n` }] });
+    const saved = `${cart}// added\n// and saved in the editor\n`;
+    save = () => p.write('src/lib/cart.ts', saved);
+    await expect(store.undo()).rejects.toMatchObject({ code: 'conflict' });
+    expect(p.read('src/lib/cart.ts')).toBe(saved);
+    expect(p.read('src/lib/money.ts')).toContain('toFixed(3)');
+  });
+});
+
 describe('a change of several files', () => {
   it('asks the app to hold its page’s updates before any file changes, then puts them all in place', async () => {
     const p = tempShop();

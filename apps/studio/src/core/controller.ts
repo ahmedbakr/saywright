@@ -61,6 +61,12 @@ interface IntentAsk {
   ai?: boolean;
 }
 
+/** The ways on from a refusal: `again` asks the AI past the quick edits; `retry` asks the same again (a file changed meanwhile). */
+interface Ways {
+  again?: () => void;
+  retry?: () => void;
+}
+
 interface Pointer {
   x: number;
   y: number;
@@ -789,7 +795,7 @@ class Controller {
     if (!sel?.src) return;
     try {
       const res = await api.post<IntentResult>('/props', { src: sel.src, prop, value });
-      this.applyResult(res, `${prop}: ${value}`, [sel]);
+      this.applyResult(res, `${prop}: ${value}`, [sel], { retry: () => void this.setProp(prop, value) });
     } catch (err) {
       this.fail(err);
     }
@@ -1364,7 +1370,7 @@ class Controller {
       run: async (id, stopped) => {
         try {
           const res = await api.post<IntentResult>('/intent', { text: req.text, refs: req.refs, requestId: id, input: req.input, pointer: req.pointer, pageUrl: req.pageUrl, ...(req.ai ? { ai: true } : {}) });
-          this.settle(id, res, req.text, req.els, { stopped: stopped(), epoch, again: () => void this.intent({ ...req, ai: true }) });
+          this.settle(id, res, req.text, req.els, { stopped: stopped(), epoch, again: () => void this.intent({ ...req, ai: true }), retry: () => void this.intent(req) });
         } finally {
           void this.refreshSummary();
         }
@@ -1376,7 +1382,7 @@ class Controller {
    * A request's result. A change is in the files now, so it is always shown, even when the request was stopped
    * meanwhile; an answer or a message only while it is still wanted. Returns whether it was a change.
    */
-  private settle(id: string, res: IntentResult, said: string, els: ElementInfo[], how: { stopped: boolean; epoch: number; again?: () => void }): boolean {
+  private settle(id: string, res: IntentResult, said: string, els: ElementInfo[], how: { stopped: boolean; epoch: number } & Ways): boolean {
     if (get().request?.id === id) set({ request: null });
     // Another app is open now: its change waits in that app's list, shown when it is opened again.
     if (how.epoch !== this.appEpoch) return false;
@@ -1385,11 +1391,11 @@ class Controller {
       if (how.stopped) this.notify(`It was done before it could stop: “${res.change.title}” is a preview now. Keep or undo it.`, 'info');
       return true;
     }
-    if (!how.stopped) this.applyResult(res, said, els, how.again);
+    if (!how.stopped) this.applyResult(res, said, els, how);
     return false;
   }
 
-  private applyResult(res: IntentResult, said: string, els: ElementInfo[], again?: () => void): void {
+  private applyResult(res: IntentResult, said: string, els: ElementInfo[], ways: Ways = {}): void {
     switch (res.kind) {
       case 'change': {
         this.upsertChange(res.change);
@@ -1403,21 +1409,23 @@ class Controller {
         return;
       case 'message':
         if (res.tone === 'error') play('error');
-        return this.notify(res.text, res.tone === 'error' ? 'error' : res.tone === 'warn' ? 'warn' : 'info', this.nextActions(res.next, again));
+        return this.notify(res.text, res.tone === 'error' ? 'error' : res.tone === 'warn' ? 'warn' : 'info', this.nextActions(res.next, ways));
       case 'needs-key':
-        set({ island: { kind: 'needs-key', text: res.text, actions: this.nextActions(res.next, again) } });
+        set({ island: { kind: 'needs-key', text: res.text, actions: this.nextActions(res.next, ways) } });
         return;
     }
   }
 
   /** The way forward a refusal offers, as the island's buttons. */
-  private nextActions(next: NextStep[] | undefined, again?: () => void): IslandAction[] | undefined {
+  private nextActions(next: NextStep[] | undefined, { again, retry }: Ways = {}): IslandAction[] | undefined {
     const actions = (next ?? []).flatMap((n): IslandAction[] => {
       switch (n.kind) {
         case 'ask-ai': {
           const who = aiName(get().status?.ai.who);
           return again ? [{ label: who === 'AI' ? 'Ask the AI anyway' : `Ask ${who} anyway`, primary: true, run: () => (this.dismissIsland(), again()) }] : [];
         }
+        case 'retry':
+          return retry ? [{ label: 'Ask again', primary: true, run: () => (this.dismissIsland(), retry()) }] : [];
         case 'connect-ai':
           return [{ label: 'Connect an AI', primary: true, run: () => set({ overlay: 'settings', settingsTab: 'ai', island: { kind: 'idle' } }) }];
         case 'link-folder':
@@ -1607,7 +1615,7 @@ class Controller {
       step: 'Working',
       run: async (id, stopped) => {
         const res = await api.post<IntentResult>('/intent', { text: text.slice(0, 1990), refs, requestId: id, input: 'typed', pointer: 'none', pageUrl: get().app.url });
-        this.settle(id, res, f.title, [], { stopped: stopped(), epoch });
+        this.settle(id, res, f.title, [], { stopped: stopped(), epoch, retry: () => void this.fixFromReport(f, items, a) });
       },
     });
   }
@@ -1676,7 +1684,7 @@ class Controller {
       step: 'Working',
       run: async (id, stopped) => {
         const res = await api.post<IntentResult>('/intent', { text, brief: brief.slice(0, 16_000), refs, requestId: id, input: 'typed', pointer: 'none', pageUrl: get().app.url });
-        this.settle(id, res, label, [], { stopped: stopped(), epoch });
+        this.settle(id, res, label, [], { stopped: stopped(), epoch, retry: () => void this.reportTask(text, brief, refs, label) });
       },
     });
   }
@@ -1885,7 +1893,7 @@ class Controller {
       step: 'Reading the failing test',
       run: async (id, stopped) => {
         const res = await api.post<IntentResult>('/fix', { ...body, requestId: id });
-        if (!this.settle(id, res, 'fix it', [], { stopped: stopped(), epoch }) || stopped()) return;
+        if (!this.settle(id, res, 'fix it', [], { stopped: stopped(), epoch, retry: () => void this.fix(input) }) || stopped()) return;
         if (res.kind !== 'change') return;
         set({ recorder: { ...get().recorder, verifying: true, baseline } });
         // Check the fix against the same test straight away.
