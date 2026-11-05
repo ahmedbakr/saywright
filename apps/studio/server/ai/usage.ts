@@ -126,7 +126,15 @@ function refusal(l: Limit, need: number | null, held: boolean): string {
   const of = `your ${amount(l.limit)} ${l.name}`;
   if (l.limit <= 0) return l.dollars ? `Your ${l.name} is $0.00, so no paid AI requests are made.` : `Your ${l.name} is 0, so no AI requests are made.`;
   if (need === null || (l.left <= 0 && !held)) return `Used ${amount(l.spent)} of ${of}${held && l.spent < l.limit ? ', and requests running now may take the rest' : ''}.`;
-  return `This could ${l.dollars ? `cost up to ${money(need)}` : `use up to ${compact(Math.round(need))} tokens`}, and ${amount(l.left)} of ${of} is left${held ? ' while other requests are running' : ''}.`;
+  // Two amounts that read the same once rounded (“up to $0.01, and $0.01 … is left”) are written closely enough to differ.
+  let most = l.dollars ? money(need) : compact(Math.round(need));
+  let left = amount(l.left);
+  if (most === left) {
+    const exact = (n: number) => (l.dollars ? `$${Math.max(0, n).toFixed(4)}` : Math.max(0, Math.round(n)).toLocaleString('en-US'));
+    most = exact(need);
+    left = exact(l.left);
+  }
+  return `This could ${l.dollars ? `cost up to ${most}` : `use up to ${most} tokens`}, and ${left} of ${of} is left${held ? ' while other requests are running' : ''}.`;
 }
 
 export class UsageLedger {

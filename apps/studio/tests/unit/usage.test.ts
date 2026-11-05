@@ -115,6 +115,14 @@ describe('the usage ledger', () => {
     expect(l.hold({ input: 100, maxTokens: 3000, minTokens: 3000, price: SONNET, billed: true }, NOON)).toEqual({ refused: 'This could cost up to $0.03, and $0.01 of your $0.01 daily budget is left.' });
   });
 
+  it('says how much a call could cost and how much is left closely enough to tell them apart', () => {
+    const l = new UsageLedger(dir());
+    l.setBudget({ dailyUsd: 0.0105, monthlyUsd: null, mode: 'stop' });
+    expect(l.hold({ input: 400, maxTokens: 1000, minTokens: 1000, price: SONNET, billed: true }, NOON)).toEqual({ refused: 'This could cost up to $0.0110, and $0.0105 of your $0.01 daily budget is left.' });
+    l.setBudget({ dailyUsd: null, dailyTokens: 1250 });
+    expect(l.hold({ input: 300, maxTokens: 1000, minTokens: 1000, price: SONNET, billed: true }, NOON)).toEqual({ refused: 'This could use up to 1,300 tokens, and 1,250 of your 1K daily tokens is left.' });
+  });
+
   it('calls made at the same time hold their cost for each other, so together they can’t go past a limit', () => {
     const l = new UsageLedger(dir());
     l.setBudget({ dailyUsd: 0.015, monthlyUsd: null, mode: 'stop' });
