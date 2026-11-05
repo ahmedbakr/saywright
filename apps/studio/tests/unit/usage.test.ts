@@ -2,10 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { UsageLedger, type UsageEntry } from '../../server/ai/usage';
+import { UsageLedger, type Hold, type UsageEntry } from '../../server/ai/usage';
+import type { Price } from '../../shared/ai';
 
 const dir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-usage-'));
 const NOON = new Date(2026, 9, 15, 12, 0, 0).getTime();
+/** Claude Sonnet 5.5's price, per million tokens. */
+const SONNET: Price = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 };
 
 const call = (over: Partial<UsageEntry> = {}): UsageEntry => ({
   t: NOON,
@@ -78,18 +81,62 @@ describe('the usage ledger', () => {
     expect(l.totals(NOON + 1000).month.calls).toBe(2);
   });
 
-  it('a call that would go past a stopping budget isn’t sent: its expected cost is counted in', () => {
+  it('a call that could go past a stopping budget isn’t sent; one that fits goes ahead, its room to answer cut to what is left', () => {
     const l = new UsageLedger(dir());
     l.setBudget({ dailyUsd: 0.5, monthlyUsd: null, mode: 'stop' });
     l.record(call({ usd: 0.47 }));
-    // $0.47 of $0.50 used: a small call goes ahead, a report of 100,000 tokens doesn't.
-    expect(l.allow(NOON, 0.02).ok).toBe(true);
-    const big = l.allow(NOON, 0.24, 110_000);
-    expect(big.ok).toBe(false);
-    expect(big.status.message).toBe('Used $0.47 of your $0.50 daily budget, and this would take about $0.24 more.');
-    // Only warning: it goes ahead.
+    // $0.03 left: 1,000 tokens in (at most $0.0025, written to the cache) leaves room for 2,750 tokens of answer.
+    const turn = { input: 1000, maxTokens: 16_000, price: SONNET, billed: true };
+    expect(l.hold({ ...turn, minTokens: 4000 }, NOON)).toEqual({ refused: 'This could cost up to $0.04, and $0.03 of your $0.50 daily budget is left.' });
+    expect(l.hold({ ...turn, minTokens: 1000 }, NOON)).toMatchObject({ maxTokens: 2750 });
+    // Only warning: it goes ahead as asked.
     l.setBudget({ mode: 'warn' });
-    expect(l.allow(NOON, 0.24).ok).toBe(true);
+    expect(l.hold({ ...turn, minTokens: 4000 }, NOON)).toMatchObject({ maxTokens: 16_000 });
+  });
+
+  it('a limit of $0 is a limit: no paid call is made, while a plan’s and a local model’s go ahead', () => {
+    const l = new UsageLedger(dir());
+    l.setBudget({ dailyUsd: 0, monthlyUsd: null, mode: 'stop' });
+    expect(l.status(NOON).level).toBe('ok');
+    const paid = { input: 500, maxTokens: 1000, minTokens: 1000, price: SONNET, billed: true };
+    expect(l.hold(paid, NOON)).toEqual({ refused: 'Your daily budget is $0.00, so no paid AI requests are made.' });
+    expect(l.hold({ ...paid, price: null }, NOON)).toHaveProperty('refused');
+    expect(l.allow(NOON, true)).toMatchObject({ ok: false, status: { message: 'Your daily budget is $0.00, so no paid AI requests are made.' } });
+    expect(l.hold({ ...paid, billed: false }, NOON)).toMatchObject({ maxTokens: 1000 });
+    expect(l.allow(NOON, false).ok).toBe(true);
+    // Anything spent at all is past it.
+    l.record(call({ usd: 0.001 }));
+    expect(l.status(NOON).level).toBe('over');
+  });
+
+  it('a limit of $0.01 never lets through a call that could cost $0.03', () => {
+    const l = new UsageLedger(dir());
+    l.setBudget({ dailyUsd: 0.01, monthlyUsd: null, mode: 'stop' });
+    expect(l.hold({ input: 100, maxTokens: 3000, minTokens: 3000, price: SONNET, billed: true }, NOON)).toEqual({ refused: 'This could cost up to $0.03, and $0.01 of your $0.01 daily budget is left.' });
+  });
+
+  it('calls made at the same time hold their cost for each other, so together they can’t go past a limit', () => {
+    const l = new UsageLedger(dir());
+    l.setBudget({ dailyUsd: 0.015, monthlyUsd: null, mode: 'stop' });
+    const report = { input: 10, maxTokens: 1000, minTokens: 1000, price: SONNET, billed: true };
+    const first = l.hold(report, NOON);
+    expect(first).toMatchObject({ maxTokens: 1000 });
+    expect(l.hold(report, NOON)).toEqual({ refused: 'This could cost up to $0.01, and <$0.01 of your $0.01 daily budget is left while other requests are running.' });
+    // Once the first is recorded (it used less than it could have), what is really left counts.
+    l.record(call({ usd: 0.004 }));
+    l.release(first as Hold);
+    expect(l.hold(report, NOON)).toMatchObject({ maxTokens: 1000 });
+  });
+
+  it('a call whose price isn’t known goes ahead only while the dollar limit isn’t used up', () => {
+    const l = new UsageLedger(dir());
+    l.setBudget({ dailyUsd: 1, monthlyUsd: null, mode: 'stop' });
+    const odd = { input: 100, maxTokens: 1000, minTokens: 1000, price: undefined, billed: true };
+    const held = l.hold(odd, NOON);
+    expect(held).toMatchObject({ maxTokens: 1000, usd: 0 });
+    l.release(held as Hold);
+    l.record(call({ usd: 1 }));
+    expect(l.hold(odd, NOON)).toEqual({ refused: 'Used $1.00 of your $1.00 daily budget.' });
   });
 
   it('a daily token limit covers plans and local models too', () => {

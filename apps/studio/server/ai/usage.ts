@@ -6,11 +6,15 @@
  * and this month feed the budget: a warning near a limit, and, when the person
  * chose it, a stop at the limit until they raise it or reset the count.
  *
+ * A stop is a hard limit: before a call is sent, the most it can cost is held
+ * against the budget (see `hold`), so no call, and no calls made at the same
+ * time, can together go past it.
+ *
  * One JSON line per call, a file per month, in the studio's data folder.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_BUDGET, FEATURES, type Budget, type BudgetStatus, type ProviderKind, type Usage, type UsageRow, type UsageSummary, type UsageTotals } from '../../shared/ai.ts';
+import { DEFAULT_BUDGET, FEATURES, type Budget, type BudgetStatus, type Price, type ProviderKind, type Usage, type UsageRow, type UsageSummary, type UsageTotals } from '../../shared/ai.ts';
 import { readJson, writeJson } from '../fsx.ts';
 
 export interface UsageEntry extends Usage {
@@ -28,6 +32,37 @@ export interface UsageEntry extends Usage {
   /** What prompt caching saved. */
   saved?: number;
   ms?: number;
+}
+
+/** What a call may be charged, before it is sent. */
+export interface CallSize {
+  /** The tokens it sends, about (counted generously). */
+  input: number;
+  /** The most it may answer. */
+  maxTokens: number;
+  /** The least room to answer it is still worth sending for: with less left in the budget it is refused, not cut short. */
+  minTokens: number;
+  /** Its model's price, when known. */
+  price?: Price | null;
+  /** Paid in dollars (an API key). A plan's calls and a local model's are counted in tokens only. */
+  billed: boolean;
+}
+
+/** A call's most possible cost, held against the budget until it is recorded or fails. */
+export interface Hold {
+  /** The room it may answer in: as asked, or less when the budget has less left. */
+  maxTokens: number;
+  usd: number;
+  tokens: number;
+}
+
+interface Limit {
+  dollars: boolean;
+  /** What is left of it, after what was spent and what calls still running hold. */
+  left: number;
+  spent: number;
+  limit: number;
+  name: string;
 }
 
 interface State {
@@ -72,11 +107,31 @@ const tokensOf = (t: Pick<UsageTotals, 'input' | 'output' | 'cacheRead' | 'cache
 
 const money = (usd: number) => (usd < 0.01 && usd > 0 ? '<$0.01' : `$${usd.toFixed(2)}`);
 const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
+/** How much of a limit is used: past it at once when the limit is zero and anything at all is used. */
+const share = (used: number, limit: number) => (limit > 0 ? used / limit : used > 0 ? Infinity : 0);
+
+/** A model's dearest rates per token for a call that sends `input` tokens: all of it as if written to the cache. */
+function dearest(price: Price | null | undefined, input: number): { input: number; output: number } | null {
+  if (!price) return null;
+  const p = price.long && price.longAbove !== undefined && input > price.longAbove ? price.long : price;
+  return { input: Math.max(p.input, p.cacheWrite ?? p.input) / 1e6, output: p.output / 1e6 };
+}
+
+/** Why a call is refused: a limit used up, or one with too little left for it. */
+function refusal(l: Limit, need: number | null, held: boolean): string {
+  const amount = (n: number) => (l.dollars ? money(Math.max(0, n)) : compact(Math.max(0, Math.round(n))));
+  const of = `your ${amount(l.limit)} ${l.name}`;
+  if (l.limit <= 0) return l.dollars ? `Your ${l.name} is $0.00, so no paid AI requests are made.` : `Your ${l.name} is 0, so no AI requests are made.`;
+  if (need === null || (l.left <= 0 && !held)) return `Used ${amount(l.spent)} of ${of}${held && l.spent < l.limit ? ', and requests running now may take the rest' : ''}.`;
+  return `This could ${l.dollars ? `cost up to ${money(need)}` : `use up to ${compact(Math.round(need))} tokens`}, and ${amount(l.left)} of ${of} is left${held ? ' while other requests are running' : ''}.`;
+}
 
 export class UsageLedger {
   private state: State;
   /** Entries by month ("2026-10"), loaded on first use. */
   private months = new Map<string, UsageEntry[]>();
+  /** What calls being made right now hold against the budget. */
+  private holds = new Set<Hold>();
 
   constructor(private dir: string) {
     fs.mkdirSync(dir, { recursive: true });
@@ -183,9 +238,10 @@ export class UsageLedger {
     const b = this.state.budget;
     const { today, month } = this.totals(now);
     const parts: { used: number; text: string }[] = [];
-    if (b.dailyUsd) parts.push({ used: (today.usd + extraUsd) / b.dailyUsd, text: `${money(today.usd)} of your ${money(b.dailyUsd)} daily budget` });
-    if (b.monthlyUsd) parts.push({ used: (month.usd + extraUsd) / b.monthlyUsd, text: `${money(month.usd)} of your ${money(b.monthlyUsd)} monthly budget` });
-    if (b.dailyTokens) parts.push({ used: (tokensOf(today) + extraTokens) / b.dailyTokens, text: `${compact(tokensOf(today))} of your ${compact(b.dailyTokens)} daily tokens` });
+    // A limit of zero is a limit: nothing may be spent.
+    if (b.dailyUsd != null) parts.push({ used: share(today.usd + extraUsd, b.dailyUsd), text: `${money(today.usd)} of your ${money(b.dailyUsd)} daily budget` });
+    if (b.monthlyUsd != null) parts.push({ used: share(month.usd + extraUsd, b.monthlyUsd), text: `${money(month.usd)} of your ${money(b.monthlyUsd)} monthly budget` });
+    if (b.dailyTokens != null) parts.push({ used: share(tokensOf(today) + extraTokens, b.dailyTokens), text: `${compact(tokensOf(today))} of your ${compact(b.dailyTokens)} daily tokens` });
     if (!parts.length) return { level: 'ok', message: null, used: 0 };
     const worst = parts.reduce((a, c) => (c.used > a.used ? c : a));
     if (worst.used >= 1) return { level: 'over', used: worst.used, message: `Used ${worst.text}.` };
@@ -193,18 +249,68 @@ export class UsageLedger {
     return { level: 'ok', used: worst.used, message: null };
   }
 
-  /**
-   * Whether a call may go ahead. In "stop" mode, not once a limit is reached, nor when the call itself (`extraUsd`,
-   * `extraTokens`: what it is expected to cost) would go past one.
-   */
-  allow(now = Date.now(), extraUsd = 0, extraTokens = 0): { ok: boolean; status: BudgetStatus } {
-    const status = this.status(now, extraUsd, extraTokens);
-    const stop = status.level === 'over' && this.state.budget.mode === 'stop';
-    if (stop && (extraUsd > 0 || extraTokens > 0) && this.status(now).level !== 'over') {
-      const more = extraUsd > 0 ? `about ${money(extraUsd)} more` : `about ${compact(extraTokens)} more tokens`;
-      return { ok: false, status: { ...status, message: `${(status.message ?? 'Near your budget.').replace(/\.$/, '')}, and this would take ${more}.` } };
+  /** The limits a call is held to in "stop" mode: dollars when it is paid in dollars, tokens always. */
+  private limits(now: number, billed: boolean): Limit[] {
+    const b = this.state.budget;
+    const { today, month } = this.totals(now);
+    let usd = 0;
+    let tokens = 0;
+    for (const h of this.holds) {
+      usd += h.usd;
+      tokens += h.tokens;
     }
-    return { ok: !stop, status };
+    const out: Limit[] = [];
+    if (billed && b.dailyUsd != null) out.push({ dollars: true, left: b.dailyUsd - today.usd - usd, spent: today.usd, limit: b.dailyUsd, name: 'daily budget' });
+    if (billed && b.monthlyUsd != null) out.push({ dollars: true, left: b.monthlyUsd - month.usd - usd, spent: month.usd, limit: b.monthlyUsd, name: 'monthly budget' });
+    if (b.dailyTokens != null) out.push({ dollars: false, left: b.dailyTokens - tokensOf(today) - tokens, spent: tokensOf(today), limit: b.dailyTokens, name: 'daily tokens' });
+    return out;
+  }
+
+  /**
+   * Whether a call whose size isn't known (a subscription app's run) may start. In "stop" mode, not once a limit
+   * it is held to is used up (`billed`: it is paid in dollars, so the dollar limits count too).
+   */
+  allow(now = Date.now(), billed = true): { ok: boolean; status: BudgetStatus } {
+    const status = this.status(now);
+    if (this.state.budget.mode !== 'stop') return { ok: true, status };
+    const out = this.limits(now, billed).find((l) => l.left <= 0);
+    return out ? { ok: false, status: { ...status, level: 'over', message: refusal(out, null, this.holds.size > 0) } } : { ok: true, status };
+  }
+
+  /**
+   * Before a call is sent, in "stop" mode: the most it can cost (what it sends, at the dearest rate it may be billed
+   * at, and the most it may answer) is held against every limit it is held to until it is recorded or fails, so
+   * calls made at the same time count each other and can't together go past a limit. Its room to answer is cut to
+   * what the budget has left, but not below `minTokens`: then it is refused, with why. In "warn" mode it goes ahead
+   * as asked. Let the hold go with `release` once what the call used is recorded.
+   */
+  hold(call: CallSize, now = Date.now()): Hold | { refused: string } {
+    const asked: Hold = { maxTokens: call.maxTokens, usd: 0, tokens: 0 };
+    if (this.state.budget.mode !== 'stop') return asked;
+    const rate = call.billed ? dearest(call.price, call.input) : { input: 0, output: 0 };
+    const sent = rate ? call.input * rate.input : 0;
+    let room = call.maxTokens;
+    let short: Limit | null = null;
+    for (const l of this.limits(now, call.billed)) {
+      // The room this limit leaves to answer in, after what the call sends. A call whose price isn't known can't be
+      // measured in dollars: it may go only while the limit isn't used up.
+      const fits = !l.dollars ? l.left - call.input : !rate ? (l.left > 0 ? Infinity : -1) : rate.output > 0 ? Math.floor((l.left - sent) / rate.output) : l.left >= sent ? Infinity : -1;
+      if (fits < room) {
+        room = fits;
+        short = l;
+      }
+    }
+    const least = Math.min(call.minTokens, call.maxTokens);
+    // What it needs at least: unknown in dollars when its price is.
+    const need = !short?.dollars ? call.input + least : rate ? sent + least * rate.output : null;
+    if (short && room < least) return { refused: refusal(short, need, this.holds.size > 0) };
+    const hold: Hold = { maxTokens: room, usd: sent + room * (rate?.output ?? 0), tokens: call.input + room };
+    this.holds.add(hold);
+    return hold;
+  }
+
+  release(hold: Hold): void {
+    this.holds.delete(hold);
   }
 
   summary(now = Date.now(), appNames: Record<string, string> = {}): UsageSummary {

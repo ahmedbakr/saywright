@@ -6,13 +6,13 @@
  */
 import path from 'node:path';
 import type { z } from 'zod';
-import { AI_TASKS, type AiEffort, type AiState, type AiTask, type ConnectionView, type Usage } from '../../shared/ai.ts';
+import { AI_TASKS, type AiEffort, type AiState, type AiTask, type ConnectionView, type Price, type Usage } from '../../shared/ai.ts';
 import { costOf, modelInfo, savedBy } from '../../shared/models.ts';
 import type { McpServer } from '../mcp.ts';
 import { ModelAgent } from './agent.ts';
 import { CliAgent, cliJson, type CliDeps, type CliKind, type CliUsage } from './cli.ts';
 import { Connections, kindLabel } from './connections.ts';
-import { dropNulls, type ChatModel, type ChatResult, type Msg, type Part } from './llm/types.ts';
+import { dropNulls, inputTokens, jsonSchemaOf, type Admit, type ChatModel, type ChatResult, type Msg, type Part } from './llm/types.ts';
 import { AgentError, type AgentProvider } from './types.ts';
 import { UsageLedger } from './usage.ts';
 
@@ -45,6 +45,7 @@ interface AiDeps {
 }
 
 const CLI_KINDS = new Set(['claude-code', 'codex', 'gemini-cli']);
+const CARRY_ON = 'Raise the limit or reset the count in Settings → Usage and budget to carry on.';
 
 export class AiService {
   readonly connections: Connections;
@@ -61,17 +62,51 @@ export class AiService {
     return this.connections.config.effort;
   }
 
-  /** Throws when the budget says stop (with `call`, what the call about to be made is expected to cost, counted in). */
-  gate(call?: { usd: number; tokens: number }): void {
-    const { ok, status } = this.usage.allow(Date.now(), call?.usd ?? 0, call?.tokens ?? 0);
-    if (!ok) throw new AgentError(`${status.message ?? 'The AI budget is used up.'} Raise the limit or reset the count in Settings → AI to carry on.`, 'budget');
+  /**
+   * Whether a request for `task` may start, before its size is known (Autopilot's first step, a subscription app's
+   * run): throws when the budget says stop. A request paid by a plan or run on this computer isn't held to the
+   * dollar limits, only to the token limit.
+   */
+  gate(task: AiTask = 'code'): void {
+    const c = this.connections.route(task)?.connection;
+    this.allowed(!c || c.auth === 'key');
+  }
+
+  private allowed(billed: boolean): void {
+    const { ok, status } = this.usage.allow(Date.now(), billed);
+    if (!ok) throw new AgentError(`${status.message ?? 'The AI budget is used up.'} ${CARRY_ON}`, 'budget');
+  }
+
+  /** A model's price; a plan's own default model isn't named, so it is priced as the app's most capable one (an estimate, for comparison only). */
+  private priceOf(c: ConnectionView, model: string): Price | undefined {
+    const priced = model === 'default' ? (c.models.find((m) => m.id !== 'default' && m.price)?.id ?? model) : model;
+    return (c.models.find((m) => m.id === priced) ?? modelInfo(c.kind, priced))?.price;
+  }
+
+  /**
+   * Each call's place in the budget, for calls to `model`: the most it can cost is held before it is sent (its room
+   * to answer cut to what the budget has left, or the call refused), and what it used is written down after.
+   */
+  private admit(c: ConnectionView, model: string, feature: string): Admit {
+    const price = this.priceOf(c, model);
+    return (call) => {
+      const held = this.usage.hold({ ...call, price, billed: c.auth === 'key' });
+      if ('refused' in held) throw new AgentError(`${held.refused} ${CARRY_ON}`, 'budget');
+      let settled = false;
+      return {
+        maxTokens: held.maxTokens,
+        settle: (res, ms = 0) => {
+          if (settled) return;
+          settled = true;
+          if (res) this.record(c, model, res.usage, feature, ms, res.usd);
+          this.usage.release(held);
+        },
+      };
+    };
   }
 
   private record(c: ConnectionView, model: string, u: Usage, feature: string, ms: number, reportedUsd?: number): void {
-    // A plan's own default model isn't named: price it as the app's most capable one (an estimate, for comparison only).
-    const priced = model === 'default' ? (c.models.find((m) => m.id !== 'default' && m.price)?.id ?? model) : model;
-    const info = c.models.find((m) => m.id === priced) ?? modelInfo(c.kind, priced);
-    const price = info?.price;
+    const price = this.priceOf(c, model);
     const usd = reportedUsd ?? costOf(price, u);
     const app = this.deps.app();
     this.usage.record({
@@ -101,7 +136,7 @@ export class AiService {
       effort: this.effort,
       mcp: this.deps.mcp,
       origin: this.deps.origin,
-      gate: () => this.gate(),
+      gate: () => this.allowed(c.auth === 'key'),
       used: (u: CliUsage, ms) => this.record(c, u.model || model, u.usage, feature, ms, u.usd),
     };
   }
@@ -115,7 +150,7 @@ export class AiService {
     const chat = this.connections.chatModel(r.connection.id, r.model);
     if (!chat) return null;
     const c = r.connection;
-    return new ModelAgent(chat, this.effort, { gate: () => this.gate(), used: (res: ChatResult, ms) => this.record(c, r.model, res.usage, feature, ms, res.usd) }, kindLabel(c.kind) === 'the model' ? c.label : kindLabel(c.kind));
+    return new ModelAgent(chat, this.effort, { admit: this.admit(c, r.model, feature) }, kindLabel(c.kind) === 'the model' ? c.label : kindLabel(c.kind));
   }
 
   /** Which connection and model would do a task, for the studio to show. */
@@ -140,13 +175,8 @@ export class AiService {
     const chat = this.connections.chatModel(c.id, r.model);
     if (!chat) throw new AgentError(`${c.label} can’t be used right now.`, 'other');
     const parts = chat.vision ? req.parts : req.parts.filter((p) => p.type === 'text');
-    // What the call will cost, about: its input as written (a token is about four characters, a picture about 1,600)
-    // and a typical answer. A report can be 100,000 tokens: one that would go past a stopping budget isn't sent.
-    const input = Math.ceil((req.system.length + parts.reduce((n, p) => n + (p.type === 'text' ? p.text.length : 0), 0)) / 4) + parts.filter((p) => p.type === 'image').length * 1600;
-    const output = Math.min(req.maxTokens, 4000);
-    const price = (c.models.find((m) => m.id === r.model) ?? modelInfo(c.kind, r.model))?.price;
-    const call = { usd: costOf(price, { input, output, cacheRead: 0, cacheWrite: 0 }) ?? 0, tokens: input + output };
-    return jsonFrom(chat, { ...req, parts }, () => this.gate(call), (res, ms) => this.record(c, r.model, res.usage, req.feature, ms, res.usd));
+    // A report can be 100,000 tokens: one that could go past a stopping budget isn't sent.
+    return jsonFrom(chat, { ...req, parts }, this.admit(c, r.model, req.feature));
   }
 
   /** A tiny real call, to check a connection works (a few tokens). */
@@ -182,14 +212,24 @@ export class AiService {
   }
 }
 
-/** Ask an API model for JSON, check it against the schema, and give it one chance to repair a bad answer. */
-export async function jsonFrom<T>(chat: ChatModel, req: Pick<JsonRequest<T>, 'system' | 'parts' | 'schema' | 'name' | 'maxTokens' | 'effort' | 'signal' | 'cache'>, gate: () => void, used: (r: ChatResult, ms: number) => void): Promise<{ value: T; model: string }> {
+/**
+ * Ask an API model for JSON, check it against the schema, and give it one chance to repair a bad answer. Each call
+ * has its place in the budget first, with all the room it asks for: an answer cut short would be no JSON at all.
+ */
+export async function jsonFrom<T>(chat: ChatModel, req: Pick<JsonRequest<T>, 'system' | 'parts' | 'schema' | 'name' | 'maxTokens' | 'effort' | 'signal' | 'cache'>, admit: Admit): Promise<{ value: T; model: string }> {
   const messages: Msg[] = [{ role: 'user', parts: req.parts }];
+  const schema = jsonSchemaOf(req.schema);
   for (let attempt = 0; attempt < 2; attempt++) {
-    gate();
+    const ticket = admit({ input: inputTokens({ system: req.system, messages, schema }), maxTokens: req.maxTokens, minTokens: req.maxTokens });
     const started = Date.now();
-    const res = await chat.chat({ system: req.system, messages, json: { name: req.name, schema: req.schema }, maxTokens: req.maxTokens, effort: req.effort, signal: req.signal, cache: req.cache });
-    used(res, Date.now() - started);
+    let res: ChatResult;
+    try {
+      res = await chat.chat({ system: req.system, messages, json: { name: req.name, schema: req.schema }, maxTokens: ticket.maxTokens, effort: req.effort, signal: req.signal, cache: req.cache });
+    } catch (err) {
+      ticket.settle(null);
+      throw err;
+    }
+    ticket.settle(res, Date.now() - started);
     if (res.stop === 'refusal') throw new AgentError('The model declined to write this.', 'refused');
     if (res.stop === 'length') throw new AgentError('The answer was too long for the model’s limit.', 'other');
     let problem: string;

@@ -13,11 +13,18 @@ import { AnthropicModel } from '../../server/ai/llm/anthropic';
 import { CompatibleModel } from '../../server/ai/llm/compatible';
 import { GeminiModel } from '../../server/ai/llm/gemini';
 import { OpenAIModel } from '../../server/ai/llm/openai';
-import { dropNulls, jsonSchemaOf, strictSchema, type ChatModel, type ChatResult } from '../../server/ai/llm/types';
+import { dropNulls, jsonSchemaOf, strictSchema, unwatched, type Admit, type ChatModel, type ChatResult } from '../../server/ai/llm/types';
 import { jsonFrom } from '../../server/ai/service';
 import { ReportSchema } from '../../server/sessions/report';
 import { costOf, modelInfo } from '../../shared/models';
 import { tempShop } from './helpers';
+
+/** No budget watching. */
+const free: Admit = (call) => unwatched(call.maxTokens);
+/** What each call used, written down, with no budget. */
+const watch =
+  (into: ChatResult[]): Admit =>
+  (call) => ({ maxTokens: call.maxTokens, settle: (r) => void (r && into.push(r)) });
 
 type Handler = (body: Record<string, unknown>, req: http.IncomingMessage) => unknown;
 let server: http.Server;
@@ -85,7 +92,7 @@ describe('OpenAI (Responses API)', () => {
     });
     const used: ChatResult[] = [];
     const model = new OpenAIModel('gpt-6.1-sol', () => 'sk-test', `${base}/openai`);
-    const agent = new ModelAgent(model, 'high', { used: (r) => used.push(r) });
+    const agent = new ModelAgent(model, 'high', { admit: watch(used) });
     const out = await agent.run({ text: 'fix the total', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined });
     expect(out.kind).toBe('change');
     const req = seen.find((s) => s.path.startsWith('/openai/responses'))!;
@@ -101,7 +108,7 @@ describe('OpenAI (Responses API)', () => {
   it('asks for strict JSON and says plainly when the key is wrong', async () => {
     routes.set('/openai-json/responses', () => ({ model: 'm', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"a":"x","b":null}' }] }], usage: { input_tokens: 10, output_tokens: 5 } }));
     const schema = z.object({ a: z.string(), b: z.string().optional() });
-    const r = await jsonFrom(new OpenAIModel('gpt-6-luna', () => 'k', `${base}/openai-json`), { system: 's', parts: [{ type: 'text', text: 'go' }], schema, name: 'thing', maxTokens: 100 }, () => undefined, () => undefined);
+    const r = await jsonFrom(new OpenAIModel('gpt-6-luna', () => 'k', `${base}/openai-json`), { system: 's', parts: [{ type: 'text', text: 'go' }], schema, name: 'thing', maxTokens: 100 }, free);
     expect(r.value).toEqual({ a: 'x' });
     const format = (last('/openai-json/responses').body.text as { format: { type: string; strict: boolean; schema: { required: string[]; additionalProperties: boolean } } }).format;
     expect(format.type).toBe('json_schema');
@@ -134,7 +141,7 @@ describe('Gemini', () => {
       return { candidates: [{ finishReason: 'STOP', content: { role: 'model', parts: [{ functionCall: { id: 'c2', name: 'propose_change', args: { title: 't', summary: 's', edits: [EDIT] } } }] } }], usageMetadata: { promptTokenCount: 3500, candidatesTokenCount: 80 } };
     });
     const used: ChatResult[] = [];
-    const agent = new ModelAgent(new GeminiModel('gemini-4-argon', () => 'AIza-test', `${base}/gemini`), 'low', { used: (r) => used.push(r) });
+    const agent = new ModelAgent(new GeminiModel('gemini-4-argon', () => 'AIza-test', `${base}/gemini`), 'low', { admit: watch(used) });
     const out = await agent.run({ text: 'fix the total', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined });
     expect(out.kind).toBe('change');
     const req = seen.find((s) => s.path.startsWith('/gemini/'))!;
@@ -168,7 +175,7 @@ describe('OpenAI-compatible providers', () => {
     });
     const used: ChatResult[] = [];
     const model = new CompatibleModel('anthropic/claude-sonnet-5-5', { label: 'OpenRouter', baseUrl: `${base}/or`, key: () => 'sk-or', openrouter: true });
-    const out = await new ModelAgent(model, 'medium', { used: (r) => used.push(r) }).run({ text: 'where is the discount applied?', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined });
+    const out = await new ModelAgent(model, 'medium', { admit: watch(used) }).run({ text: 'where is the discount applied?', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined });
     expect(out).toEqual({ kind: 'answer', text: 'The discount is applied in src/lib/pricing.ts:32.' });
     expect(used[0].usd).toBe(0.0021);
     expect(used[0].usage).toEqual({ input: 300, output: 40, cacheRead: 600, cacheWrite: 0, reasoning: 0 });
@@ -184,7 +191,7 @@ describe('OpenAI-compatible providers', () => {
       return { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: step === 1 ? '{"title": 3}' : '```json\n{"title":"ok"}\n```' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } };
     });
     const model = new CompatibleModel('deepseek-v4-flash', { label: 'DeepSeek', baseUrl: `${base}/ds`, key: () => 'k', jsonSchema: false });
-    const r = await jsonFrom(model, { system: 'Write it.', parts: [{ type: 'text', text: 'go' }], schema: z.object({ title: z.string() }), name: 'x', maxTokens: 50 }, () => undefined, () => undefined);
+    const r = await jsonFrom(model, { system: 'Write it.', parts: [{ type: 'text', text: 'go' }], schema: z.object({ title: z.string() }), name: 'x', maxTokens: 50 }, free);
     expect(r.value).toEqual({ title: 'ok' });
     const first = seen.find((s) => s.path.startsWith('/ds/'))!;
     expect(first.body.response_format).toEqual({ type: 'json_object' });
@@ -208,7 +215,7 @@ describe('Anthropic', () => {
     ];
     const client = { beta: { messages: { stream: (p: Record<string, unknown>) => (calls.push(JSON.parse(JSON.stringify(p))), { finalMessage: async () => replies[calls.length - 1] }) } } };
     const used: ChatResult[] = [];
-    const agent = new ModelAgent(new AnthropicModel('claude-opus-5-5', () => client as never), 'medium', { used: (r) => used.push(r) });
+    const agent = new ModelAgent(new AnthropicModel('claude-opus-5-5', () => client as never), 'medium', { admit: watch(used) });
     const out = await agent.run({ text: 'fix the total', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined });
     expect(out.kind).toBe('change');
     expect(calls[0].cache_control).toEqual({ type: 'ephemeral' });
@@ -228,11 +235,11 @@ describe('Anthropic', () => {
     const chat = new AnthropicModel('claude-sonnet-5-5', () => client as never);
     const req = { system: 'You write reports.', parts: [{ type: 'text' as const, text: 'The session…' }], schema: z.object({ ok: z.boolean() }), name: 'r', maxTokens: 100 };
     // A report, a review or a translation: read once, so a cache would only cost more.
-    await jsonFrom(chat, req, () => undefined, () => undefined);
+    await jsonFrom(chat, req, free);
     expect(sent[0].cache_control).toBeUndefined();
     expect(JSON.stringify(sent[0])).not.toContain('cache_control');
     // Autopilot: the same system prompt every turn, a new page each time.
-    await jsonFrom(chat, { ...req, cache: 'system' }, () => undefined, () => undefined);
+    await jsonFrom(chat, { ...req, cache: 'system' }, free);
     expect((sent[1].system as { cache_control?: unknown }[])[0].cache_control).toEqual({ type: 'ephemeral' });
     expect(sent[1].cache_control).toBeUndefined();
     expect(JSON.stringify(sent[1].messages)).not.toContain('cache_control');
@@ -256,7 +263,7 @@ describe('Anthropic', () => {
   it('stops before a call when the budget says so', async () => {
     const client = { beta: { messages: { stream: () => ({ finalMessage: async () => ({}) }) } } };
     const agent = new ModelAgent(new AnthropicModel('claude-opus-5-5', () => client as never), 'low', {
-      gate: () => {
+      admit: () => {
         throw new Error('Used $5.00 of your $5.00 daily budget.');
       },
     });

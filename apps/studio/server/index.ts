@@ -294,7 +294,7 @@ export async function createStudioApi(layout: StudioLayout) {
   autopilotRoutes(router, {
     sessions: (id) => apps.forSession(id).sessions,
     ask: (input) => (fake ? fakeAutopilotAsk(input) : ai.connections.route('report') ? (r) => ai.json(r) : null),
-    gate: () => ai.gate(),
+    gate: () => ai.gate('report'),
   });
   sessionRoutes(router, {
     active: () => apps.active(),

@@ -623,7 +623,7 @@ export function UsageSettings() {
         <div className="flex items-center justify-between gap-4 px-3 py-3">
           <div className="min-w-0">
             <div className="text-[13px] font-medium text-fg">At a limit</div>
-            <div className="mt-0.5 text-[12px] leading-relaxed text-fg-3">Warn from {Math.round(u.budget.warnAt * 100)}% and carry on, or stop AI requests until you raise the limit or reset.</div>
+            <div className="mt-0.5 text-[12px] leading-relaxed text-fg-3">Warn from {Math.round(u.budget.warnAt * 100)}% and carry on, or stop: no request is sent that could go past a limit, until you raise it or reset.</div>
           </div>
           <Segmented<'warn' | 'stop'>
             value={u.budget.mode}

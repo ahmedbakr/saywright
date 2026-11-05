@@ -12,13 +12,16 @@
 import { z } from 'zod';
 import type { AiEffort } from '../../shared/api.ts';
 import { systemPrompt, userMessage } from './context.ts';
-import type { ChatModel, ChatResult, Msg, ToolCall, ToolDef } from './llm/types.ts';
+import { inputTokens, unwatched, type Admit, type ChatModel, type ChatResult, type Msg, type ToolCall, type ToolDef } from './llm/types.ts';
 import { applyEditSpecs, listFilesTool, readFileTool, searchCode } from './tools.ts';
 import { AgentError, type AgentContext, type AgentInput, type AgentOutput, type AgentProvider } from './types.ts';
 
 const MAX_STEPS = 10;
 /** About 8K tokens: plenty for 400 lines of code, never a runaway context. */
 const MAX_TOOL_OUTPUT = 32_000;
+/** The room a turn may answer in, and the least worth a turn when the budget has less left (a sizeable change). */
+const MAX_ANSWER = 16_000;
+const MIN_ANSWER = 4_000;
 
 export const ProposeChange = z.object({
   title: z.string().describe('What changed, at most 60 characters, e.g. "Discount covers items only".'),
@@ -70,10 +73,8 @@ const TOOLS: ToolDef[] = [
 ];
 
 interface AgentHooks {
-  /** Before each model call; throws to stop (the budget is spent). */
-  gate?: () => void;
-  /** After each model call: what it used. */
-  used?: (r: ChatResult, ms: number) => void;
+  /** Before each model call: its place in the budget (every turn's). Throws to stop (the budget is spent). */
+  admit?: Admit;
 }
 
 const cap = (s: string) => (s.length > MAX_TOOL_OUTPUT ? `${s.slice(0, MAX_TOOL_OUTPUT)}\n… (cut here; ask for a narrower range)` : s);
@@ -99,13 +100,20 @@ export class ModelAgent implements AgentProvider {
     progress('Thinking');
     for (let step = 0; step < MAX_STEPS; step++) {
       if (signal?.aborted) throw new AgentError('Stopped.', 'aborted');
-      this.hooks.gate?.();
+      const ticket = this.hooks.admit?.({ input: inputTokens({ system, messages, tools: TOOLS }), maxTokens: MAX_ANSWER, minTokens: MIN_ANSWER }) ?? unwatched(MAX_ANSWER);
       const started = Date.now();
-      const res = await this.chat.chat({ system, messages, tools: TOOLS, maxTokens: 16_000, effort: this.effort, signal, cacheKey: `saywright-${hash(project.root)}`, cache: 'conversation' });
-      this.hooks.used?.(res, Date.now() - started);
+      let res: ChatResult;
+      try {
+        res = await this.chat.chat({ system, messages, tools: TOOLS, maxTokens: ticket.maxTokens, effort: this.effort, signal, cacheKey: `saywright-${hash(project.root)}`, cache: 'conversation' });
+      } catch (err) {
+        ticket.settle(null);
+        throw err;
+      }
+      ticket.settle(res, Date.now() - started);
       if (res.stop === 'refusal') throw new AgentError(`${this.name} declined this request. Try rephrasing it.`, 'refused');
       if (!res.calls.length) {
         if (res.text) return { kind: 'answer', text: res.text };
+        if (res.stop === 'length' && ticket.maxTokens < MAX_ANSWER) throw new AgentError(`${this.name} ran out of room before finishing: what is left of your budget let it answer in only about ${Math.round(ticket.maxTokens / 1000)}K tokens. Raise the limit in Settings → Usage and budget, or try a smaller request.`, 'budget');
         if (res.stop === 'length') throw new AgentError(`${this.name} ran out of room before finishing. Try a smaller request.`, 'other');
         throw new AgentError(`${this.name} finished without a change or an answer. Try rephrasing.`, 'other');
       }

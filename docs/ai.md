@@ -93,6 +93,8 @@ Costs use each provider's published prices. Use through your plan is shown at wh
 
 **Limits**: a daily and a monthly dollar budget (defaults: $5 a day, $50 a month) and an optional daily token limit. At 80% the AI chip turns amber, and red at the limit. Past it, **Warn** (the default) carries on with a notice, and **Stop** refuses new requests until the next day or month, or until you raise the limit. You can reset today's count, this month's, or clear the history. The usage log stays on your computer, in the studio's data folder.
 
+With **Stop**, a limit is never passed. Before each request, and each step of a change, the most it could cost is set aside: what it sends, counted generously, and the longest answer it may give. A request that could go past a limit isn't sent, several running at once count each other, and when little is left a step of a change answers in less room (a report is never cut short: it isn't sent). A limit of $0 allows no paid request. Requests through your plan or to a model on your computer bill no dollars, so only the token limit applies to them. A model with no published price can't be measured in dollars: it stops once a dollar limit is used up, and a token limit bounds it.
+
 ## What is sent, and where
 
 - **A change or a question** goes to the AI you chose for that kind of work, with: your words; the elements you referred to (their component name, visible text, file and line); the code around them (a whole file up to 400 lines, otherwise the lines around each place); the names of your app's files (up to 300) and the design system described in your `saywright.config.json`; and the files the AI then reads.
