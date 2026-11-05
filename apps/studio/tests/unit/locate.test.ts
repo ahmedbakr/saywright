@@ -60,6 +60,16 @@ describe('locateElement: finding an element in code the page did not name', () =
     expect(await find(p, { tag: 'button', text: 'Pay', hint: { attrs: { class: 'pay' }, file } })).toBe('src/components/Cart.vue:3:5');
   });
 
+  it('words from data are nowhere in the code: the component Vue names is where it is (its only element of that kind)', async () => {
+    const p = site({ 'src/components/Price.vue': '<template>\n  <p class="hint">Updated daily</p>\n  <strong>{{ price }}</strong>\n</template>\n' });
+    const file = path.join(p.root, 'src/components/Price.vue');
+    expect(await find(p, { tag: 'strong', text: '$12.50', hint: { attrs: {}, file } })).toBe('src/components/Price.vue:3:3');
+    // None of its kind there (or several): the component, from its start.
+    expect(await find(p, { tag: 'span', text: '$12.50', hint: { attrs: {}, file } })).toBe('src/components/Price.vue:1:1');
+    // Named by no framework: not found, rather than guessed.
+    expect(await find(p, { tag: 'strong', text: '$12.50', hint: { attrs: {} } })).toBeNull();
+  });
+
   it('finds text a script writes into a node it made, after the templates', async () => {
     const p = site({ 'index.html': '<div id="list"></div>\n', 'app.js': "const n = document.createElement('li');\nn.textContent = 'A new note';\n" });
     expect(await find(p, { tag: 'li', text: 'A new note', hint: { attrs: {} } })).toBe('app.js:2:18');

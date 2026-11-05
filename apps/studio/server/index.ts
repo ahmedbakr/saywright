@@ -6,10 +6,11 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 import { AI_TASKS, type AiEffort, type AiTask, type Budget } from '../shared/ai.ts';
 import type { Expectation, IntentResult, NextStep, RecordedStep, RefInfo, StatusResponse } from '../shared/api.ts';
-import { AppManager } from './apps/manager.ts';
+import { AppManager, appAddress } from './apps/manager.ts';
 import { envFor } from './apps/registry.ts';
 import { appRoutes } from './apps/routes.ts';
 import { probeFolder } from './apps/detect.ts';
+import { connectedTargets } from './apps/connected.ts';
 import { FakeProvider, fakeAutopilotAsk, fakeExpertAsk } from './ai/fake.ts';
 import { AiService } from './ai/service.ts';
 import { AgentError } from './ai/types.ts';
@@ -167,26 +168,29 @@ export async function createStudioApi(layout: StudioLayout) {
   });
   const ws = () => apps.require();
 
-  // An app connected with `npm run connect` (it leaves target.json in the data folder): linked, or brought up to date
-  // when it already is, and opened first. Then the file has done its job.
+  // Apps connected with `npm run connect` (it leaves target.json in the data folder): each linked, or brought up to
+  // date when it already is; the last connected opens first. Then the file has done its job.
   const connected = path.join(dataDir, 'target.json');
   if (fs.existsSync(connected)) {
-    try {
-      const t = JSON.parse(fs.readFileSync(connected, 'utf8')) as { url: string; root: string; start?: string | null };
-      const known = apps.registry.find(t.root);
-      let app = known ?? apps.link(probeFolder(t.root), { url: t.url, start: t.start ?? null });
-      if (known) {
-        const env = known.envs.find((e) => new URL(e.url).origin === new URL(t.url).origin);
-        if (!env) app = apps.registry.setEnv(known.id, envFor(t.url, known.envs[0]?.connection ?? 'plugin'));
-        app = apps.registry.update(app.id, { start: t.start ?? null, env: (env ?? app.envs[app.envs.length - 1]).id });
+    let last: string | null = null;
+    for (const t of connectedTargets(connected)) {
+      try {
+        const known = apps.registry.find(t.root);
+        let app = known ?? apps.link(probeFolder(t.root), { url: t.url, start: t.start ?? null });
+        if (known) {
+          const env = known.envs.find((e) => new URL(e.url).origin === new URL(t.url).origin);
+          if (!env) app = apps.registry.setEnv(known.id, envFor(t.url, known.envs[0]?.connection ?? 'plugin'));
+          app = apps.registry.update(app.id, { start: t.start ?? null, env: (env ?? app.envs[app.envs.length - 1]).id });
+        }
+        apps.registry.touch(app.id);
+        last = app.id;
+      } catch (err) {
+        console.warn(`[saywright] couldn’t link the app connected from ${t.root}:`, err instanceof Error ? err.message : err);
       }
-      apps.registry.touch(app.id);
-      fs.rmSync(connected, { force: true });
-      // Not waited for: its dev server may take a while, and the studio shows it opening (or why it can't).
-      if (!process.env.SAYWRIGHT_TARGET_URL) void apps.open(app.id).catch(() => undefined);
-    } catch (err) {
-      console.warn('[saywright] couldn’t link the connected app:', err instanceof Error ? err.message : err);
     }
+    fs.rmSync(connected, { force: true });
+    // Not waited for: its dev server may take a while, and the studio shows it opening (or why it can't).
+    if (last && !process.env.SAYWRIGHT_TARGET_URL) void apps.open(last).catch(() => undefined);
   }
 
   // Started for a given app (npm run dev -- --target, the tests): open it straight away.
@@ -361,7 +365,8 @@ export async function createStudioApi(layout: StudioLayout) {
     const ctl = new AbortController();
     inflight.set(requestId, ctl);
     try {
-      const out = await agent.run({ text, refs, mode: 'edit', pageUrl, brief }, { project, progress, signal: ctl.signal });
+      // The page at the app's own address (not the studio proxy's it is shown through).
+      const out = await agent.run({ text, refs, mode: 'edit', pageUrl: pageUrl ? appAddress(current, pageUrl) : undefined, brief }, { project, progress, signal: ctl.signal });
       const latencyMs = Date.now() - started;
       if (out.kind === 'change') {
         const change = await changes.preview({ title: out.title, summary: out.summary, said: text, refs, source: agent.source, model, edits: out.edits, latencyMs });
@@ -565,7 +570,7 @@ export async function createStudioApi(layout: StudioLayout) {
   // Where keys saved from Settings go, as the person would find it (~/.saywright/.env.local).
   const envFile = path.join(layout.envDir, '.env.local');
   const keysFile = envFile.startsWith(os.homedir() + path.sep) ? `~${envFile.slice(os.homedir().length)}` : envFile;
-  const aiState = async (refresh = false) => ({ ...(await ai.state(refresh)), mcp: { url: `${studioOrigin}/api/mcp`, token: clientToken(dataDir), stdio: layout.mcpCommand }, keysFile });
+  const aiState = async (refresh = false) => ({ ...(await ai.state(refresh)), mcp: { url: `${studioOrigin}/api/mcp`, token: clientToken(dataDir), stdio: { ...layout.mcpCommand, env: { SAYWRIGHT_HOME: dataDir } } }, keysFile });
   router.get('/ai', (req) => aiState(req.query.get('refresh') === '1'));
   router.put('/ai/key', async (req) => {
     const body = (req.body ?? {}) as { connection?: unknown; key?: unknown };

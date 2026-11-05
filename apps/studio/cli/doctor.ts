@@ -10,6 +10,7 @@ import { STUDIO_PORT } from '@saywright/vite/protocol';
 import { browserSpeechReady } from '../server/assets.ts';
 import { speechDir } from '../server/layout.ts';
 import { SpeechService } from '../server/speech/service.ts';
+import { runningStudio } from './connect.ts';
 import type { CliContext } from './index.ts';
 import { c, ok, warn } from './term.ts';
 
@@ -112,14 +113,17 @@ export async function doctor(argv: string[], ctx: CliContext): Promise<number> {
     }
   }
 
-  const ports: Array<[number, string]> = [[STUDIO_PORT, 'the studio']];
+  // A studio running now says where it listens (it may have moved off its usual port): that is where it is.
+  const running = runningStudio(layout.dataDir);
+  if (running) ok(`The studio is running at ${running}`);
+  const ports: Array<[number, string]> = running ? [] : [[STUDIO_PORT, 'the studio']];
   if (repoSample) ports.push([5174, 'the sample app']);
   for (const [port, what] of ports) {
     if (await free(port)) ok(`Port ${port} is free (${what})`);
-    else warn(`Port ${port} is busy (${what})`, 'Something else uses it, or Saywright is already running. The studio takes the next free port.');
+    else warn(`Port ${port} is busy (${what})`, 'Something else uses it. The studio takes the next free port.');
   }
 
   if (process.platform === 'darwin') console.log(c.dim('\nOn macOS, allow your browser to use the microphone in System Settings → Privacy & Security.'));
-  console.log(problems ? c.red(`\n${problems} problem(s) to fix.\n`) : c.green(`\nAll set. Run ${ctx.startCommand}.\n`));
+  console.log(problems ? c.red(`\n${problems} problem(s) to fix.\n`) : c.green(running ? `\nAll set. The studio is open at ${running}.\n` : `\nAll set. Run ${ctx.startCommand}.\n`));
   return problems ? 1 : 0;
 }

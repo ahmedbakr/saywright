@@ -74,6 +74,15 @@ export function appRoutes(router: Router, deps: AppRouteDeps): void {
     return { app, state: apps.state() };
   });
 
+  /** An app linked by its address gets its code folder: the same app, its addresses kept (“Link its folder…”). */
+  router.post('/apps/:id/folder', async (req) => {
+    const root = str((req.body as { root?: unknown } | undefined)?.root, 1000);
+    if (!root) throw new HttpError(400, 'Give the app’s folder');
+    const probe = wrap(() => probeFolder(root));
+    const app = await apps.attachFolder(req.params.id, probe);
+    return { app, state: apps.state() };
+  });
+
   router.put('/apps/:id', (req) => {
     const body = (req.body ?? {}) as { name?: unknown; start?: unknown };
     const patch: { name?: string; start?: string | null } = {};

@@ -612,11 +612,12 @@ function best(candidates: Candidate[]): Candidate | null {
  * framework named for it (`hint.file`: a Vue component's) and the page's own file (a static site's) come first.
  */
 export async function locateElement(files: CodeFiles, el: Findable, opts: { pageUrl?: string; root?: string } = {}): Promise<string | null> {
-  const needle = needles(el);
-  if (!needle) return null;
-  const text = plainText(el.text ?? '');
   const all = await files.list();
-  const named = [el.hint?.file && opts.root ? projectPath(opts.root, el.hint.file) : null, ...pageFiles(opts.pageUrl)].filter((f): f is string => !!f && all.includes(f));
+  const own = el.hint?.file && opts.root ? projectPath(opts.root, el.hint.file) : null;
+  const needle = needles(el);
+  if (!needle) return own && all.includes(own) ? inComponent(files, own, el) : null;
+  const text = plainText(el.text ?? '');
+  const named = [own, ...pageFiles(opts.pageUrl)].filter((f): f is string => !!f && all.includes(f));
   const rank = (f: string) => (named.includes(f) ? 0 : f.startsWith('../') ? 2 : 1);
   const candidates: Candidate[] = [];
   const texts = new Map<string, string>();
@@ -629,9 +630,19 @@ export async function locateElement(files: CodeFiles, el: Findable, opts: { page
     }
   });
   const pick = best(candidates);
-  if (!pick) return null;
+  // Nothing in the code says what it shows (words from data): the component the framework names is where it is.
+  if (!pick) return own && all.includes(own) ? inComponent(files, own, el) : null;
   const { line, col } = lineCol(texts.get(pick.w.file)!, pick.w.at);
   return `${pick.w.file}:${line}:${col}`;
+}
+
+/** In the component file a framework named for the element (Vue's): its only element of that kind, else the file's start. */
+async function inComponent(files: CodeFiles, file: string, el: Findable): Promise<string | null> {
+  const code = await files.read(file);
+  if (code === null) return null;
+  const same = el.tag ? elementsOf(file, code).filter((w) => w.name === el.tag) : [];
+  const { line, col } = same.length === 1 ? lineCol(code, same[0].at) : { line: 1, col: 1 };
+  return `${file}:${line}:${col}`;
 }
 
 /**

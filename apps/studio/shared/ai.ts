@@ -193,7 +193,8 @@ export interface AiState {
   ready: boolean;
   usage: UsageSummary;
   /** Ways to add Saywright to other AI apps (Claude Desktop, Cursor, VS Code…) as an MCP server. */
-  mcp: { url: string; token: string; stdio: { command: string; args: string[] } } | null;
+  /** `stdio.env`: what the program needs to find this studio (its data folder, wherever SAYWRIGHT_HOME put it). */
+  mcp: { url: string; token: string; stdio: { command: string; args: string[]; env?: Record<string, string> } } | null;
   /** Where keys saved from Settings are kept. */
   keysFile?: string;
 }

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { appPoint, E2E_SHOP, expectIsland, forgetTour, openStudio, resetAll, SHOP_URL, shopFile, store, STUDIO } from './helpers';
@@ -435,6 +436,16 @@ test('an app linked by its address only says why it can’t change code, and off
     await expectIsland(page, /linked by its address only, so the studio can’t see its code/);
     await page.locator('[data-island]').getByRole('button', { name: 'Link its folder…' }).click();
     await expect(page.locator('[data-launcher]')).toBeVisible();
+    // Its folder becomes this app's code: the same app, not a second one.
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-plain-'));
+    fs.writeFileSync(path.join(folder, 'index.html'), '<!doctype html><title>Plain page</title><button>Buy</button>');
+    const dialog = page.getByRole('dialog', { name: 'Link an app' });
+    await dialog.getByRole('textbox', { name: 'Folder' }).fill(folder);
+    await dialog.locator('[data-use-folder]').click();
+    await dialog.locator('[data-link-confirm]').click();
+    await expect(dialog).toHaveCount(0);
+    const { apps: after } = (await (await fetch(`${STUDIO}/api/apps`)).json()) as { apps: { id: string; root: string | null }[] };
+    expect(after.filter((a) => a.root === folder || a.id === app.id)).toEqual([expect.objectContaining({ id: app.id, root: folder })]);
   } finally {
     const { apps } = (await (await fetch(`${STUDIO}/api/apps`)).json()) as { apps: { id: string; root: string | null }[] };
     await post(`/apps/${apps.find((a) => a.root?.endsWith('.e2e-shop'))!.id}/open`, { decide: 'undo' });

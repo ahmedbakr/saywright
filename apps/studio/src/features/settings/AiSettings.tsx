@@ -669,7 +669,7 @@ export function McpSettings() {
   const auth = `Bearer ${mcp.token}`;
   const snippets: { app: string; where: string; text: string }[] = [
     { app: 'Claude Code', where: 'Run in a terminal', text: `claude mcp add --transport http saywright ${mcp.url} --header "Authorization: ${auth}"` },
-    { app: 'Claude Desktop', where: 'Settings → Developer → Edit config (claude_desktop_config.json)', text: JSON.stringify({ mcpServers: { saywright: { command: mcp.stdio.command, args: mcp.stdio.args } } }, null, 2) },
+    { app: 'Claude Desktop', where: 'Settings → Developer → Edit config (claude_desktop_config.json)', text: JSON.stringify({ mcpServers: { saywright: { command: mcp.stdio.command, args: mcp.stdio.args, ...(mcp.stdio.env ? { env: mcp.stdio.env } : {}) } } }, null, 2) },
     { app: 'Cursor', where: '~/.cursor/mcp.json', text: JSON.stringify({ mcpServers: { saywright: { url: mcp.url, headers: { Authorization: auth } } } }, null, 2) },
     { app: 'VS Code', where: '.vscode/mcp.json in your project', text: JSON.stringify({ servers: { saywright: { type: 'http', url: mcp.url, headers: { Authorization: auth } } } }, null, 2) },
     { app: 'Codex', where: '~/.codex/config.toml', text: `[mcp_servers.saywright]\nurl = "${mcp.url}"\nhttp_headers = { Authorization = "${auth}" }` },

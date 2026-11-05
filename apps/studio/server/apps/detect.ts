@@ -42,6 +42,7 @@ export const viteConfigIn = (dir: string) => first(dir, ...VITE_CONFIGS);
 
 export const FRAMEWORK_NAME: Record<Framework, string> = {
   vite: 'Vite',
+  vue: 'Vue',
   next: 'Next.js',
   cra: 'Create React App',
   astro: 'Astro',
@@ -51,6 +52,7 @@ export const FRAMEWORK_NAME: Record<Framework, string> = {
   nuxt: 'Nuxt',
   angular: 'Angular',
   gatsby: 'Gatsby',
+  php: 'PHP',
   static: 'static site',
   other: 'web app',
 };
@@ -168,7 +170,9 @@ const portNote = (config: string, framework: Framework, port: number | null) => 
 
 /** The framework, from its dependencies (most specific first). */
 export function frameworkOf(dir: string, pkg: Pkg | null): Framework {
-  if (!pkg) return fs.existsSync(path.join(dir, 'index.html')) ? 'static' : 'other';
+  // A PHP app (a page of its own, or Composer's), whatever front-end tooling sits beside it.
+  const php = !!first(dir, 'index.php', 'artisan', 'public/index.php') || (!!first(dir, 'composer.json') && !pkg);
+  if (!pkg) return php ? 'php' : fs.existsSync(path.join(dir, 'index.html')) ? 'static' : 'other';
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   if (deps.next) return 'next';
   if (deps['@sveltejs/kit']) return 'sveltekit';
@@ -179,12 +183,15 @@ export function frameworkOf(dir: string, pkg: Pkg | null): Framework {
   if (deps['@angular/core'] && fs.existsSync(path.join(dir, 'angular.json'))) return 'angular';
   if (deps.gatsby) return 'gatsby';
   if (deps['react-scripts']) return 'cra';
+  if (php && !deps.vite) return 'php';
+  if ((deps.vite || first(dir, ...VITE_CONFIGS)) && deps.vue) return 'vue';
   if (deps.vite || first(dir, ...VITE_CONFIGS)) return 'vite';
   return fs.existsSync(path.join(dir, 'index.html')) ? 'static' : 'other';
 }
 
 const DEFAULT_PORT: Record<Framework, number> = {
   vite: 5173,
+  vue: 5173,
   next: 3000,
   cra: 3000,
   astro: 4321,
@@ -194,6 +201,7 @@ const DEFAULT_PORT: Record<Framework, number> = {
   nuxt: 3000,
   angular: 4200,
   gatsby: 8000,
+  php: 8000,
   static: 0,
   other: 3000,
 };
@@ -226,6 +234,11 @@ export function configPort(src: string): number | null {
  * one. `guessed` names the config when it works out the port in code (so the usual one may be wrong).
  */
 export function devCommandOf(dir: string, pkg: Pkg | null, pm: PackageManager, framework: Framework): { start: string | null; port: number | null; guessed?: string } {
+  // PHP's own server (Laravel's, when it is one): its pages, at the usual port.
+  if (framework === 'php') {
+    const start = first(dir, 'artisan') ? 'php artisan serve --port=8000' : first(dir, 'index.php') ? 'php -S localhost:8000' : first(dir, 'public/index.php') ? 'php -S localhost:8000 -t public' : null;
+    return { start, port: 8000 };
+  }
   const scripts = pkg?.scripts ?? {};
   const name = scripts.dev ? 'dev' : scripts.start ? 'start' : scripts.serve ? 'serve' : scripts.develop ? 'develop' : null;
   const start = name ? (pm === 'npm' ? (name === 'start' ? 'npm start' : `npm run ${name}`) : `${pm} ${name === 'start' ? 'start' : `run ${name}`}`) : null;
@@ -233,7 +246,7 @@ export function devCommandOf(dir: string, pkg: Pkg | null, pm: PackageManager, f
   const flag = /(?:--port[ =]|-p\s+)(\d{2,5})\b/.exec(script);
   let port = flag ? Number(flag[1]) : null;
   let guessed: string | undefined;
-  const config = port ? null : framework === 'astro' ? first(dir, ...ASTRO_CONFIGS) : /vite|react-router|remix|sveltekit/.test(framework) ? first(dir, ...VITE_CONFIGS) : null;
+  const config = port ? null : framework === 'astro' ? first(dir, ...ASTRO_CONFIGS) : /vite|vue|react-router|remix|sveltekit/.test(framework) ? first(dir, ...VITE_CONFIGS) : null;
   if (config) {
     const set = configPort(fs.readFileSync(config, 'utf8'));
     if (set) port = set;
@@ -310,7 +323,7 @@ export function hasPlugin(dir: string): boolean {
 }
 
 /** A static site's name: its home page's title, up to the first separator ("Shop | Brand" → "Shop"). */
-function htmlTitle(dir: string): string | null {
+export function htmlTitle(dir: string): string | null {
   try {
     const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8').slice(0, 20_000);
     const title = /<title[^>]*>([^<]{1,120})<\/title>/i.exec(html)?.[1]?.trim();
@@ -333,21 +346,23 @@ export function probeFolder(input: string): AppProbe {
   const canAddPlugin = VITE_BASED.has(framework) && !plugin && !!declaredDeps(root).react;
   const candidates = pkg ? workspaceApps(root, pkg) : undefined;
   if (!pkg && framework === 'static') notes.push('No package.json: the studio serves this folder as a static site.');
-  if (!pkg && framework === 'other') notes.push('No package.json or index.html here. Pick the folder of a web app.');
-  if (pkg && !start && framework !== 'static') notes.push('No dev, start or serve script: start the app yourself and give its address.');
+  if (framework === 'php') notes.push(start ? `A PHP app: the studio starts it with ${start} (change it for your own server), and shows it through its proxy.` : 'A PHP app: start it as you usually do, and give its address.');
+  if (!pkg && framework === 'other') notes.push('No package.json, index.html or index.php here. Pick the folder of a web app.');
+  if (pkg && !start && framework !== 'static' && framework !== 'php') notes.push('No dev, start or serve script: start the app yourself and give its address.');
   if (candidates?.length && !start) notes.push(`A monorepo with ${candidates.length} app${candidates.length === 1 ? '' : 's'}: pick one.`);
   if (canAddPlugin) notes.push('A Vite + React app: adding the Saywright plugin maps every element to its exact line of code.');
   else if (script) notes.push('Its pages load the studio’s script: shown as it is, without the proxy.');
   else if (!plugin && pkg) notes.push('Shown through the studio’s proxy: no change to your code needed.');
   if (start && pmNote) notes.push(pmNote);
   if (start && guessed) notes.push(portNote(guessed, framework, port));
-  const needsInstall = !!pkg && !!start && !dependenciesInstalled(root);
+  const needsInstall = !!pkg && !!start && framework !== 'php' && !dependenciesInstalled(root);
   if (needsInstall) notes.push(`Dependencies aren’t installed yet (${uses} install).`);
   return {
     name: (pkg?.name ?? htmlTitle(root) ?? path.basename(root)).replace(/^@[^/]+\//, ''),
     root,
     framework,
-    packageManager: uses,
+    // Packages to install only with a package.json: a folder of pages or a PHP app has none.
+    ...(pkg ? { packageManager: uses } : {}),
     start: framework === 'static' && !start ? null : start,
     url: port ? `http://localhost:${port}` : undefined,
     needsInstall,
@@ -385,6 +400,9 @@ async function fetchIcon(pageUrl: string, html: string): Promise<string | undefi
   }
 }
 
+/** Titles that name a page, not an app (or a starter template's). */
+const GENERIC_TITLE = /^(?:(?:sign|log)\s?(?:in|on|up)|login|register|home|dashboard|welcome|loading(?:\.{3}|…)?|untitled|index|document|app|my app|react app|vite \+ (?:react|vue|svelte|preact|lit)(?: \+ ts)?|vite app|next(?:\.js)? app|nuxt app|angular(?:app)?|error|404(?: not found)?|not found|page not found)$/i;
+
 /** What answers at a URL: its title and icon, and how the studio can show it. */
 export async function probeUrl(input: string): Promise<AppProbe> {
   const raw = input.trim();
@@ -415,8 +433,10 @@ export async function probeUrl(input: string): Promise<AppProbe> {
   const connection: Connection = plugin ? 'plugin' : script ? 'script' : 'proxy';
   if (connection === 'proxy') notes.push(frameBlocked ? 'It refuses to be shown in a frame; the studio’s proxy takes care of that.' : 'Shown through the studio’s proxy, which adds the studio to its pages.');
   if (!local) notes.push('A deployed site: test sessions, replays and audits work; code changes need its folder linked too.');
+  // A page's title names the app unless it names the page (“Sign in”, “Dashboard”): then its address does.
+  const named = title?.split(/\s[|–—-]\s/)[0]?.trim();
   return {
-    name: title?.split(/\s[|–—-]\s/)[0]?.trim() || final.hostname,
+    name: named && !GENERIC_TITLE.test(named) ? named : final.port ? `${final.hostname}:${final.port}` : final.hostname,
     root: null,
     url: final.origin + (final.pathname === '/' ? '' : final.pathname),
     connection,
@@ -447,7 +467,7 @@ export function listFolders(dir?: string): FolderListing {
     parent: parent === at ? null : parent,
     folders: entries.map((name) => {
       const p = path.join(at, name);
-      return { name, path: p, app: fs.existsSync(path.join(p, 'package.json')) || fs.existsSync(path.join(p, 'index.html')) };
+      return { name, path: p, app: ['package.json', 'index.html', 'index.php', 'composer.json'].some((f) => fs.existsSync(path.join(p, f))) };
     }),
     places,
   };

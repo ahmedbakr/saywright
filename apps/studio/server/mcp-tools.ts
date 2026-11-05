@@ -9,7 +9,7 @@ import type { RefInfo } from '../shared/api.ts';
 import { ProposeChange } from './ai/agent.ts';
 import { jsonSchemaOf } from './ai/llm/types.ts';
 import { applyEditSpecs, listFilesTool, readFileTool, searchTool } from './ai/tools.ts';
-import type { AppManager } from './apps/manager.ts';
+import { appAddress, type AppManager } from './apps/manager.ts';
 import type { McpTool } from './mcp.ts';
 
 export interface StudioContext {
@@ -63,7 +63,7 @@ export function mcpTools(deps: Deps): McpTool[] {
         const w = open();
         const c = deps.context.app === w.app.id ? deps.context : null;
         const lines = [`App: ${w.app.name} (${w.env.label}: ${w.env.url})`, w.project.hasCode ? `Code: ${w.project.root}` : 'Code: not on this computer (linked by address only)'];
-        if (c?.pageUrl) lines.push(`Page: ${redactUrl(c.pageUrl)}`);
+        if (c?.pageUrl) lines.push(`Page: ${redactUrl(appAddress(w, c.pageUrl))}`);
         // What is selected is often pinned too (the last of several picked): named once.
         const key = (r: RefInfo) => `${r.src ?? ''}|${r.label}|${r.text}`;
         const selected = new Set(c?.selection.map(key) ?? []);

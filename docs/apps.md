@@ -8,13 +8,13 @@ Saywright works on a web app you link to it. It opens on **Your apps**, the apps
 
 | Link | What the studio does |
 | --- | --- |
-| **A folder on this computer** | Reads the app's framework, its dev command, its usual port and its package manager. When you open the app, the studio runs that command, waits for the dev server (up to 90 seconds), and follows it if it starts on another port. A folder of plain HTML is served by the studio itself. In a monorepo, it lists the apps inside the folder to pick from. |
+| **A folder on this computer** | Reads the app's framework, its dev command, its usual port and its package manager. When you open the app, the studio runs that command, waits for the dev server (up to 90 seconds), and follows it if it starts on another port. A folder of plain HTML is served by the studio itself; a PHP app is started with PHP's own server (`php -S`, or `php artisan serve` for Laravel), which you can change. In a monorepo, it lists the apps inside the folder to pick from. |
 | **An address** | Shows any running site: `http://localhost:3000`, a staging server or production. It is shown through the studio's local [proxy](#the-proxy), so nothing in the site needs to change. |
 | **A GitHub repository** | Clones it into `~/saywright-apps` (**Clone into** changes the folder), using the GitHub CLI when it is signed in, so private repositories work too, or git with the access it already has. Then it is linked like a folder. |
 
 <img src="media/guide/link-app.png" alt="The Link an app dialog, with its three tabs: Folder on this computer, Address and GitHub" width="880">
 
-An app linked by its address alone can be used, recorded, tested by Autopilot and reviewed by the Experts, but the studio has no code to change. Link its folder to make changes.
+An app linked by its address alone can be used, recorded, tested by Autopilot and reviewed by the Experts, but the studio has no code to change. **Link its folder…** (offered when you ask for a change) gives that same app its code: its addresses stay, and what the studio kept for it (sessions, reports) moves to the folder's `.saywright`.
 
 **Opening someone else's code runs it.** Opening an app runs its dev command, and installing its dependencies runs its install scripts, with your permissions. When you link a cloned repository, or a folder whose dependencies aren't installed, the studio says so. Only open code you trust.
 
@@ -26,7 +26,7 @@ Pointing at an element tells the studio which code wrote it. How exactly depends
 | --- | --- | --- |
 | **Vite + React** with [`@saywright/vite`](../packages/vite/README.md) | The exact file, line and column of each JSX element, added by the plugin while you develop | Yes |
 | **Other React apps** (Next.js, Create React App, webpack) | React's development information, mapped back to your files through source maps. Needs one development-only script tag (`connect` adds it), or the proxy. | Yes |
-| **Vue, Svelte, Astro** | The framework's own development information | No: the AI makes the changes |
+| **Vue, Svelte, Astro** | The framework's own development information (for Vue, the component's file even where its words come from data) | No: the AI makes the changes |
 | **Plain HTML, server templates (PHP, Django, Rails…), anything else** | A search of your code for what identifies the element: its id or test id, then its name, label or link, then its text | No: the AI makes the changes |
 
 Quick edits are the changes made on your computer without an AI (size, variant, text, move, remove). They change React components (JSX); everything else goes to your AI.
@@ -50,9 +50,10 @@ What it adds depends on the app:
 | **Next.js** | Adds one development-only script tag to the root layout (`app/layout`) or `pages/_document`. |
 | **Other apps with an HTML page** (Create React App, webpack, Angular…) | Adds the script tag at the top of the page's `<head>` (`public/index.html`, `index.html` or `src/index.html`), so session recording starts before the app's own scripts. This tag isn't removed from production builds: the comment above it says to remove it before you deploy. Anywhere the studio isn't running, it fails to load and the page carries on. |
 | **SvelteKit, Astro, Nuxt, Docusaurus** and others without an HTML page | Nothing: the studio shows them through its proxy. |
+| **A folder of plain HTML** (with or without a `package.json`), **a PHP app** | Nothing: the studio shows every page through its proxy. |
 | **A monorepo's top folder** | Nothing: it lists the apps inside, to connect one of them. |
 
-Then the app opens first the next time the studio starts. `--dry-run` shows what would change; the other options (`--url`, `--start`, `--no-start`, `--studio`) are in [Configuration](configuration.md#saywright-connect).
+Then the app opens first the next time the studio starts; connect several before then and each is linked, the last one opening first. `--dry-run` shows what it would change, with the lines it would add, and changes nothing; the other options (`--url`, `--start`, `--no-start`, `--studio`) are in [Configuration](configuration.md#saywright-connect).
 
 To disconnect an app, remove it from the app list (its code, sessions and reports stay where they are), and remove `saywright()` from its Vite config or the `saywright.js` script tag.
 

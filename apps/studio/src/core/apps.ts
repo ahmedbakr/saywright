@@ -38,6 +38,8 @@ interface AppsState {
   launcher: boolean;
   /** Linking an app, on this tab of the Link dialog. */
   linking: LinkTab | null;
+  /** “Link its folder…” on an app linked by its address alone: the folder picked becomes that app's. */
+  attachTo: string | null;
   opening: Opening | null;
   pending: PendingSwitch | null;
   cloneLog: string[];
@@ -52,6 +54,7 @@ export const useApps = create<AppsState>()(() => ({
   launcherPref: true,
   launcher: false,
   linking: null,
+  attachTo: null,
   opening: null,
   pending: null,
   cloneLog: [],
@@ -102,14 +105,21 @@ export const apps = {
     if (had && !now.active && !now.opening && now.apps.some((a) => a.id === had)) await this.open(had);
   },
 
-  /** The app list; with `link`, the Link dialog over it, on that tab. */
-  show(link?: LinkTab): void {
+  /** The app list; with `link`, the Link dialog over it, on that tab (`attachTo`: for that app's own folder). */
+  show(link?: LinkTab, attachTo?: string): void {
     void this.refresh();
-    setA(link ? { launcher: true, linking: link } : { launcher: true });
+    setA(link ? { launcher: true, linking: link, attachTo: attachTo ?? null } : { launcher: true });
   },
 
   setLinking(link: LinkTab | null): void {
-    setA({ linking: link });
+    setA(link ? { linking: link } : { linking: null, attachTo: null });
+  },
+
+  /** An app linked by its address gets its code folder: the same app, now with code to change. */
+  async attachFolder(id: string, probe: AppProbe): Promise<LinkedApp> {
+    const r = await api.post<{ app: LinkedApp; state: AppsResponse }>(`/apps/${encodeURIComponent(id)}/folder`, { root: probe.root });
+    apply(r.state);
+    return r.app;
   },
 
   hide(): void {

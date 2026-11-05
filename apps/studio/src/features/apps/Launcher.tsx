@@ -29,6 +29,7 @@ import { LinkApp } from './LinkApp';
 
 export const FRAMEWORK_LABEL: Record<string, string> = {
   vite: 'Vite',
+  vue: 'Vue',
   next: 'Next.js',
   cra: 'Create React App',
   astro: 'Astro',
@@ -38,6 +39,7 @@ export const FRAMEWORK_LABEL: Record<string, string> = {
   nuxt: 'Nuxt',
   angular: 'Angular',
   gatsby: 'Gatsby',
+  php: 'PHP',
   static: 'Static site',
   other: 'Web app',
 };
@@ -73,6 +75,7 @@ export function Launcher() {
   const loaded = useApps((s) => s.loaded);
   const pref = useApps((s) => s.launcherPref);
   const linking = useApps((s) => s.linking);
+  const attachTo = useApps((s) => (s.attachTo ? (s.apps.find((a) => a.id === s.attachTo) ?? null) : null));
   const open = shown || noApp;
   // A real modal: the studio behind it is inert until an app is open.
   const root = useRef<HTMLDivElement | null>(null);
@@ -175,7 +178,7 @@ export function Launcher() {
               <PrivacyNote className="ms-auto max-w-[680px] text-[12px]" />
             </footer>
           )}
-          <LinkApp open={!!linking} start={linking ?? 'folder'} onClose={() => apps.setLinking(null)} />
+          <LinkApp open={!!linking} start={linking ?? 'folder'} attachTo={attachTo} onClose={() => apps.setLinking(null)} />
         </motion.div>
       )}
     </AnimatePresence>

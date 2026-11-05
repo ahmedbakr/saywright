@@ -15,7 +15,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { STUDIO_URL } from '@saywright/vite/protocol';
-import { declaredDeps, devCommandOf, FRAMEWORK_NAME, frameworkOf, installedPackage, packageManagerFor, portGuess, readPkg, VITE_BASED, viteConfigIn, workspaceApps } from '../server/apps/detect.ts';
+import { declaredDeps, devCommandOf, FRAMEWORK_NAME, frameworkOf, htmlTitle, installedPackage, packageManagerFor, portGuess, readPkg, VITE_BASED, viteConfigIn, workspaceApps } from '../server/apps/detect.ts';
+import { diffFile } from '../server/diff.ts';
+import { connectedTargets } from '../server/apps/connected.ts';
 import { ASSIGNED_URL } from '../server/apps/registry.ts';
 import type { CliContext } from './index.ts';
 import { addImport } from './source.ts';
@@ -32,7 +34,7 @@ ${c.bold('saywright connect')} <app folder> [options]: connect an app to the stu
 `;
 
 /** Where the studio that runs now listens, as it wrote when it started: null when none runs. */
-function runningStudio(dataDir: string): string | null {
+export function runningStudio(dataDir: string): string | null {
   let saved: { url?: unknown; pid?: unknown };
   try {
     saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'server.json'), 'utf8')) as typeof saved;
@@ -67,15 +69,20 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
   const studio = (values.studio ?? runningStudio(ctx.layout.dataDir) ?? STUDIO_URL).replace(/\/+$/, '');
   const scriptUrl = `${studio}/saywright.js`;
   const root = path.resolve(positionals[0]);
-  const pkg = readPkg(root);
-  if (!pkg) {
-    fail(`No package.json in ${root}.`, 'Point at your app’s folder.');
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    fail(`No folder at ${root}.`, 'Point at your app’s folder.');
     return 1;
   }
-  const name = pkg.name ?? path.basename(root);
-  const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-  const first = (...files: string[]) => files.map((f) => path.join(root, f)).find((f) => fs.existsSync(f));
+  const pkg = readPkg(root);
   const framework = frameworkOf(root, pkg);
+  // A folder of pages, or a PHP app, needs no package.json: the studio shows it through its proxy.
+  if (!pkg && framework !== 'static' && framework !== 'php') {
+    fail(`No package.json, index.html or index.php in ${root}.`, 'Point at your app’s folder.');
+    return 1;
+  }
+  const name = pkg?.name ?? htmlTitle(root) ?? path.basename(root);
+  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
+  const first = (...files: string[]) => files.map((f) => path.join(root, f)).find((f) => fs.existsSync(f));
   // Packages are installed with the app's own package manager; its scripts may run with npm when this computer lacks it.
   const { uses: pm, runs, note: pmNote } = packageManagerFor(root);
   const dev = devCommandOf(root, pkg, runs, framework);
@@ -83,7 +90,7 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
   const page = first('public/index.html', 'index.html', 'src/index.html');
 
   // A monorepo's top folder that isn't an app itself: which apps to connect instead, as you would type them.
-  const apps = workspaceApps(root, pkg);
+  const apps = pkg ? workspaceApps(root, pkg) : [];
   if (apps.length && !viteConfig && framework !== 'next' && !page) {
     const folders = apps.map((a) => path.join(positionals[0], path.relative(root, a.path)));
     const width = Math.max(...folders.map((f) => f.length));
@@ -91,9 +98,12 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
     return 1;
   }
 
+  // What it does, as it says it: “Adds …” before it is done (a dry run), “Added …” once it is.
   const changes: string[] = [];
+  const edits: { file: string; before: string; after: string }[] = [];
   const write = (file: string, content: string, what: string) => {
-    changes.push(`${what}: ${path.relative(root, file)}`);
+    changes.push(`${dry ? would(what) : what}: ${path.relative(root, file)}`);
+    edits.push({ file, before: fs.readFileSync(file, 'utf8'), after: content });
     if (!dry) fs.writeFileSync(file, content);
   };
   /** Run the app's package manager; false (and why) when it fails. */
@@ -129,7 +139,9 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
       }
       // In the file's own style: its quotes, and one plugin a line when it lists them so.
       const q = /^import [^\n]*"[^"\n]+";?\s*$/m.test(src) && !/^import [^\n]*'[^'\n]+';?\s*$/m.test(src) ? '"' : "'";
-      src = addImport(src, `import saywright from ${q}@saywright/vite${q};`).replace(/plugins\s*:\s*\[([ \t]*\n([ \t]*))?/, (m, nl?: string, indent?: string) => (nl ? `${m}saywright(),\n${indent}` : `${m}saywright(), `));
+      // Its semicolons too: none after its imports, none after this one.
+      const semi = /^import [^\n]*['"][^'"\n]+['"][ \t]*$/m.test(src) && !/^import [^\n]*['"][^'"\n]+['"];/m.test(src) ? '' : ';';
+      src = addImport(src, `import saywright from ${q}@saywright/vite${q}${semi}`).replace(/plugins\s*:\s*\[([ \t]*\n([ \t]*))?/, (m, nl?: string, indent?: string) => (nl ? `${m}saywright(),\n${indent}` : `${m}saywright(), `));
       what = 'Added the saywright() plugin';
     }
     // The package first: if installing fails, the config isn't left importing a plugin that isn't there. In a
@@ -137,7 +149,7 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
     if (!deps['@saywright/vite'] && !installedPackage(root, '@saywright/vite')) {
       // A folder (this repository's plugin) needs file: for yarn; a published version installs as it is.
       const spec = path.isAbsolute(ctx.pluginSpec) && pm === 'yarn' ? `file:${ctx.pluginSpec}` : ctx.pluginSpec;
-      changes.push(`Installed @saywright/vite with ${pm}`);
+      changes.push(`${dry ? 'Installs' : 'Installed'} @saywright/vite with ${pm}`);
       if (!run(pm === 'npm' ? ['install', '-D', spec] : ['add', '-D', spec])) return 1;
     }
     if (src !== before) write(viteConfig, src, what);
@@ -158,9 +170,11 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
         fail(`No <body> in ${path.relative(root, layout)}. Add this inside your root layout's <body>:`, tag);
         return 1;
       }
-      write(layout, src.replace(/<body([^>]*)>/, (m) => `${m}\n        ${tag}\n        `), 'Added the Saywright script (development only)');
+      // On a line of its own, indented like what follows the <body> tag; no line of spaces left behind.
+      const added = src.replace(/<body([^>]*)>([ \t]*\n([ \t]*))?/, (m: string, _attrs: string, nl?: string, indent?: string) => (nl !== undefined ? `${m.slice(0, m.length - nl.length)}\n${indent}${tag}${nl}` : `${m}\n        ${tag}\n        `));
+      write(layout, added, 'Added the Saywright script (development only)');
     } else write(file, src.replace(/<Head([^>]*)>/, (m) => `${m}\n          ${tag}`), 'Added the Saywright script (development only)');
-  } else if (page) {
+  } else if (page && framework !== 'static') {
     how = 'script';
     let src = fs.readFileSync(page, 'utf8');
     if (marked(src)) retarget(page, src);
@@ -173,29 +187,60 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
       write(page, src, 'Added the Saywright script');
     }
   } else {
-    // Pages the framework renders itself (no HTML file to add a tag to): the proxy adds the studio to them.
+    // Pages the framework renders itself (no HTML file to add a tag to), a folder of pages (a tag in one page would
+    // leave the others out) or a PHP app: the proxy adds the studio to every page.
     how = 'proxy';
-    changes.push('Nothing to add to its code: the studio shows it through its proxy');
+    changes.push('Nothing to add to its code: the studio shows every page through its proxy');
   }
 
   // A static site has no usual port: it gets its address when it is served, by its start script or by the studio.
   const url = values.url ?? (dev.port ? `http://localhost:${dev.port}` : ASSIGNED_URL);
   const start = noStart ? null : values.start === undefined ? dev.start : values.start || null;
   if (!dry) {
+    // Every app connected before the studio next starts is linked then; this one, the last, opens first.
     fs.mkdirSync(ctx.layout.dataDir, { recursive: true });
-    fs.writeFileSync(path.join(ctx.layout.dataDir, 'target.json'), JSON.stringify({ url, root, framework, start, studio }, null, 2));
+    const file = path.join(ctx.layout.dataDir, 'target.json');
+    const waiting = connectedTargets(file).filter((t) => path.resolve(t.root) !== root);
+    fs.writeFileSync(file, JSON.stringify({ targets: [...waiting, { url, root, framework, start, studio }] }, null, 2));
   }
 
   const react = !!declaredDeps(root).react;
-  console.log(`\n${c.green('✓')} Connected ${c.bold(name)} (${FRAMEWORK_NAME[framework]})${dry ? c.yellow(' — dry run, nothing changed') : ''}`);
+  console.log(dry ? `\n${c.yellow('Dry run')}: connecting ${c.bold(name)} (${FRAMEWORK_NAME[framework]}) would change this, and nothing has changed yet:` : `\n${c.green('✓')} Connected ${c.bold(name)} (${FRAMEWORK_NAME[framework]})`);
   for (const change of changes) console.log(`  ${c.dim('·')} ${change}`);
   const where = url !== ASSIGNED_URL ? `${url}${start ? c.dim(`  (started with “${start}”)`) : c.dim('  (start it yourself)')}` : start ? `started with “${start}”, at the address it prints` : 'served by the studio';
   console.log(`  ${c.dim('·')} App: ${where}`);
+  if (dry) for (const e of edits) printDiff(path.relative(root, e.file), e.before, e.after);
   if (start && values.start === undefined && !noStart && pmNote) warn(pmNote);
   if (!values.url && dev.guessed) warn(`${portGuess(dev.guessed, framework, dev.port)}.`, start ? 'The studio finds the real one when it starts the app.' : 'Connect it again with --url and the address it runs at.');
-  const mapping = how === 'plugin' ? (react ? '' : ' Elements map to source through the framework’s development info.') : react ? ' Elements map to source through React’s development info; for exact lines, use Vite with the plugin.' : ' Elements map to source through the framework’s development info.';
+  const mapping =
+    framework === 'static' || framework === 'php'
+      ? ' Elements are found in its pages’ code by what they show and their attributes.'
+      : how === 'plugin'
+        ? react
+          ? ''
+          : ' Elements map to source through the framework’s development info.'
+        : react
+          ? ' Elements map to source through React’s development info; for exact lines, use Vite with the plugin.'
+          : ' Elements map to source through the framework’s development info.';
+  if (dry) {
+    console.log(c.dim(`\nRun it again without --dry-run to make ${edits.length || changes.length ? 'these changes' : 'the connection'}.\n`));
+    return 0;
+  }
   console.log(`\nNext: ${c.cyan(ctx.startCommand)}.${mapping}`);
   const undo = { plugin: ' and remove saywright() from your Vite config', script: ' and remove the saywright.js script tag', proxy: '' }[how];
   console.log(c.dim(`It opens first next time the studio starts, and stays in its app list. To disconnect: remove it from the app list${undo}.\n`));
   return 0;
+}
+
+/** “Added the plugin” as said before it is done: “Adds the plugin”. */
+function would(done: string): string {
+  return done.replace(/^(Added|Pointed|Installed)\b/, (w) => ({ Added: 'Adds', Pointed: 'Points', Installed: 'Installs' })[w as 'Added' | 'Pointed' | 'Installed']);
+}
+
+/** The lines a change would add and remove, around where they are. */
+function printDiff(file: string, before: string, after: string): void {
+  console.log(`\n  ${c.bold(file)}`);
+  for (const h of diffFile(file, before, after, 1).hunks) {
+    for (const l of h.lines) console.log(l.type === 'add' ? c.green(`  + ${l.text}`) : l.type === 'del' ? c.red(`  - ${l.text}`) : c.dim(`    ${l.text}`));
+  }
 }

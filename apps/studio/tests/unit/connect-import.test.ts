@@ -71,6 +71,17 @@ describe('an app connected with npm run connect', () => {
     expect(all[0].envs.find((e) => e.id === all[0].env)?.url).toBe('http://localhost:6001');
   });
 
+  it('several connected before the studio starts are each linked; the last connected opens first', async () => {
+    const { home, data, app } = setup();
+    const site = tree({ 'index.html': '<!doctype html><title>Notes</title>' });
+    fs.writeFileSync(path.join(data, 'target.json'), JSON.stringify({ targets: [{ url: 'http://localhost:5999', root: app, start: 'npm run dev' }, { url: 'http://localhost:0', root: site, framework: 'static', start: null }] }));
+    const api = await start(home);
+    const roots = api.apps.registry.list().map((a) => a.root);
+    expect(roots).toEqual(expect.arrayContaining([app, site]));
+    expect(api.apps.registry.last).toBe(api.apps.registry.list().find((a) => a.root === site)!.id);
+    expect(fs.existsSync(path.join(data, 'target.json'))).toBe(false);
+  });
+
   it('opens a folder of HTML connected without a port at the address it gets when served', async () => {
     const { home, data } = setup();
     const site = tree({ 'package.json': { name: 'brochure' }, 'index.html': '<!doctype html><html><head><title>Brochure</title></head><body></body></html>' });

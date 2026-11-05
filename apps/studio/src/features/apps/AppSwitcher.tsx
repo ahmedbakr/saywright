@@ -19,6 +19,8 @@ export function AppSwitcher() {
   const frameUrl = useStudio((s) => s.app.url);
   const list = useApps((s) => s.apps);
   const current = status?.app;
+  // An app being opened (one `connect` just set up, say): named, rather than “No app open”.
+  const opening = useApps((s) => (s.opening && !s.opening.error ? (s.apps.find((a) => a.id === s.opening!.id)?.name ?? null) : null));
   const others = list.filter((a) => a.id !== current?.id).slice(0, 6);
   // In the proxy, the frame's address is the proxy's: show the app's own.
   const shown = current ? current.env.url.replace(/\/$/, '') + (frameUrl ? new URL(frameUrl).pathname.replace(/^\/$/, '') : '') : '';
@@ -27,7 +29,7 @@ export function AppSwitcher() {
       <DropdownMenu.Trigger asChild>
         <button className="flex min-w-0 items-center gap-1.5 rounded-[8px] py-1 pl-1.5 pr-1 text-start hover:bg-hover" data-app-switcher>
           <Dot tone={connected ? 'ok' : 'off'} />
-          <span className="truncate text-[13px] font-medium text-fg">{current?.name ?? (status ? 'No app open' : 'Connecting…')}</span>
+          <span className="truncate text-[13px] font-medium text-fg">{current?.name ?? (opening ? `Opening ${opening}…` : status ? 'No app open' : 'Connecting…')}</span>
           {current && current.envs.length > 1 && <span className="shrink-0 rounded-[5px] bg-active px-1.5 text-[10.5px] font-medium text-fg-2">{current.env.label}</span>}
           <span className="hidden max-w-[220px] truncate font-mono text-[11.5px] text-fg-3 md:inline">{shortUrl(shown)}</span>
           <ChevronDown className="size-3.5 shrink-0 text-fg-3" />

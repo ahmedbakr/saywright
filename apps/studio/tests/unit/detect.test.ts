@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configPort, packageManagerFor, probeFolder } from '../../server/apps/detect';
+import { configPort, packageManagerFor, probeFolder, probeUrl } from '../../server/apps/detect';
 import { monorepo, programs, tree, VITE_REACT } from './helpers';
 
 let path$: { restore: () => void } | null = null;
@@ -102,5 +102,51 @@ describe('how a folder’s pages reach the studio', () => {
     expect(probeFolder(tagged).notes.join(' ')).toMatch(/without the proxy/);
     const plain = tree({ 'package.json': { name: 'plain', scripts: { dev: 'next dev' }, dependencies: { next: '15.0.0' } }, 'app/layout.tsx': 'export default function Root({ children }) { return <html><body>{children}</body></html>; }\n' });
     expect(probeFolder(plain)).toMatchObject({ connection: 'proxy' });
+  });
+});
+
+describe('apps that aren’t built with npm alone', () => {
+  it('a PHP app: started with PHP’s own server (Laravel’s artisan when it is one), with no packages to install', () => {
+    const plain = tree({ 'index.php': '<?php echo "Hi";', 'about.php': '' });
+    expect(probeFolder(plain)).toMatchObject({ framework: 'php', start: 'php -S localhost:8000', url: 'http://localhost:8000', needsInstall: false, connection: 'proxy' });
+    expect(probeFolder(plain).packageManager).toBeUndefined();
+    expect(probeFolder(plain).notes.join(' ')).toMatch(/A PHP app: the studio starts it with php -S localhost:8000/);
+    const laravel = tree({ artisan: '', 'composer.json': '{}', 'public/index.php': '', 'package.json': { name: 'shop', scripts: { dev: 'vite' }, devDependencies: { 'laravel-vite-plugin': '1.0.0' } } });
+    expect(probeFolder(laravel)).toMatchObject({ framework: 'php', start: 'php artisan serve --port=8000', needsInstall: false });
+  });
+
+  it('a folder of pages has no package manager to show', () => {
+    expect(probeFolder(tree({ 'index.html': '<title>Notes</title>' }))).toMatchObject({ framework: 'static', start: null });
+    expect(probeFolder(tree({ 'index.html': '<title>Notes</title>' })).packageManager).toBeUndefined();
+  });
+
+  it('a Vue app is called Vue, not just Vite', () => {
+    installed('npm');
+    expect(probeFolder(tree({ 'package.json': { name: 'admin', scripts: { dev: 'vite' }, dependencies: { vue: '3.5.0' }, devDependencies: { vite: '7.0.0' } } }))).toMatchObject({ framework: 'vue', url: 'http://localhost:5173', canAddPlugin: false });
+  });
+});
+
+describe('an app linked by its address', () => {
+  const serve = async (title: string) => {
+    const http = await import('node:http');
+    const server = http.createServer((_req, res) => res.setHeader('Content-Type', 'text/html').end(`<!doctype html><title>${title}</title><p>hi</p>`));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return { server, port: (server.address() as { port: number }).port };
+  };
+
+  it('is named by its page’s title, unless the title names the page (“Sign in”): then by its address', async () => {
+    for (const [title, named] of [
+      ['Ledger | Accounts', 'Ledger'],
+      ['Sign in', null],
+      ['Vite + React + TS', null],
+      ['Dashboard', null],
+    ] as const) {
+      const { server, port } = await serve(title);
+      try {
+        expect((await probeUrl(`http://localhost:${port}/`)).name, title).toBe(named ?? `localhost:${port}`);
+      } finally {
+        server.close();
+      }
+    }
   });
 });

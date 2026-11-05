@@ -1421,7 +1421,7 @@ class Controller {
         case 'connect-ai':
           return [{ label: 'Connect an AI', primary: true, run: () => set({ overlay: 'settings', settingsTab: 'ai', island: { kind: 'idle' } }) }];
         case 'link-folder':
-          return [{ label: 'Link its folder…', primary: true, run: () => (this.dismissIsland(), apps.show('folder')) }];
+          return [{ label: 'Link its folder…', primary: true, run: () => (this.dismissIsland(), apps.show('folder', useApps.getState().active ?? undefined)) }];
         case 'open': {
           const at = /^(.+?):(\d+)(?::\d+)?$/.exec(n.src);
           if (!at || !get().status?.target.root) return [];

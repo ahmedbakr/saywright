@@ -75,9 +75,9 @@ Claude Desktop starts MCP servers as programs, so it runs `saywright mcp`, which
 }
 ```
 
-**Settings → Other AI apps** shows the same entry with the full path to this computer's Node.js and Saywright instead of `npx`; either works. From a checkout of this repository, the command is `node <repository>/scripts/mcp-stdio.mjs`.
+**Settings → Other AI apps** shows the same entry with the full path to this computer's Node.js and Saywright instead of `npx`, and the studio's data folder as `SAYWRIGHT_HOME` in its `env`; copy it as it is. From a checkout of this repository, the command is `node <repository>/scripts/mcp-stdio.mjs`.
 
-`saywright mcp` finds the studio through the data folder (`~/.saywright`), so it must use the same `SAYWRIGHT_HOME` as the studio if you changed it. Keep the studio running: without it, every request answers “Saywright isn’t running”.
+`saywright mcp` finds the studio through the data folder (`~/.saywright`), so it must use the same `SAYWRIGHT_HOME` as the studio if you changed it (`"env": { "SAYWRIGHT_HOME": "…" }` in the entry). Keep the studio running: without it, every request answers “Saywright isn’t running”.
 
 ### Other apps
 
@@ -90,8 +90,8 @@ Any MCP client that speaks Streamable HTTP and can send an `Authorization: Beare
 | `get_context` | The app open in the studio, the page, and what you selected or pinned there: each element with its file and line and the code around it (marked as a guess when it was found by searching the code for its text), and the last thing you said or typed. Call it when you say “this” or “that”. |
 | `propose_change` | Applies edits as a live preview in the studio. You keep or undo it there; the change is named after the app that proposed it. |
 | `read_file` | Reads a file of the open app, up to 400 lines at a time. |
-| `search_code` | Searches the open app's files for text or a regular expression. When it couldn't search every file in time, it says so and how to narrow the search. |
-| `list_files` | Lists the open app's source files under a folder. |
+| `search_code` | Searches the open app's files for text or a regular expression (in a monorepo, the workspace's other packages too, by the paths `read_file` takes). When it couldn't search every file in time, it says so and how to narrow the search. |
+| `list_files` | Lists the open app's source files under a folder (the app's own first, then in a monorepo the workspace's other packages). |
 | `list_sessions` | The open app's recorded sessions, newest first, with their scores and findings. |
 | `get_session_report` | One session's report: summary, findings with where to fix them and the evidence, and suggestions. Findings you skipped are left out. |
 

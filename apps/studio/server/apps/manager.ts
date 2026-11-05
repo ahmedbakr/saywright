@@ -135,6 +135,31 @@ export class AppManager {
   }
 
   /**
+   * Give an app linked by its address alone its code folder (“Link its folder…” on it): the same app, now with code
+   * to change, keeping its addresses. What the studio kept for it (its sessions, tests' secrets, stats) moves to the
+   * folder's `.saywright`, where an app with code keeps it. Opened again if it was open.
+   */
+  async attachFolder(id: string, probe: AppProbe): Promise<LinkedApp> {
+    const app = this.registry.get(id);
+    if (!app) throw new HttpError(404, 'No such app');
+    if (app.root) throw new HttpError(409, `${app.name} already has its folder: ${app.root}`);
+    if (!probe.root) throw new HttpError(400, 'Give the app’s folder');
+    const ws = this.spaces.get(id);
+    if (ws?.sessions.active()) throw new HttpError(409, 'Stop the recording first.');
+    const before = appStateDir(this.deps.dataDir, app);
+    const updated = this.registry.update(id, { root: probe.root, framework: probe.framework, packageManager: probe.packageManager, repo: probe.repo, start: probe.start ?? null });
+    moveInto(before, appStateDir(this.deps.dataDir, updated));
+    // Its workspace is made again, around its code.
+    ws?.sessions.close();
+    this.spaces.delete(id);
+    const wasOpen = this.activeId === id;
+    if (wasOpen) this.activeId = null;
+    this.deps.emit('apps', { kind: 'linked', app: this.registry.get(id) });
+    if (wasOpen) await this.open(id);
+    return this.registry.get(id) ?? updated;
+  }
+
+  /**
    * Open an app (and one of its addresses). A local app the studio can start is started and waited for.
    * Refuses while the open app is recording, and while it has a change waiting for keep or undo, unless
    * told which.
@@ -182,7 +207,7 @@ export class AppManager {
     const assigned = new URL(env.url).port === '0';
     if (!assigned && (await answers(env.url))) return env.url;
     if (!app.root || (!app.start && app.framework !== 'static')) throw new HttpError(502, `${env.url} isn’t running. Start it, then open it again.`, 'not-running');
-    if (app.framework !== 'static' && fs.existsSync(`${app.root}/package.json`) && !dependenciesInstalled(app.root)) {
+    if (app.framework !== 'static' && app.framework !== 'php' && fs.existsSync(`${app.root}/package.json`) && !dependenciesInstalled(app.root)) {
       throw new HttpError(409, `${app.name}’s dependencies aren’t installed yet.`, 'needs-install');
     }
     await this.runner.start(app);
@@ -338,5 +363,40 @@ function recordingIn(dir: string): boolean {
     return (JSON.parse(fs.readFileSync(path.join(dir, newest, 'session.json'), 'utf8')) as { status?: string }).status === 'recording';
   } catch {
     return false;
+  }
+}
+
+/** What is in `from` moved into `to`, never over what `to` has already (a folder in both: its contents, the same way). */
+function moveInto(from: string, to: string): void {
+  if (!fs.existsSync(from) || path.resolve(from) === path.resolve(to)) return;
+  fs.mkdirSync(to, { recursive: true });
+  for (const name of fs.readdirSync(from)) {
+    const a = path.join(from, name);
+    const b = path.join(to, name);
+    if (!fs.existsSync(b)) {
+      try {
+        fs.renameSync(a, b);
+      } catch {
+        // Another disk: copied, then removed.
+        fs.cpSync(a, b, { recursive: true });
+        fs.rmSync(a, { recursive: true, force: true });
+      }
+    } else if (fs.statSync(a).isDirectory() && fs.statSync(b).isDirectory()) moveInto(a, b);
+  }
+  fs.rmSync(from, { recursive: true, force: true });
+}
+
+/**
+ * A page of the app at the app's own address, not the studio proxy's that its frame shows it through
+ * (“http://localhost:5281/cart” is “http://localhost:3000/cart”): what people and AIs are told.
+ */
+export function appAddress(w: Pick<Workspace, 'frameUrl' | 'env'>, url: string): string {
+  try {
+    const shown = new URL(url);
+    const frame = new URL(w.frameUrl);
+    if (shown.origin !== frame.origin || frame.origin === new URL(w.env.url).origin) return url;
+    return new URL(`${shown.pathname}${shown.search}${shown.hash}`, new URL(w.env.url).origin).href;
+  } catch {
+    return url;
   }
 }

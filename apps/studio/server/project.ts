@@ -278,10 +278,29 @@ export class Project {
     return this.index;
   }
 
+  /**
+   * The workspace's other packages (a monorepo's), as searches see them: the app's own folder left out, paths as the
+   * app reads them ("../../packages/ui/Button.tsx"). Null for an app on its own.
+   */
+  private get siblings(): { index: CodeIndex; path: (rel: string) => string } | null {
+    if (this.siblingIndex === undefined) {
+      const ws = this.workspace;
+      const own = ws ? path.relative(ws, this.root).split(path.sep).join('/') : '';
+      this.siblingIndex =
+        ws && own && !own.startsWith('..')
+          ? { index: new CodeIndex(ws, (rel) => rel !== own && !rel.startsWith(`${own}/`) && searchable(rel), unsearched), path: (rel) => this.rel(path.join(ws, rel)) }
+          : null;
+    }
+    return this.siblingIndex;
+  }
+
+  private siblingIndex: { index: CodeIndex; path: (rel: string) => string } | null | undefined;
+
   listFiles(dir = '', limit = 500): string[] {
     const out: string[] = [];
     if (!this.hasCode) return out;
     const start = dir ? this.resolve(dir) : this.root;
+    const own = path.resolve(this.root);
     const walk = (abs: string) => {
       if (out.length >= limit) return;
       let entries: fs.Dirent[];
@@ -297,13 +316,15 @@ export class Project {
         if ((e.name.startsWith('.') && e.name !== '.storybook') || e.isSymbolicLink()) continue;
         const child = path.join(abs, e.name);
         if (e.isDirectory()) {
-          if (!IGNORED_DIRS.has(e.name)) walk(child);
+          if (!IGNORED_DIRS.has(e.name) && path.resolve(child) !== own) walk(child);
         } else if (TEXT_EXT.test(e.name)) {
           out.push(this.rel(child));
         }
       }
     };
     walk(start);
+    // The app's own files first, then (in a monorepo) the workspace's other packages, which it reads too.
+    if (!dir && this.workspace && this.siblings) walk(this.workspace);
     return out;
   }
 
@@ -325,33 +346,43 @@ export class Project {
     const any = new RegExp(source, 'gim');
     const folder = (opts.dir ?? '').replace(/^\.?\/?$/, '');
     const dir = folder ? `${this.rel(this.resolve(folder))}/` : '';
-    const files = (await this.code.files()).filter((f) => f.startsWith(dir) && (!/\.(svg|json)$/i.test(f) || /package\.json$|saywright\.config\.json$/.test(f)));
+    const worth = (f: string) => f.startsWith(dir) && (!/\.(svg|json)$/i.test(f) || /package\.json$|saywright\.config\.json$/.test(f));
     const hits: SearchHit[] = [];
-    const coverage = await this.code.scan(
-      files,
-      (file, text) => {
-        any.lastIndex = 0;
-        let lineNo = 1;
-        let counted = 0;
-        for (let m = any.exec(text); m; m = any.exec(text)) {
-          const start = m.index === 0 ? 0 : text.lastIndexOf('\n', m.index - 1) + 1;
-          const end = text.indexOf('\n', m.index);
-          const stop = end === -1 ? text.length : end;
-          for (let i = text.indexOf('\n', counted); i !== -1 && i < start; i = text.indexOf('\n', i + 1)) lineNo++;
-          counted = start;
-          const lineText = text.slice(start, stop);
-          if (line.test(lineText)) {
-            hits.push({ path: file, line: lineNo, text: lineText.trim().slice(0, 200) });
-            if (hits.length >= limit) return true;
-          }
-          if (end === -1) break;
-          any.lastIndex = end + 1;
-        }
-        return false;
-      },
-      { budgetMs: opts.budgetMs ?? SEARCH_BUDGET_MS },
-    );
+    const started = Date.now();
+    const budgetMs = opts.budgetMs ?? SEARCH_BUDGET_MS;
+    const coverage = await this.code.scan((await this.code.files()).filter(worth), this.matcher(any, line, hits, limit, (f) => f), { budgetMs });
+    // In a monorepo, the workspace's other packages too: the app's code reaches them.
+    const sib = this.siblings;
+    if (sib && hits.length < limit && !coverage.timedOut && (!dir || dir.startsWith('../'))) {
+      const wanted = (await sib.index.files()).filter((f) => worth(sib.path(f)));
+      const more = await sib.index.scan(wanted, this.matcher(any, line, hits, limit, sib.path), { budgetMs: Math.max(200, budgetMs - (Date.now() - started)) });
+      return { hits, searched: coverage.searched + more.searched, total: coverage.total + more.total, tooLarge: coverage.tooLarge + more.tooLarge, timedOut: more.timedOut };
+    }
     return { hits, ...coverage };
+  }
+
+  /** What a search does with a file's text: the lines that match, as hits (`at`: the path the app reads it by). */
+  private matcher(any: RegExp, line: RegExp, hits: SearchHit[], limit: number, at: (file: string) => string): (file: string, text: string) => boolean {
+    return (file, text) => {
+      any.lastIndex = 0;
+      let lineNo = 1;
+      let counted = 0;
+      for (let m = any.exec(text); m; m = any.exec(text)) {
+        const start = m.index === 0 ? 0 : text.lastIndexOf('\n', m.index - 1) + 1;
+        const end = text.indexOf('\n', m.index);
+        const stop = end === -1 ? text.length : end;
+        for (let i = text.indexOf('\n', counted); i !== -1 && i < start; i = text.indexOf('\n', i + 1)) lineNo++;
+        counted = start;
+        const lineText = text.slice(start, stop);
+        if (line.test(lineText)) {
+          hits.push({ path: at(file), line: lineNo, text: lineText.trim().slice(0, 200) });
+          if (hits.length >= limit) return true;
+        }
+        if (end === -1) break;
+        any.lastIndex = end + 1;
+      }
+      return false;
+    };
   }
 
   private gitRoot: { found: boolean; at: number } | null = null;

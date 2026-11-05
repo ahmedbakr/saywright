@@ -40,6 +40,9 @@ afterEach(() => {
   path$ = null;
 });
 
+/** The apps connect left for the studio to link when it next starts. */
+const waiting = () => (JSON.parse(fs.readFileSync(path.join(ctx.layout.dataDir, 'target.json'), 'utf8')) as { targets: { url: string; root: string; framework?: string; start?: string | null }[] }).targets;
+
 function app(files: Record<string, string>, deps: Record<string, string>): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-app-'));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'my-app', scripts: { dev: 'vite' }, devDependencies: deps }));
@@ -109,7 +112,18 @@ describe('connect', () => {
     expect(await main(['connect', dir, '--dry-run'], ctx)).toBe(0);
     expect(fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf8')).toBe(VITE);
     expect(fs.existsSync(path.join(ctx.layout.dataDir, 'target.json'))).toBe(false);
-    expect(out.join('\n')).toMatch(/Added the saywright\(\) plugin: vite.config.ts/);
+    // Said as what it would do, with the lines it would add.
+    expect(out.join('\n')).toMatch(/Adds the saywright\(\) plugin: vite.config.ts/);
+    expect(out.join('\n')).not.toMatch(/Added /);
+    expect(out.join('\n')).toContain("+ import saywright from '@saywright/vite';");
+    expect(out.join('\n')).toMatch(/nothing has changed yet/);
+  });
+
+  it('writes the import in the config’s own style: no semicolon where its imports have none', async () => {
+    const bare = `import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\n\nexport default defineConfig({ plugins: [react()] })\n`;
+    const dir = app({ 'vite.config.ts': bare }, { vite: '^8', '@saywright/vite': '^0.1.0' });
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf8')).toContain(`import react from '@vitejs/plugin-react'\nimport saywright from '@saywright/vite'\n`);
   });
 
   it('adds the plugin to a Vite app and tells the studio to open it', async () => {
@@ -118,7 +132,7 @@ describe('connect', () => {
     const config = fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf8');
     expect(config).toContain(`import saywright from '@saywright/vite';`);
     expect(config).toContain('plugins: [saywright(), react()]');
-    expect(JSON.parse(fs.readFileSync(path.join(ctx.layout.dataDir, 'target.json'), 'utf8'))).toMatchObject({ url: 'http://localhost:5180', root: dir, framework: 'vite', start: 'npm run dev' });
+    expect(waiting()).toEqual([expect.objectContaining({ url: 'http://localhost:5180', root: dir, framework: 'vite', start: 'npm run dev' })]);
     // Twice is the same as once.
     expect(await main(['connect', dir], ctx)).toBe(0);
     expect(fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf8')).toBe(config);
@@ -127,7 +141,7 @@ describe('connect', () => {
   it('with --no-start, tells the studio you start the app yourself', async () => {
     const dir = app({ 'vite.config.ts': VITE }, { vite: '^8', '@saywright/vite': '^0.1.0' });
     expect(await main(['connect', dir, '--no-start', '--url', 'http://localhost:5180'], ctx)).toBe(0);
-    expect(JSON.parse(fs.readFileSync(path.join(ctx.layout.dataDir, 'target.json'), 'utf8'))).toMatchObject({ url: 'http://localhost:5180', start: null });
+    expect(waiting().at(-1)).toMatchObject({ url: 'http://localhost:5180', start: null });
     expect(out.join('\n')).toMatch(/App: http:\/\/localhost:5180\s+\(start it yourself\)/);
   });
 
@@ -142,6 +156,32 @@ describe('connect', () => {
     const dir = app({ 'app/layout.tsx': `export default function Root({ children }) {\n  return <html><body>{children}</body></html>;\n}\n` }, { next: '^16' });
     expect(await main(['connect', dir], ctx)).toBe(0);
     expect(fs.readFileSync(path.join(dir, 'app/layout.tsx'), 'utf8')).toContain(`{process.env.NODE_ENV === 'development' && <script src="http://localhost:7357/saywright.js" defer />}`);
+    // In a layout written over several lines: on a line of its own, indented like what follows, no line of spaces left.
+    const tidy = app({ 'app/layout.tsx': `export default function Root({ children }) {\n  return (\n    <html>\n      <body className="app">\n        {children}\n      </body>\n    </html>\n  );\n}\n` }, { next: '^16' });
+    expect(await main(['connect', tidy], ctx)).toBe(0);
+    const layout = fs.readFileSync(path.join(tidy, 'app/layout.tsx'), 'utf8');
+    expect(layout).toContain(`      <body className="app">\n        {process.env.NODE_ENV === 'development' && <script src="http://localhost:7357/saywright.js" defer />}\n        {children}\n`);
+    expect(layout).not.toMatch(/\n[ \t]+\n/);
+  });
+
+  it('connects every app asked before the studio starts: each waits its turn, one connected again moves to the end', async () => {
+    const a = app({ 'vite.config.ts': VITE }, { vite: '^8', '@saywright/vite': '^0.1.0' });
+    const b = app({ 'vite.config.ts': VITE }, { vite: '^8', '@saywright/vite': '^0.1.0' });
+    expect(await main(['connect', a, '--url', 'http://localhost:5180'], ctx)).toBe(0);
+    expect(await main(['connect', b, '--url', 'http://localhost:5181'], ctx)).toBe(0);
+    expect(waiting().map((t) => t.root)).toEqual([a, b]);
+    expect(await main(['connect', a, '--url', 'http://localhost:5180'], ctx)).toBe(0);
+    expect(waiting().map((t) => t.root)).toEqual([b, a]);
+  });
+
+  it('connects a folder of pages with no package.json: the studio serves it and shows every page through its proxy', async () => {
+    const dir = tree({ 'index.html': '<!doctype html><title>Notes</title>', 'about.html': '<!doctype html><title>About</title>' });
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'index.html'), 'utf8')).not.toContain('saywright.js');
+    expect(out.join('\n')).toMatch(/Connected Notes \(static site\)/);
+    expect(out.join('\n')).toMatch(/studio shows every page through its proxy/);
+    expect(out.join('\n')).toMatch(/found in its pages’ code by what they show/);
+    expect(waiting().at(-1)).toMatchObject({ root: dir, framework: 'static', start: null });
   });
 
   it('points the script tag at the studio that runs now, wherever it moved, and at the usual place once it stops', async () => {
@@ -172,16 +212,16 @@ describe('connect', () => {
 });
 
 describe('connect, as the studio reads apps', () => {
-  const target = () => JSON.parse(fs.readFileSync(path.join(ctx.layout.dataDir, 'target.json'), 'utf8')) as Record<string, unknown>;
+  const target = () => waiting().at(-1) as Record<string, unknown>;
 
   it('finds a Vite + React app in a monorepo, with Vite and yarn in the workspace above it', async () => {
     installed('yarn');
     const { app } = monorepo();
     expect(await main(['connect', app, '--dry-run'], ctx)).toBe(0);
     const text = out.join('\n');
-    expect(text).toMatch(/Connected web \(Vite\)/);
-    expect(text).toMatch(/Added the saywright\(\) plugin: vite\.config\.mts/);
-    expect(text).toMatch(/Installed @saywright\/vite with yarn/);
+    expect(text).toMatch(/Dry run: connecting web \(Vite\) would change this/);
+    expect(text).toMatch(/Adds the saywright\(\) plugin: vite\.config\.mts/);
+    expect(text).toMatch(/Installs @saywright\/vite with yarn/);
     expect(text).toMatch(/App: http:\/\/localhost:5173\s+\(started with “yarn start”\)/);
     expect(text).toMatch(/vite\.config\.mts works out its port in code, so 5173 \(Vite’s usual one\) is a guess/);
   });
@@ -217,7 +257,7 @@ describe('connect, as the studio reads apps', () => {
     expect(await main(['connect', kit], ctx)).toBe(0);
     expect(fs.readFileSync(path.join(kit, 'vite.config.ts'), 'utf8')).not.toContain('saywright');
     expect(out.join('\n')).toMatch(/Connected kit \(SvelteKit\)/);
-    expect(out.join('\n')).toMatch(/Nothing to add to its code: the studio shows it through its proxy/);
+    expect(out.join('\n')).toMatch(/Nothing to add to its code: the studio shows every page through its proxy/);
     expect(target()).toMatchObject({ framework: 'sveltekit', url: 'http://localhost:5173', start: 'npm run dev' });
   });
 
@@ -267,6 +307,14 @@ describe('setup and doctor', () => {
   afterEach(() => {
     if (saved === undefined) delete process.env.SAYWRIGHT_SPEECH_DIR;
     else process.env.SAYWRIGHT_SPEECH_DIR = saved;
+  });
+
+  it('doctor says where a running studio listens, rather than calling its usual port free', async () => {
+    // This process stands for a studio that started on 7440, its usual port being taken.
+    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url: 'http://localhost:7440', pid: process.pid }));
+    await main(['doctor'], ctx);
+    expect(out.join('\n')).toMatch(/✓ The studio is running at http:\/\/localhost:7440/);
+    expect(out.join('\n')).not.toMatch(/Port 7357/);
   });
 
   it.skipIf(!engine)('doctor finds the speech models where SAYWRIGHT_SPEECH_DIR says', async () => {

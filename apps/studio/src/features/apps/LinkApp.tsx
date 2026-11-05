@@ -6,8 +6,8 @@
  */
 import { ArrowUp, Check, CornerDownLeft, Folder, FolderGit2, FolderOpen, GitBranch, Globe, Home, TriangleAlert } from 'lucide-react';
 import { Tabs } from 'radix-ui';
-import { useEffect, useState, type ReactNode } from 'react';
-import type { AppProbe, FolderListing } from '@shared/apps';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { AppProbe, FolderListing, LinkedApp } from '@shared/apps';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Badge, Spinner } from '@/components/ui/misc';
@@ -18,7 +18,7 @@ import { AppIcon, FRAMEWORK_LABEL } from './Launcher';
 export type { LinkTab };
 
 /** `start`: the way of linking it opens on. */
-export function LinkApp({ open, onClose, start = 'folder' }: { open: boolean; onClose: () => void; start?: LinkTab }) {
+export function LinkApp({ open, onClose, start = 'folder', attachTo = null }: { open: boolean; onClose: () => void; start?: LinkTab; attachTo?: LinkedApp | null }) {
   const [tab, setTab] = useState<LinkTab>(start);
   const [probe, setProbe] = useState<AppProbe | null>(null);
   useEffect(() => {
@@ -48,8 +48,9 @@ export function LinkApp({ open, onClose, start = 'folder' }: { open: boolean; on
           </TabButton>
         </Tabs.List>
         <Tabs.Content value={tab} className="min-h-0 flex-1 overflow-y-auto p-5 outline-none">
+          {/* Another app picked from the one shown (a monorepo's) gets its own name, command and address, not the first's. */}
           {probe ? (
-            <Summary probe={probe} cloned={tab === 'github'} onBack={() => setProbe(null)} onProbe={setProbe} onLinked={onClose} />
+            <Summary key={`${probe.root ?? ''}|${probe.url ?? ''}`} probe={probe} cloned={tab === 'github'} attachTo={attachTo} onBack={() => setProbe(null)} onProbe={setProbe} onLinked={onClose} />
           ) : tab === 'folder' ? (
             <FolderPicker onProbe={setProbe} />
           ) : tab === 'url' ? (
@@ -100,11 +101,17 @@ function FolderPicker({ onProbe }: { onProbe: (p: AppProbe) => void }) {
   const [listing, setListing] = useState<FolderListing | null>(null);
   const [path, setPath] = useState('');
   const { busy, error, run } = useAsync();
+  // Only the folder asked for last is shown, and the box keeps what was typed in it meanwhile: the first listing,
+  // coming late, replaces neither.
+  const asked = useRef(0);
+  const typed = useRef('');
   const go = async (to?: string) => {
+    const n = ++asked.current;
+    const box = typed.current;
     const l = await run(() => apps.folders(to));
-    if (l) {
+    if (l && n === asked.current) {
       setListing(l);
-      setPath(l.path);
+      if (typed.current === box) setPath((typed.current = l.path));
     }
   };
   useEffect(() => {
@@ -127,7 +134,7 @@ function FolderPicker({ onProbe }: { onProbe: (p: AppProbe) => void }) {
       >
         <input
           value={path}
-          onChange={(e) => setPath(e.target.value)}
+          onChange={(e) => setPath((typed.current = e.target.value))}
           spellCheck={false}
           placeholder="/path/to/your/app"
           className="h-9 min-w-0 flex-1 rounded-[8px] bg-sunken px-3 font-mono text-[12.5px] text-fg outline-none ring-1 ring-inset ring-line-strong focus:ring-human-line"
@@ -136,7 +143,8 @@ function FolderPicker({ onProbe }: { onProbe: (p: AppProbe) => void }) {
         <Button type="submit" size="md" icon={<CornerDownLeft />} disabled={busy}>
           Go
         </Button>
-        <Button type="button" size="md" variant="primary" icon={<Check />} disabled={busy || !listing} onClick={() => listing && void use(listing.path)} data-use-folder>
+        {/* The folder typed, when it differs from the one listed: what the box says is what is used. */}
+        <Button type="button" size="md" variant="primary" icon={<Check />} disabled={busy || (!listing && !path.trim())} onClick={() => void use(path.trim() || listing!.path)} data-use-folder>
           Use this folder
         </Button>
       </form>
@@ -273,7 +281,7 @@ function GithubForm({ onProbe }: { onProbe: (p: AppProbe) => void }) {
 }
 
 /** What was found, editable, then linked (and opened). `cloned`: code just downloaded from GitHub, whose own commands opening it runs. */
-function Summary({ probe, cloned, onBack, onProbe, onLinked }: { probe: AppProbe; cloned: boolean; onBack: () => void; onProbe: (p: AppProbe) => void; onLinked: () => void }) {
+function Summary({ probe, cloned, attachTo, onBack, onProbe, onLinked }: { probe: AppProbe; cloned: boolean; attachTo: LinkedApp | null; onBack: () => void; onProbe: (p: AppProbe) => void; onLinked: () => void }) {
   const local = !!probe.root;
   // Nothing here the studio can start (no dev script, not a static site): its address would only be a guess.
   const notAnApp = local && probe.framework === 'other' && !probe.start;
@@ -288,8 +296,10 @@ function Summary({ probe, cloned, onBack, onProbe, onLinked }: { probe: AppProbe
     const p = await run(() => apps.probeFolder(path));
     if (p) onProbe(p);
   };
+  // The folder of an app linked by its address: that app's, keeping its name and addresses.
+  const attach = attachTo && local && !attachTo.root ? attachTo : null;
   const link = async () => {
-    const ok = await run(() => apps.link(probe, { name: name.trim() || probe.name, start: local ? start.trim() || null : undefined, url: url.trim() || undefined }));
+    const ok = await run(() => (attach ? apps.attachFolder(attach.id, probe) : apps.link(probe, { name: name.trim() || probe.name, start: local ? start.trim() || null : undefined, url: url.trim() || undefined })));
     if (ok) onLinked();
   };
   return (
@@ -330,7 +340,7 @@ function Summary({ probe, cloned, onBack, onProbe, onLinked }: { probe: AppProbe
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {local && (
-          <Field label="Dev command" hint="Run in its folder to start it. Empty: you start it yourself.">
+          <Field label="Dev command" hint={probe.framework === 'static' ? 'Optional: a command that serves it. Empty: the studio serves this folder itself.' : 'Run in its folder to start it. Empty: you start it yourself.'}>
             <input value={start} onChange={(e) => setStart(e.target.value)} placeholder="npm run dev" spellCheck={false} className="h-8 w-full rounded-[8px] bg-sunken px-2.5 font-mono text-[12.5px] text-fg outline-none ring-1 ring-inset ring-line-strong focus:ring-human-line" data-start-input />
           </Field>
         )}
@@ -368,9 +378,9 @@ function Summary({ probe, cloned, onBack, onProbe, onLinked }: { probe: AppProbe
         <Button variant="ghost" onClick={onBack}>
           Back
         </Button>
-        {!runnable && <span className="ms-auto text-[12px] text-fg-3">Needs a dev command or an address</span>}
-        <Button className={cn(runnable && 'ms-auto')} variant="primary" size="md" disabled={busy || !runnable} icon={busy ? <Spinner /> : <Check />} onClick={() => void link()} data-link-confirm>
-          {cloned && local && start.trim() ? 'Link and run it' : 'Link and open'}
+        {!runnable && !attach && <span className="ms-auto text-[12px] text-fg-3">Needs a dev command or an address</span>}
+        <Button className={cn((runnable || attach) && 'ms-auto')} variant="primary" size="md" disabled={busy || (attach ? notAnApp : !runnable)} icon={busy ? <Spinner /> : <Check />} onClick={() => void link()} data-link-confirm>
+          {attach ? `Make it ${attach.name}’s code` : cloned && local && start.trim() ? 'Link and run it' : 'Link and open'}
         </Button>
       </div>
     </div>

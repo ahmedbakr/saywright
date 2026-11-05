@@ -23,6 +23,7 @@ export function TestTab() {
   const [expected, setExpected] = useState('');
   const [startingOver, setStartingOver] = useState(false);
   const app = useStudio((s) => s.app);
+  const target = useStudio((s) => s.status?.target);
   const recording = mode === 'record';
   const empty = !rec.steps.length && !rec.expectations.length;
   const numbers = checkNumbers(rec.expectations, rec.steps.length);
@@ -36,7 +37,7 @@ export function TestTab() {
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-medium text-fg">{recording ? 'Recording your steps' : 'Narrate a bug, get a test'}</div>
-            <div className="truncate text-[11.5px] text-fg-3">{recording ? `From ${shortUrl(rec.startUrl ?? '')}` : 'Use the app, then say what you expected.'}</div>
+            <div className="truncate text-[11.5px] text-fg-3">{recording ? `From ${shortUrl(ownAddress(rec.startUrl ?? '', target))}` : 'Use the app, then say what you expected.'}</div>
           </div>
           {recording ? (
             <Button size="sm" onClick={() => controller.setMode('edit')}>
@@ -397,6 +398,19 @@ function pageOf(url: string): string {
   try {
     const u = new URL(url);
     return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return url;
+  }
+}
+
+/** A page at the app's own address, not the studio proxy's that the frame shows it through. */
+function ownAddress(url: string, target: { url: string; frameUrl: string } | undefined): string {
+  if (!target || !url) return url;
+  try {
+    const page = new URL(url);
+    const frame = new URL(target.frameUrl);
+    const own = new URL(target.url);
+    return page.origin === frame.origin && frame.origin !== own.origin ? `${own.origin}${page.pathname}${page.search}${page.hash}` : url;
   } catch {
     return url;
   }

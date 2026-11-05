@@ -41,6 +41,18 @@ describe('the code of an app in a monorepo', () => {
     expect(readFileTool(project, BUTTON)).toContain('2    return <button className="btn">Save</button>;');
   });
 
+  it('searches and lists its sibling packages too, by the paths read_file takes, and never what a link leads to', async () => {
+    const found = await project.search('className="btn"');
+    expect(found.hits).toEqual([{ path: BUTTON, line: 2, text: 'return <button className="btn">Save</button>;' }]);
+    expect((await project.search('Save', { dir: '../../packages/ui' })).hits.map((h) => h.path)).toEqual([BUTTON]);
+    expect((await project.search('not the app')).hits).toEqual([]);
+    const files = project.listFiles();
+    expect(files.indexOf('src/App.tsx')).toBeLessThan(files.indexOf(BUTTON));
+    expect(files).toContain('../../packages/ui/package.json');
+    expect(files).not.toContain('../../packages/ui/src/leak.tsx');
+    expect(files.filter((f) => f.endsWith('App.tsx'))).toEqual(['src/App.tsx']);
+  });
+
   it('stops at the workspace: a path outside it, or a link leading out of it, is refused', () => {
     expect(() => readFileTool(project, '../../../outside.txt')).toThrow(/outside the project/);
     expect(() => readFileTool(project, '../../packages/ui/src/leak.tsx')).toThrow(/outside the project/);

@@ -140,12 +140,24 @@ test('a folder that isnâ€™t an app says so, offers the apps inside it, and canâ€
   // App folders come first, each with its own Use button.
   await expect(dialog.locator('[data-folder]:not([data-folder=".."])').first()).toHaveAttribute('data-folder', 'notes-app');
   await expect(dialog.getByRole('button', { name: 'Use notes-app' })).toBeVisible();
-  // The folder above it is not an app: it says so before linking, and suggests the one inside.
+  // The folder typed is the one used, not the one listed.
+  await dialog.getByRole('textbox', { name: 'Folder' }).fill(path.join(parent, 'docs'));
   await dialog.locator('[data-use-folder]').click();
-  await expect(dialog.locator('[data-not-an-app]')).toContainText('No package.json or index.html here');
+  await expect(dialog.locator('[data-probe]')).toContainText(path.join(parent, 'docs'));
+  await dialog.getByRole('button', { name: 'Back' }).click();
+  // The folder above it is not an app: it says so before linking, and suggests the one inside.
+  await dialog.getByRole('textbox', { name: 'Folder' }).fill(parent);
+  await dialog.getByRole('button', { name: 'Go' }).click();
+  await expect(dialog.getByRole('button', { name: 'Use notes-app' })).toBeVisible();
+  await dialog.locator('[data-use-folder]').click();
+  await expect(dialog.locator('[data-not-an-app]')).toContainText('No package.json, index.html or index.php here');
   await expect(dialog.locator('[data-link-confirm]')).toBeDisabled();
+  const parentName = await dialog.getByRole('textbox', { name: 'Name' }).inputValue();
   await dialog.locator('[data-suggested-apps]').getByRole('button', { name: /notes-app/ }).click();
   await expect(dialog.locator('[data-probe]')).toContainText('Static site');
+  // The app picked has its own name and address, not the folder's above it.
+  await expect(dialog.getByRole('textbox', { name: 'Name' })).not.toHaveValue(parentName);
+  await expect(dialog.locator('[data-probe]')).toContainText(path.join(parent, 'notes-app'));
   await expect(dialog.locator('[data-not-an-app]')).toHaveCount(0);
   await expect(dialog.locator('[data-link-confirm]')).toBeEnabled();
   await dialog.getByRole('button', { name: 'Close' }).click();

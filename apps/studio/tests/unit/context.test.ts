@@ -110,6 +110,8 @@ describe('a Next.js page, pointed at in the studio', () => {
 
     await json('PUT', '/context', { pageUrl: 'http://localhost:3000/users/7', selection: [{ role: 'selection', src: bundleSrc, name: 'h1', label: '', text: 'Hello again', tag: 'h1' }], pins: [] });
     const { mcp } = await json('GET', '/ai');
+    // The entry for an AI app that starts the studio's MCP as a program says where this studio keeps its data.
+    expect(mcp.stdio.env).toEqual({ SAYWRIGHT_HOME: home });
     const call = await json('POST', '/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_context', arguments: {} } }, { authorization: `Bearer ${mcp.token}`, accept: 'application/json, text/event-stream' });
     const text = call.result.content[0].text as string;
     expect(text).toContain(`1. selected: h1 showing “Hello again” at ${PAGE}:4:7`);

@@ -148,6 +148,8 @@ function lastWords(log: string[]): string | undefined {
  * server, or an app whose plugin and this studio can't work together.
  */
 function Connecting({ app, loaded, url, slow, error, outdated }: { app: StatusResponse['app']; loaded: boolean; url?: string; slow: boolean; error: string | null; outdated?: 'plugin' | 'studio' }) {
+  // An app being opened (one `connect` just set up, say): said, rather than “No app open”.
+  const opening = useApps((s) => (s.opening && !s.opening.error ? (s.apps.find((a) => a.id === s.opening!.id)?.name ?? null) : null));
   if (outdated)
     return (
       <div className="max-w-[380px] text-center" data-outdated={outdated}>
@@ -172,6 +174,13 @@ function Connecting({ app, loaded, url, slow, error, outdated }: { app: StatusRe
         <PlugZap className="mx-auto mb-3 size-6 text-warn" />
         <div className="text-[13px] font-medium text-fg">The studio server isn’t responding</div>
         <div className="mt-1 text-[12.5px] text-fg-3">Check that Saywright is still running in the terminal you started it from.</div>
+      </div>
+    );
+  if (loaded && !app && opening)
+    return (
+      <div className="max-w-[360px] text-center" data-no-app>
+        <Spinner className="mx-auto mb-3 size-5 text-fg-3" />
+        <div className="text-[13px] font-medium text-fg">Opening {opening}…</div>
       </div>
     );
   if (loaded && !app)

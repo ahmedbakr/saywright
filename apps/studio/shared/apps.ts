@@ -4,7 +4,7 @@
  * staging, production). Each app keeps its own sessions, changes and settings.
  */
 
-export type Framework = 'vite' | 'next' | 'cra' | 'astro' | 'remix' | 'react-router' | 'sveltekit' | 'nuxt' | 'angular' | 'gatsby' | 'static' | 'other';
+export type Framework = 'vite' | 'vue' | 'next' | 'cra' | 'astro' | 'remix' | 'react-router' | 'sveltekit' | 'nuxt' | 'angular' | 'gatsby' | 'php' | 'static' | 'other';
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 
 /**
