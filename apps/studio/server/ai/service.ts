@@ -213,8 +213,9 @@ export class AiService {
     if (!chat) return { ok: false, message: 'Not available.' };
     try {
       const started = Date.now();
-      const res = await chat.chat({ system: 'Reply with the single word OK.', messages: [{ role: 'user', parts: [{ type: 'text', text: 'Connection check.' }] }], maxTokens: 16 });
-      this.record(c, model, res.usage, 'test', Date.now() - started, res.usd);
+      // A check needs no second model: one that declines it says the connection works.
+      const res = await chat.chat({ system: 'Reply with the single word OK.', messages: [{ role: 'user', parts: [{ type: 'text', text: 'Connection check.' }] }], maxTokens: 16, fallback: false });
+      this.record(c, res.model || model, res.usage, 'test', Date.now() - started, res.usd, model);
       return { ok: true, message: `Connected. ${c.models.find((m) => m.id === model)?.label ?? model} answered.` };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
