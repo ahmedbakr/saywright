@@ -16,7 +16,7 @@ import { OpenAIModel } from '../../server/ai/llm/openai';
 import { dropNulls, jsonSchemaOf, strictSchema, unwatched, type Admit, type ChatModel, type ChatResult } from '../../server/ai/llm/types';
 import { jsonFrom } from '../../server/ai/service';
 import { ReportSchema } from '../../server/sessions/report';
-import { costOf, modelInfo } from '../../shared/models';
+import { costOf, modelInfo, sameModel } from '../../shared/models';
 import { tempShop } from './helpers';
 
 /** No budget watching. */
@@ -331,6 +331,17 @@ describe('prices', () => {
     // A model a provider names under its own prefix is still priced.
     expect(modelInfo('compatible', 'anthropic/claude-sonnet-5-5')?.price?.input).toBe(2);
     expect(costOf(undefined, { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 })).toBeNull();
+  });
+
+  it('knows a model under the names its provider gives it, and tells another model from it', () => {
+    expect(sameModel('gpt-6.1-sol', 'gpt-6.1-sol-2026-09-30')).toBe(true);
+    expect(sameModel('claude-opus-5-5', 'claude-opus-5-5-20261015')).toBe(true);
+    expect(sameModel('gemini-3.8-flash', 'gemini-3.8-flash-001')).toBe(true);
+    expect(sameModel('gemini-3.8-flash-preview', 'gemini-3.8-flash-preview-04-17')).toBe(true);
+    expect(sameModel('anthropic/claude-sonnet-5-5', 'claude-sonnet-5-5')).toBe(true);
+    expect(sameModel('gpt-5.4', 'gpt-5.4-mini')).toBe(false);
+    expect(sameModel('claude-opus-5', 'claude-opus-5-5')).toBe(false);
+    expect(sameModel('claude-opus-5-5', 'claude-opus-4-8')).toBe(false);
   });
 });
 

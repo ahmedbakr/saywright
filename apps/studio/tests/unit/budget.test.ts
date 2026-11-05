@@ -222,3 +222,56 @@ describe('what a call used, by the models that ran it', () => {
     expect(held[4]).toBe(estimate * 4);
   });
 });
+
+/** A provider other than Claude: its connection routed to `model`, answered by `chat`. */
+function serviceOf(kind: string, model: string, chat: ChatModel): AiService {
+  const ai = service(chat, 'key', model);
+  const connection = { id: kind, kind, label: kind, auth: 'key', status: 'ready', models: [] } as unknown as ConnectionView;
+  ai.connections.route = () => ({ connection, model });
+  return ai;
+}
+
+/** A stand-in that answers as a provider does: 1,000 tokens in and 1,000 out, under the name `answer` gives. */
+function answering(kind: ChatModel['kind'], model: string, answer: Partial<ChatResult> = {}): ChatModel {
+  return {
+    kind,
+    model,
+    vision: true,
+    async chat(req): Promise<ChatResult> {
+      return { text: req.json ? '{"ok":true}' : 'ok', calls: [], stop: 'end', usage: used(1000, 1000), model, raw: null, ...answer };
+    },
+  };
+}
+
+describe('what a call used, with other providers', () => {
+  it('a model answering under its provider’s name for it (a snapshot, a maker’s prefix) is counted as the model asked for', async () => {
+    const cases: [ChatModel['kind'], string, string, number][] = [
+      // $2 and $10 a million; $0.75 and $3.75; Claude Sonnet 5.5's $2 and $10 through OpenRouter.
+      ['openai', 'gpt-6.1-sol', 'gpt-6.1-sol-2026-09-30', 0.012],
+      ['gemini', 'gemini-3.8-flash', 'gemini-3.8-flash-001', 0.0045],
+      ['compatible', 'anthropic/claude-sonnet-5-5', 'anthropic/claude-sonnet-5-5', 0.012],
+    ];
+    for (const [kind, asked, answered, usd] of cases) {
+      const ai = serviceOf(kind, asked, answering(kind, asked, { model: answered }));
+      await report(ai, 2000);
+      expect(ai.usage.summary().byModel.map((r) => r.label), kind).toEqual([asked]);
+      expect(spent(ai), kind).toBeCloseTo(usd, 6);
+    }
+  });
+
+  it('another model answering is counted under its own name and price, and a provider’s own cost as it says', async () => {
+    const ai = serviceOf('openai', 'gpt-6.1-sol', answering('openai', 'gpt-6.1-sol', { model: 'gpt-6-astra' }));
+    await report(ai, 2000);
+    expect(ai.usage.summary().byModel.map((r) => r.label)).toEqual(['gpt-6-astra']);
+    expect(spent(ai)).toBeCloseTo(0.06, 6);
+    const routed = serviceOf('compatible', 'anthropic/claude-sonnet-5-5', answering('compatible', 'anthropic/claude-sonnet-5-5', { usd: 0.0123 }));
+    await report(routed, 2000);
+    expect(spent(routed)).toBeCloseTo(0.0123, 6);
+  });
+
+  it('a declined request says nothing of another model where the provider has none to try', async () => {
+    const ai = serviceOf('openai', 'gpt-6.1-sol', answering('openai', 'gpt-6.1-sol', { stop: 'refusal', text: '' }));
+    ai.usage.setBudget({ dailyUsd: 1, monthlyUsd: null, dailyTokens: null, mode: 'stop' });
+    await expect(report(ai, 1000)).rejects.toMatchObject({ code: 'refused', message: 'The model declined to write this.' });
+  });
+});

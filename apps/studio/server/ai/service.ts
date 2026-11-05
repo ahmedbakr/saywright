@@ -7,7 +7,7 @@
 import path from 'node:path';
 import type { z } from 'zod';
 import { AI_TASKS, type AiEffort, type AiState, type AiTask, type ConnectionView, type Price, type Usage } from '../../shared/ai.ts';
-import { costOf, modelInfo, savedBy } from '../../shared/models.ts';
+import { costOf, modelInfo, sameModel, savedBy } from '../../shared/models.ts';
 import type { McpServer } from '../mcp.ts';
 import { ModelAgent } from './agent.ts';
 import { CliAgent, cliJson, type CliDeps, type CliKind, type CliUsage } from './cli.ts';
@@ -48,6 +48,13 @@ interface AiDeps {
 const CLI_KINDS = new Set(['claude-code', 'codex', 'gemini-cli']);
 const CARRY_ON = 'Raise the limit or reset the count in Settings → Usage and budget to carry on.';
 
+/**
+ * The name a call is written down under: the model asked for, when the one that answered is it under its provider's
+ * name for it (a dated snapshot, a maker's prefix), so one model's use isn't split across names; else the one that
+ * answered (a fallback for a declined request, a plan's own model).
+ */
+const answeredAs = (asked: string, answered?: string): string => (answered && !sameModel(asked, answered) ? answered : asked);
+
 export class AiService {
   readonly connections: Connections;
   readonly usage: UsageLedger;
@@ -81,8 +88,8 @@ export class AiService {
   /** A model's price; a plan's own default model isn't named, so it is priced as the app's most capable one (an estimate, for comparison only). */
   private priceOf(c: ConnectionView, model: string): Price | undefined {
     const priced = model === 'default' ? (c.models.find((m) => m.id !== 'default' && m.price)?.id ?? model) : model;
-    // A dated name ("claude-opus-5-5-20261015") is priced as the model it names.
-    const undated = priced.replace(/-\d{8}$/, '');
+    // A dated name ("claude-opus-5-5-20261015", "gpt-6.1-sol-2026-09-30") is priced as the model it names.
+    const undated = priced.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, '');
     return (c.models.find((m) => m.id === priced || m.id === undated) ?? modelInfo(c.kind, priced) ?? modelInfo(c.kind, undated))?.price;
   }
 
@@ -115,7 +122,7 @@ export class AiService {
           if (res) {
             // Every attempt, each at the price of the model that ran it (else the one that answered, else the one asked).
             const attempts = res.attempts?.length ? res.attempts : [{ model: res.model || model, usage: res.usage }];
-            attempts.forEach((a, i) => this.record(c, a.model, a.usage, feature, i ? 0 : ms, attempts.length === 1 ? res.usd : undefined, model));
+            attempts.forEach((a, i) => this.record(c, answeredAs(model, a.model), a.usage, feature, i ? 0 : ms, attempts.length === 1 ? res.usd : undefined, model));
             const sent = attempts[0].usage.input + attempts[0].usage.cacheRead + attempts[0].usage.cacheWrite;
             if (call.input > 0 && sent > input) this.inputScale.set(key, Math.min(4, sent / call.input));
           }
@@ -158,7 +165,7 @@ export class AiService {
       mcp: this.deps.mcp,
       origin: this.deps.origin,
       gate: () => this.allowed(c.auth === 'key'),
-      used: (u: CliUsage, ms) => this.record(c, u.model || model, u.usage, feature, ms, u.usd, model),
+      used: (u: CliUsage, ms) => this.record(c, answeredAs(model, u.model), u.usage, feature, ms, u.usd, model),
     };
   }
 
@@ -215,7 +222,7 @@ export class AiService {
       const started = Date.now();
       // A check needs no second model: one that declines it says the connection works.
       const res = await chat.chat({ system: 'Reply with the single word OK.', messages: [{ role: 'user', parts: [{ type: 'text', text: 'Connection check.' }] }], maxTokens: 16, fallback: false });
-      this.record(c, res.model || model, res.usage, 'test', Date.now() - started, res.usd, model);
+      this.record(c, answeredAs(model, res.model), res.usage, 'test', Date.now() - started, res.usd, model);
       return { ok: true, message: `Connected. ${c.models.find((m) => m.id === model)?.label ?? model} answered.` };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };

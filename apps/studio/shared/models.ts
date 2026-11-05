@@ -122,6 +122,19 @@ const SERVED_PRICES: Record<string, Price> = {
   'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 };
 
+/**
+ * Whether the model that answered is the one asked for, under the name its provider gives it: with a date or version
+ * after it (“gpt-6.1-sol-2026-09-30”, “claude-opus-5-5-20261015”, “gemini-3.8-flash-001”) or its maker before it
+ * (“anthropic/claude-sonnet-5-5”). Another model (“gpt-5.4-mini” for “gpt-5.4”, “claude-opus-5-5” for “claude-opus-5”)
+ * is not.
+ */
+export function sameModel(asked: string, answered: string): boolean {
+  const bare = (m: string) => m.slice(m.lastIndexOf('/') + 1).toLowerCase();
+  const a = bare(asked);
+  const b = bare(answered);
+  return a === b || (b.startsWith(`${a}-`) && /^(\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|\d{3})$/.test(b.slice(a.length + 1)));
+}
+
 /** What the studio knows about a model: from the catalog for its provider, or the shared table for compatible providers. */
 export function modelInfo(kind: ProviderKind, id: string): ModelInfo | null {
   const known = CATALOG[kind]?.find((m) => m.id === id);
