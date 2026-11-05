@@ -11,7 +11,7 @@
  * by their first few.
  */
 import { maskSecrets, redactUrl, type CheckSeverity, type ElementInfo, type ExpertId, type PageCheck, type PageFacts, type PageReview } from '../protocol';
-import { collapse, describe, isVisible } from './dom';
+import { accessibleName, collapse, describe, isVisible } from './dom';
 import { own } from './own';
 
 const G = 'https://developers.google.com/search/docs';
@@ -155,11 +155,11 @@ function facts(): PageFacts {
     text: text.slice(0, 4000),
     links: { internal, external },
     images: document.images.length,
-    forms: fields.slice(0, 30).map((f) => ({ label: fieldLabel(f), type: f.type || f.tagName.toLowerCase(), autocomplete: f.getAttribute('autocomplete'), required: f.required })),
+    forms: fields.slice(0, 30).map((f) => ({ label: fieldLabel(f), type: f.type || f.tagName.toLowerCase(), autocomplete: f.getAttribute('autocomplete'), required: f.required, ...(f.getAttribute('inputmode') ? { inputmode: f.getAttribute('inputmode') } : {}) })),
+    // As a screen reader names them: an icon button by its aria-label or its picture's alt, not as nameless.
     buttons: Array.from(document.querySelectorAll('button, [role="button"], input[type=submit]'))
       .filter(shown)
-      .map((b) => collapse((b as HTMLElement).innerText || b.getAttribute('aria-label') || (b as HTMLInputElement).value || '', 40))
-      .filter(Boolean)
+      .map((b) => collapse(accessibleName(b) || (b as HTMLInputElement).value || '', 40) || '(no name)')
       .slice(0, 30),
     lcp,
     cls: watching ? Math.round(cls * 1000) / 1000 : null,
@@ -200,7 +200,8 @@ function liveRegions(): { role: string; text: string }[] {
 function linkTargets(): { text: string; href: string }[] {
   const out: { text: string; href: string }[] = [];
   for (const a of Array.from(document.querySelectorAll('a[href]')).filter(shown)) {
-    const link = { text: collapse((a as HTMLElement).innerText || a.getAttribute('aria-label') || '', 40), href: redactUrl(a.getAttribute('href') ?? '').slice(0, 120) };
+    // Named as a screen reader names it: its words, else its aria-label, its picture's alt or its title.
+    const link = { text: collapse(accessibleName(a), 40) || '(no name)', href: redactUrl(a.getAttribute('href') ?? '').slice(0, 120) };
     if (!out.some((l) => l.text === link.text && l.href === link.href)) out.push(link);
     if (out.length >= 25) break;
   }

@@ -197,13 +197,23 @@ describe('the AI expert', () => {
     const store = new ReviewStore(tmp());
     const url = 'http://localhost:5174/#/checkout';
     const review = pageReview(url, [check('SEO-29', 'seo', 'high')]);
-    review.facts = { ...review.facts, landmarks: [{ role: 'banner', name: '' }, { role: 'navigation', name: 'Main' }, { role: 'main', name: '' }], live: [{ role: 'status', text: 'Added Celadon mug' }], linkTargets: [{ text: 'Shop', href: '#/shop' }, { text: 'Checkout', href: '#/checkout' }] };
+    review.facts = {
+      ...review.facts,
+      landmarks: [{ role: 'banner', name: '' }, { role: 'navigation', name: 'Main' }, { role: 'main', name: '' }],
+      live: [{ role: 'status', text: 'Added Celadon mug' }],
+      linkTargets: [{ text: 'Shop', href: '#/shop' }, { text: 'Checkout', href: '#/checkout' }, { text: '(no name)', href: '#/cart' }],
+      forms: [{ label: 'Code', type: 'text', autocomplete: 'one-time-code', required: true, inputmode: 'numeric' }],
+      buttons: ['Close', '(no name)'],
+    };
     const r = await reviewPage(store, review, ['a11y'], url);
     const { text } = expertPrompt(r, 'seo');
     expect(text).toContain('<page url="http://localhost:5174/#/checkout">');
     expect(text).toContain('Landmarks: banner, navigation “Main”, main');
     expect(text).toContain('Live regions on the page now: status “Added Celadon mug”');
-    expect(text).toContain('Links (text → where they go, as written): “Shop” → #/shop · “Checkout” → #/checkout');
+    expect(text).toContain('Links (named as a screen reader names them → where they go, as written): “Shop” → #/shop · “Checkout” → #/checkout · (no name) → #/cart');
+    // A field's keyboard, and buttons by their names (an icon button by its label), so neither is called missing.
+    expect(text).toContain('Code [text, autocomplete=one-time-code, inputmode=numeric, required]');
+    expect(text).toContain('Buttons (named as a screen reader names them): “Close”, (no name)');
     // None there: said so, and that what appears later isn't listed.
     const bare = expertPrompt({ ...r, facts: { ...r.facts, landmarks: [], live: [] } }, 'a11y').text;
     expect(bare).toContain('Landmarks: (none)');

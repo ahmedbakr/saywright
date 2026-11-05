@@ -142,6 +142,8 @@ export interface SessionTarget {
   rect: [number, number, number, number];
   /** A link inside running text (exempt from minimum target sizes). */
   inline?: boolean;
+  /** Smaller than 24×24 px but with nothing else to click within 12 px of its centre (WCAG 2.5.8's spacing exception). */
+  spaced?: boolean;
   /** When `src` is null: what can find it in the code. */
   hint?: SourceHint;
 }
@@ -386,7 +388,8 @@ export interface PageFacts {
   text: string;
   links: { internal: number; external: number };
   images: number;
-  forms: { label: string; type: string; autocomplete: string | null; required: boolean }[];
+  /** `inputmode`: the keyboard it asks for (numeric, email…), when it says. */
+  forms: { label: string; type: string; autocomplete: string | null; required: boolean; inputmode?: string | null }[];
   buttons: string[];
   /** Measured in this browser (lab, not field data). */
   lcp: number | null;

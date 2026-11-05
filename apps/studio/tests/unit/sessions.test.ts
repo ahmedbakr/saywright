@@ -35,6 +35,15 @@ function seg(id: number, start: number, end: number, text: string): TranscriptSe
   return { id, start: T0 + start, end: T0 + end, text, lang: /[؀-ۿ]/.test(text) ? 'ar' : 'en', model: 'test', ms: 10 };
 }
 
+describe('small targets (WCAG 2.5.8)', () => {
+  const link = (spaced?: boolean): SessionTarget => ({ src: 'src/Nav.tsx:4:7', name: 'a', tag: 'a', role: 'link', label: 'Orders', text: 'Orders', rect: [10, 10, 64, 20], locator: "page.getByRole('link', { name: 'Orders' })", ...(spaced ? { spaced } : {}) });
+  const issuesOf = (el: SessionTarget) => analyze(meta(), [ev(0, { type: 'page', url: 'http://localhost:5174/', title: 'Home', referrer: '', viewport: [1200, 800, 1], ua: 'x', lang: 'en', reload: false }), ev(1000, { type: 'click', x: 1, y: 1, button: 0, pointer: 'mouse', count: 1, el })], [], []).issues;
+  it('are flagged when crowded, and pass when spaced so a 24 px circle on them reaches nothing else, as the Experts judge', () => {
+    expect(issuesOf(link()).map((g) => g.title)).toContain('Small target: the “Orders” link is 64×20 px');
+    expect(issuesOf(link(true)).filter((g) => g.kind === 'accessibility')).toEqual([]);
+  });
+});
+
 describe('session analysis', () => {
   const events = [
     ev(0, { type: 'page', url: 'http://localhost:5174/#/checkout', title: 'Checkout', referrer: '', viewport: [1200, 800, 1], ua: 'x', lang: 'en', reload: false }),

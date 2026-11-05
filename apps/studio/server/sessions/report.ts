@@ -460,6 +460,8 @@ Write the report the team will act on:
 - <screen_text> is what the page said: in full as each page first showed, then what changed once the screen settled after each action. Check every result against what the action should do: amounts, totals, discounts, taxes, counts, dates, messages and states. A wrong result on screen is a finding even when nobody said anything: cite the action's E id, quote the screen and work out the expected value from what the screen showed before. When the result of the session's main task isn't in the evidence, say it is unverified rather than calling it correct.
 - A click that "did nothing" only means the screen didn't change: it may already have shown the result (the same message again). Check what the tester or Autopilot said the page showed before calling a feature broken.
 - Pauses are normal. The tester may wait, read, think, rest the pointer on something or stay silent before and between sentences: never report that as a finding, and never report the page being busy while nobody was using it. Slowness is a finding only when something the tester did was slow to respond (a slow response or slow request in the evidence) or they said so.
+- A finding is what happened in this session. A risk the session never triggered (code that could fail, a path nobody took) is not a finding, however serious: suggest a test for it instead ("add").
+- Work out amounts step by step from the numbers on screen (items, discount, shipping, tax), and put the calculation in "expected": "20% of the $98.00 items is $19.60, so the total is $98.00 − $19.60 + $5.00 = $83.40". Check the arithmetic before writing it.
 - Merge duplicates. Order findings by impact on the user. Severity: critical (data loss, money, blocks the main task), high (main task is wrong or broken), medium (friction, confusing, workaround exists), low (polish).
 - Suggestions: "fix" for defects, "improve" for UX or performance improvements, "add" for missing features or tests worth adding.
 - Be concrete and brief. No filler, no praise inflation; positives only when the evidence shows them.
@@ -543,6 +545,36 @@ export function withTranslation(r: SessionReport, t: TranslatedText, lang: 'en' 
   };
 }
 
+/** Said of a problem the session didn't show: “not triggered in this session”, “never exercised during the recording”. */
+const UNSEEN = [
+  /\b(?:not|never|wasn['’]t|was not|weren['’]t|didn['’]t|did not)\s+(?:been\s+|get\s+|got\s+)?(?:triggered|observed|reproduced|exercised|encountered|seen|hit|happen(?:ed)?|occur(?:red)?|tested)\b[^.]{0,60}?\b(?:in|during|by)\s+(?:this|the)\s+(?:session|recording|run|replay|test)\b/i,
+  /لم\s+(?:يحدث|تحدث|يظهر|تظهر|يُلاحظ|تُلاحظ|يلاحظ|تلاحظ|يُختبر|تُختبر|يتم)[^.]{0,60}?(?:هذه\s+الجلسة|الجلسة|التسجيل)/,
+];
+
+/**
+ * The model's findings, kept to what the session showed: evidence ids it doesn't have are dropped; a finding that says
+ * the session didn't show it is a test worth adding, not a bug seen; and one without a place in the code gets where its
+ * evidence showed, so it can be opened and fixed.
+ */
+export function settleFindings(raw: z.infer<typeof Finding>[], a: SessionAnalysis): { findings: ReportFinding[]; unseen: ReportSuggestion[] } {
+  const items = new Map(a.timeline.map((x) => [x.id, x]));
+  const issues = new Map(a.issues.map((g) => [g.id, g]));
+  const srcOf = (id: string) => items.get(id)?.src ?? issues.get(id)?.src ?? null;
+  const findings: ReportFinding[] = [];
+  const unseen: ReportSuggestion[] = [];
+  for (const f of raw) {
+    if (UNSEEN.some((re) => re.test(`${f.title}. ${f.what}`))) {
+      unseen.push({ kind: 'add', title: f.title, why: f.what, effort: 'small' });
+      continue;
+    }
+    const evidence = f.evidence.filter((e) => items.has(e) || issues.has(e));
+    const cited = evidence.map(srcOf).find((x): x is string => !!x)?.replace(/:(\d+):\d+$/, ':$1');
+    const shown = f.shown || cited || '';
+    findings.push({ ...f, id: `F${findings.length + 1}`, evidence, shown, location: f.location || shown });
+  }
+  return { findings, unseen };
+}
+
 /** Asks whatever model does a task for JSON matching a schema (the studio's AI service, or a test's stand-in). */
 export type AskJson = <T>(req: { task: AiTask; feature: string; system: string; parts: Part[]; schema: z.ZodType<T>; name: string; maxTokens: number; effort?: AiEffort; cwd?: string }) => Promise<{ value: T; model: string }>;
 
@@ -567,11 +599,12 @@ export class ModelReportWriter implements ReportWriter {
       text: `Write the session report.${lang === 'ar' ? ' The tester spoke Arabic: write every text field in clear Modern Standard Arabic (keep code, file names, URLs and UI labels as they are).' : ' Write in English.'}`,
     });
     const { value: out, model } = await this.ask({ task: 'report', feature: 'report', system: SYSTEM, parts, schema: ReportSchema, name: 'session_report', maxTokens: 24000, effort: this.effort, cwd: input.project.root });
-    const known = new Set([...input.analysis.timeline.map((x) => x.id), ...input.analysis.issues.map((g) => g.id)]);
-    const findings: ReportFinding[] = out.findings.map((f, i) => ({ ...f, id: `F${i + 1}`, evidence: f.evidence.filter((e) => known.has(e)) }));
+    const { findings, unseen } = settleFindings(out.findings, input.analysis);
     // The verdict never reads lighter than the findings: a high one is “fix first”, a critical one “blocked”.
     const worst = worstOf(findings.map((f) => f.severity));
-    const verdict = worst === 'critical' ? 'blocked' : worst === 'high' && out.verdict === 'ship' ? 'fix-first' : out.verdict;
+    let verdict = worst === 'critical' ? 'blocked' : worst === 'high' && out.verdict === 'ship' ? 'fix-first' : out.verdict;
+    // With what the session didn't show set aside, nothing seen that holds it back: the verdict follows what was seen.
+    if (unseen.length && worst !== 'critical' && worst !== 'high') verdict = 'ship';
     return {
       lang,
       title: out.title,
@@ -579,7 +612,7 @@ export class ModelReportWriter implements ReportWriter {
       verdict,
       scoreNotes: out.scoreNotes,
       findings,
-      suggestions: out.suggestions,
+      suggestions: [...out.suggestions, ...unseen],
       positives: out.positives,
       journey: out.journey,
       nextSteps: out.nextSteps,

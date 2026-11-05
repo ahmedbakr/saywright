@@ -26,6 +26,8 @@ import { RequestTally, type NetBody } from './tally';
 
 const ACTIVE_KEY = 'saywright.session';
 const PENDING_KEY = 'saywright.session.pending';
+/** What counts as another target near a small one, as the Experts count it (a box's own label is part of it). */
+const TARGETS = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="tab"], [role="menuitem"], [tabindex]:not([tabindex="-1"])';
 const INTERACTIVE = 'button, a[href], input, select, textarea, summary, label, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [role="switch"], [role="option"], [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
 /** Requests that are the dev server or the studio talking, not the app. */
 const PLUMBING_URL = /\/@vite\/|\/@fs\/|\/@id\/|\/@react-refresh|\/node_modules\/|__saywright|\.hot-update\.|\/_next\/webpack-hmr|\/__nextjs|sockjs-node|\/api\/sessions\/|\/api\/speech\//;
@@ -157,6 +159,24 @@ function shortUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+
+/**
+ * Whether something else to click is within 12 px of a small target's centre, where a 24 px circle on it would reach
+ * (WCAG 2.5.8): looked for around it, so it costs the same on a page of any size.
+ */
+function crowded(el: Element, r: DOMRect): boolean {
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  for (const radius of [6, 11.5]) {
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * 2 * Math.PI;
+      const other = document.elementFromPoint(cx + radius * Math.cos(a), cy + radius * Math.sin(a))?.closest(TARGETS);
+      if (other && other !== el && !el.contains(other) && !other.contains(el)) return true;
+    }
+  }
+  return false;
 }
 
 export class SessionRecorder {
@@ -398,6 +418,7 @@ export class SessionRecorder {
       this.fibers.set(t, fiber);
     }
     if (tag === 'a' && getComputedStyle(el).display === 'inline') t.inline = true;
+    if ((r.width < 24 || r.height < 24) && r.width > 0 && r.height > 0 && !crowded(el, r)) t.spaced = true;
     return t;
   }
 

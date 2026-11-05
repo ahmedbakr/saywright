@@ -375,7 +375,8 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
           issue(`noname:${e.el.src ?? e.el.locator}`, () => ({ kind: 'accessibility', severity: 'medium', title: `${e.el.role === 'link' ? 'A link' : 'A button'} with no accessible name`, detail: 'Screen readers announce it as just “button”. Add text or an aria-label.', titleAr: `${e.el.role === 'link' ? 'رابط' : 'زر'} بلا اسم تقرؤه التقنيات المساعدة`, detailAr: 'قارئات الشاشة تنطقه «زر» فقط. أضف نصًا أو aria-label.', t: at, el: e.el, src: e.el.src }), it);
         }
         const [, , w, h] = e.el.rect;
-        if (w > 0 && h > 0 && (w < 24 || h < 24) && !e.el.inline && e.el.role && ['button', 'link', 'checkbox', 'radio'].includes(e.el.role)) {
+        // Small but well spaced passes too (WCAG 2.5.8's spacing exception), as the Experts judge it.
+        if (w > 0 && h > 0 && (w < 24 || h < 24) && !e.el.inline && !e.el.spaced && e.el.role && ['button', 'link', 'checkbox', 'radio'].includes(e.el.role)) {
           issue(`small:${e.el.src ?? e.el.locator}`, () => ({ kind: 'accessibility', severity: 'low', title: `Small target: ${nameOf(e.el)} is ${w}×${h} px`, detail: 'Touch and motor-impaired users need at least 24×24 px (WCAG 2.5.8).', titleAr: `هدف صغير: ${nameOfAr(e.el)} بحجم ${w}×${h} بكسل`, detailAr: 'مستخدمو اللمس وذوو الصعوبات الحركية يحتاجون 24×24 بكسل على الأقل (WCAG 2.5.8).', t: at, el: e.el, src: e.el.src }), it);
         }
         break;

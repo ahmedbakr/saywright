@@ -166,6 +166,51 @@ describe('the answer', () => {
     expect(await verdictOf('ship', 'medium')).toBe('ship');
   });
 
+  it('sets aside what the session didn’t show, as a test to add, and the verdict follows what it did show', async () => {
+    const finding = (title: string, what: string, severity: string, evidence: string[] = ['I1']) => ({ category: 'bug', severity, title, what, expected: '', quote: '', evidence, shown: '', location: '', fix: 'f', steps: [], confidence: 'medium' });
+    const answer = {
+      title: 't',
+      summary: 's',
+      verdict: 'fix-first',
+      scoreNotes: { stability: 'a', usability: 'b', performance: 'c', accessibility: 'd' },
+      findings: [
+        finding('Removing the third line crashes the cart', 'The handler throws for index 2. Not triggered in this session.', 'high', ['E99']),
+        finding('Checkout may fail for some addresses', 'A 500 is possible for "Apt" addresses, though it never happened during the session.', 'high'),
+        // What is missing on screen is a finding: “not shown” alone says nothing about the session.
+        finding('The discount is not shown in the summary', 'After applying SAVE20 the discount row was not shown.', 'medium'),
+      ],
+      suggestions: [],
+      positives: [],
+      journey: [],
+      nextSteps: [],
+    };
+    const report = await new ModelReportWriter((async (req: Parameters<AskJson>[0]) => ({ value: req.schema.parse(answer), model: 'm' })) as AskJson).write(input);
+    expect(report.findings.map((f) => f.title)).toEqual(['The discount is not shown in the summary']);
+    expect(report.findings[0].id).toBe('F1');
+    expect(report.suggestions.map((x) => [x.kind, x.title])).toEqual([
+      ['add', 'Removing the third line crashes the cart'],
+      ['add', 'Checkout may fail for some addresses'],
+    ]);
+    expect(report.verdict).toBe('ship');
+  });
+
+  it('gives a finding without a place in the code where its evidence showed', async () => {
+    const answer = {
+      title: 't',
+      summary: 's',
+      verdict: 'fix-first',
+      scoreNotes: { stability: 'a', usability: 'b', performance: 'c', accessibility: 'd' },
+      findings: [{ category: 'bug', severity: 'high', title: 'Wrong total', what: 'w', expected: '20% of the $98.00 items is $19.60, so $83.40', quote: '', evidence: ['I1'], shown: '', location: '', fix: 'f', steps: [], confidence: 'medium' }],
+      suggestions: [],
+      positives: [],
+      journey: [],
+      nextSteps: [],
+    };
+    const report = await new ModelReportWriter((async (req: Parameters<AskJson>[0]) => ({ value: req.schema.parse(answer), model: 'm' })) as AskJson).write(input);
+    expect(analysis.issues.find((g) => g.id === 'I1')?.src).toBe('src/lib/pricing.ts:32:3');
+    expect(report.findings[0]).toMatchObject({ shown: 'src/lib/pricing.ts:32', location: 'src/lib/pricing.ts:32' });
+  });
+
   it('passes on a failure, for the studio to write the report locally instead', async () => {
     const ask = (async () => {
       throw new Error('the answer was too long for the model’s limit');

@@ -76,10 +76,20 @@ test('review the shop: findings with their rules, Show selects the element, and 
 
 test('the AI expert is shown what it might call missing, and each #/route is a page of its own', async ({ page }) => {
   await openStudio(page, SETTINGS);
+  // A link that is only a picture, and a field that asks for the number keyboard.
+  await page.frameLocator('iframe').locator('body').evaluate(() => {
+    const box = document.createElement('div');
+    const img = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"/>');
+    box.innerHTML = `<a href="#/account"><img alt="Your account" src="${img}" width="20" height="20"></a><label>Card code <input inputmode="numeric" autocomplete="cc-csc"></label>`;
+    document.querySelector('main')!.prepend(box);
+  });
   await review(page);
   const checkout = await store<string>(page, 's.app.url');
-  type Facts = { landmarks?: { role: string; name: string }[]; live?: { role: string; text: string }[]; linkTargets?: { text: string; href: string }[] };
+  type Facts = { landmarks?: { role: string; name: string }[]; live?: { role: string; text: string }[]; linkTargets?: { text: string; href: string }[]; forms: { label: string; inputmode?: string }[] };
   const { review: r } = await call<{ review: Review & { facts: Facts } }>('GET', `/experts/review?url=${encodeURIComponent(checkout)}`);
+  // Named as a screen reader names it, by its picture; and the keyboard the field asks for.
+  expect(r.facts.linkTargets).toContainEqual({ text: 'Your account', href: '#/account' });
+  expect(r.facts.forms).toContainEqual(expect.objectContaining({ label: 'Card code', inputmode: 'numeric' }));
   // The page's landmarks, its live regions and where its links go, as written.
   expect(r.facts.landmarks?.map((l) => l.role)).toEqual(expect.arrayContaining(['banner', 'navigation', 'main']));
   expect(r.facts.landmarks).toContainEqual({ role: 'navigation', name: 'Main' });
