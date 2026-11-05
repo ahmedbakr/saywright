@@ -130,3 +130,61 @@ test('a session masks them in its pictures, in shadow roots too (added later, an
   const events = await (await fetch(`${STUDIO}/api/sessions/${id}/events`)).text().catch(() => '');
   expect(events).not.toContain(SECRET);
 });
+
+test('while a session records, what appears is masked before the screen is drawn: a filled field in a root made then, a mark added then', async ({ page }) => {
+  await openStudio(page);
+  const app = page.frameLocator('iframe');
+  await page.getByRole('button', { name: 'Record session', exact: true }).click();
+  await page.getByPlaceholder('What are you testing? (optional)').fill('Late fields');
+  await page.getByRole('button', { name: 'Start recording' }).click();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  // Each made in one go, then looked at in the next frame before it is drawn: what a picture of that frame shows.
+  const firstFrame = await app.locator('body').evaluate(async (_, secret) => {
+    const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const look = (el: Element) => ({ dots: getComputedStyle(el).getPropertyValue('-webkit-text-security') === 'disc', blurred: getComputedStyle(el).filter.includes('blur') });
+    const main = document.querySelector('main')!;
+    const out: Record<string, unknown> = {};
+    const late: ShadowRoot[] = [];
+    // A web component drawn after the session began, its key already filled in.
+    for (const mode of ['open', 'closed'] as const) {
+      const host = document.createElement('div');
+      main.prepend(host);
+      await frame();
+      const root = host.attachShadow({ mode });
+      root.innerHTML = `<label>API key <input value="${secret}"></label>`;
+      late.push(root);
+      await frame();
+      out[`${mode} root`] = look(root.querySelector('input')!);
+    }
+    // A filled field marked private, and one in a part given a privacy class, once the session began.
+    const field = Object.assign(document.createElement('input'), { value: secret });
+    const part = document.createElement('div');
+    const inner = Object.assign(document.createElement('input'), { value: secret });
+    part.append(inner);
+    main.prepend(field, part);
+    await frame();
+    field.setAttribute('data-private', '');
+    part.classList.add('fs-mask');
+    await frame();
+    out['marked private'] = look(field);
+    out['in a part marked private'] = { ...look(inner), part: look(part).blurred };
+    (window as unknown as { __late: ShadowRoot[] }).__late = late;
+    return out;
+  }, SECRET);
+  expect(firstFrame).toEqual({
+    'open root': { dots: true, blurred: false },
+    'closed root': { dots: true, blurred: false },
+    'marked private': { dots: true, blurred: true },
+    'in a part marked private': { dots: true, blurred: false, part: true },
+  });
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  // Once it ends, the page's own attachShadow is back and nothing of the mask is left in the roots made meanwhile.
+  await expect
+    .poll(() =>
+      app.locator('body').evaluate(() => ({
+        native: Element.prototype.attachShadow.toString().includes('[native code]'),
+        styles: (window as unknown as { __late: ShadowRoot[] }).__late.reduce((n, r) => n + r.querySelectorAll('style[data-saywright-mask], [data-saywright-masked]').length, 0),
+      })),
+    )
+    .toEqual({ native: true, styles: 0 });
+});
