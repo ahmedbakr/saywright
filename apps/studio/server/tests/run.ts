@@ -69,6 +69,9 @@ interface PwResult {
   steps?: PwStep[];
 }
 interface PwSpec {
+  title?: string;
+  /** Where the test begins in its file (1-based). */
+  line?: number;
   tests: { results: PwResult[] }[];
 }
 interface PwSuite {
@@ -80,9 +83,16 @@ interface PwReport {
   errors?: { message?: string }[];
 }
 
-/** Every test's runs (retries included), in the order the report lists them. */
-function collect(suite: PwSuite, out: PwResult[][]): void {
-  for (const spec of suite.specs ?? []) for (const t of spec.tests) out.push(t.results);
+/** A test the report lists: its title, where it begins, and its runs (retries included). */
+interface PwTest {
+  title: string;
+  line?: number;
+  results: PwResult[];
+}
+
+/** Every test's runs, in the order the report lists them. */
+function collect(suite: PwSuite, out: PwTest[]): void {
+  for (const spec of suite.specs ?? []) for (const t of spec.tests) out.push({ title: spec.title ?? '', line: spec.line, results: t.results });
   for (const s of suite.suites ?? []) collect(s, out);
 }
 
@@ -107,9 +117,31 @@ const FOCUSED = 'This test file has test.only (or describe.only): a run would le
 /** A step or check of a generated test, by the mark its title starts with. */
 const MARK = /^\[(\d+|check \d+)\] /;
 
+/** A step or check as the code writes it. */
+const MARK_IN_CODE = /\btest\.step\('\[(\d+|check \d+)\] /g;
+
 /** The steps and checks a test has, as its code names them (in order). */
 export function marksOf(code: string): string[] {
-  return Array.from(code.matchAll(/\btest\.step\('\[(\d+|check \d+)\] /g), (m) => m[1]);
+  return Array.from(code.matchAll(MARK_IN_CODE), (m) => m[1]);
+}
+
+/**
+ * Each test's own steps and checks: those its file has from the line the test begins on to where the next one does
+ * (tests made in a loop, on the same line, each have them all). Null when the report gives no place for a test.
+ */
+export function marksByTest(code: string, tests: { title: string; line?: number }[]): { title: string; marks: string[] }[] | null {
+  if (!tests.length || tests.some((t) => typeof t.line !== 'number')) return null;
+  const starts = [...new Set(tests.map((t) => t.line!))].sort((a, b) => a - b);
+  const own = new Map<number, string[]>(starts.map((l) => [l, []]));
+  let line = 1;
+  let at = 0;
+  for (const m of code.matchAll(MARK_IN_CODE)) {
+    for (; at < m.index; at++) if (code.charCodeAt(at) === 10) line++;
+    // A mark above every test (in a helper there) belongs to none of them: it counts for the file.
+    const start = starts.findLast((l) => l <= line);
+    if (start !== undefined) own.get(start)!.push(m[1]);
+  }
+  return tests.map((t) => ({ title: t.title, marks: own.get(t.line!)! }));
 }
 
 /** A short fingerprint of a test's code: a later run compares it, to know the test is the same one. */
@@ -124,8 +156,9 @@ function masker(values: string[]): (text: string | undefined) => string | undefi
 
 /**
  * What a run proves, from every test the file has (`results`: each one's last try). `marks`: the steps and checks
- * the test has. `ended`: how Playwright itself ended. A pass is believed only when every test passed on its first
- * try, every step and check reported running and none of them failed (even where the test caught the error and went
+ * the test has. `ended`: how Playwright itself ended. `tests`: each test's own marks (see marksByTest), in the order of
+ * `results`. A pass is believed only when every test passed on its first try, every step and check reported running
+ * (each test its own, as often as it has them) and none of them failed (even where the test caught the error and went
  * on), and Playwright ended cleanly.
  */
 export function judge(
@@ -133,28 +166,51 @@ export function judge(
   marks: string[],
   mask: (t: string | undefined) => string | undefined,
   ended: { exit?: number | null; errors?: string[] } = {},
+  tests?: { title: string; marks: string[] }[] | null,
 ): Pick<TestRunResult, 'status' | 'verified' | 'unverified' | 'failedAt' | 'steps' | 'counts' | 'message'> {
   const all = Array.isArray(results) ? results : [results];
-  const steps: RunStep[] = all.flatMap((r) =>
+  const each: RunStep[][] = all.map((r) =>
     (r.steps ?? [])
       .filter((s) => MARK.test(s.title))
       .map((s) => ({ title: mask(s.title)!, check: /^\[check /.test(s.title), ok: !s.error, error: s.error?.message ? mask(s.error.message.replace(ANSI, '').slice(0, 1200)) : undefined })),
   );
-  // Each mark as often as the code has it: a mark written twice (two tests that each have a [1]) ran twice.
-  const ran = new Map<string, number>();
-  for (const s of steps) {
-    const m = MARK.exec(s.title)![1];
-    ran.set(m, (ran.get(m) ?? 0) + 1);
-  }
-  const wanted = new Map<string, number>();
-  for (const m of marks) wanted.set(m, (wanted.get(m) ?? 0) + 1);
+  const steps = each.flat();
   const isCheck = (m: string) => m.startsWith('check ');
-  const counts = {
-    steps: marks.filter((m) => !isCheck(m)).length,
-    checks: marks.filter(isCheck).length,
-    stepsPassed: steps.filter((s) => !s.check && s.ok).length,
-    checksPassed: steps.filter((s) => s.check && s.ok).length,
+  const markOf = (s: RunStep) => MARK.exec(s.title)![1];
+  const tally = (list: string[]) => {
+    const t = new Map<string, number>();
+    for (const m of list) t.set(m, (t.get(m) ?? 0) + 1);
+    return t;
   };
+  // What must run where: each test its own marks, as often as it has them, so a check run twice in one test stands
+  // for no other test's. Without the tests' places, every mark of the file, as often as the code has it.
+  const scopes: { title?: string; wanted: Map<string, number>; ran: RunStep[] }[] = [];
+  if (tests && tests.length === all.length) {
+    tests.forEach((t, i) => scopes.push({ title: t.title, wanted: tally(t.marks), ran: each[i] }));
+    const loose = tally(marks);
+    for (const t of tests) for (const m of t.marks) loose.set(m, (loose.get(m) ?? 0) - 1);
+    for (const [m, n] of loose) if (n <= 0) loose.delete(m);
+    if (loose.size) scopes.push({ wanted: loose, ran: steps.filter((s) => loose.has(markOf(s))) });
+  } else scopes.push({ wanted: tally(marks), ran: steps });
+  // Each mark counts as passed as often as it is written where it is, however often it ran.
+  const named = scopes.filter((x) => x.title !== undefined).length > 1;
+  const missing: string[] = [];
+  const counts = { steps: 0, checks: 0, stepsPassed: 0, checksPassed: 0 };
+  for (const scope of scopes) {
+    const ran = tally(scope.ran.map(markOf));
+    const ok = tally(scope.ran.filter((x) => x.ok).map(markOf));
+    for (const [m, n] of scope.wanted) {
+      const passed = Math.min(n, ok.get(m) ?? 0);
+      if (isCheck(m)) {
+        counts.checks += n;
+        counts.checksPassed += passed;
+      } else {
+        counts.steps += n;
+        counts.stepsPassed += passed;
+      }
+      if ((ran.get(m) ?? 0) < n) missing.push(named && scope.title !== undefined ? `[${m}] in “${scope.title}”` : `[${m}]`);
+    }
+  }
   const bad = all.find((r) => r.status !== 'passed' && r.status !== 'skipped');
   const failing = steps.find((s) => !s.ok);
   if (!bad) {
@@ -164,10 +220,9 @@ export function judge(
       return { status: 'failed', failedAt: failing.check ? 'check' : 'step', message: why.slice(0, 1200), steps, counts };
     }
     if (all.every((r) => r.status === 'skipped')) return { status: 'error', message: 'The test was skipped, so it shows nothing.', steps, counts };
-    const missing = [...wanted].filter(([m, n]) => (ran.get(m) ?? 0) < n).map(([m]) => m);
     if (!marks.length) return { status: 'passed', verified: false, unverified: 'This test has no numbered steps (an older version of Saywright wrote it, or it was written by hand), so a pass can’t show that each step and check ran. Generate it again.', steps, counts };
     if (!counts.checks) return { status: 'passed', verified: false, unverified: 'This test has no check, so a pass only shows its steps ran.', steps, counts };
-    if (missing.length) return { status: 'passed', verified: false, unverified: `The test passed, but ${missing.length === 1 ? 'a step' : `${missing.length} steps`} of it didn’t report running (${missing.map((m) => `[${m}]`).join(', ')}).`, steps, counts };
+    if (missing.length) return { status: 'passed', verified: false, unverified: `The test passed, but ${missing.length === 1 ? 'a step' : `${missing.length} steps`} of it didn’t report running (${missing.join(', ')}).`, steps, counts };
     if (all.some((r) => r.status === 'skipped')) return { status: 'passed', verified: false, unverified: `${all.filter((r) => r.status === 'skipped').length === 1 ? 'A test' : 'Some tests'} in this file were skipped, so the file wasn’t run whole.`, steps, counts };
     if (all.some((r) => (r.retry ?? 0) > 0)) return { status: 'passed', verified: false, unverified: 'The test passed only when tried again.', steps, counts };
     // Every test passed, and Playwright still ended with an error (in its setup, or outside the tests): not clean.
@@ -268,16 +323,17 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
     } catch {
       return { status: 'error', durationMs, hash, message: 'Couldn’t read the test results.', output: all.slice(-2000) };
     }
-    const runs: PwResult[][] = [];
+    const runs: PwTest[] = [];
     for (const s of report.suites ?? []) collect(s, runs);
     // Every test in the file, each by its last try: a file with a second test that fails doesn't pass.
-    const finals = runs.filter((r) => r.length).map((r) => r[r.length - 1]);
+    const ran = runs.filter((t) => t.results.length);
+    const finals = ran.map((t) => t.results[t.results.length - 1]);
     if (!finals.length) {
       const msg = mask(report.errors?.[0]?.message?.replace(ANSI, '') ?? `Playwright exited with code ${exit}`)!;
       if (/forbidOnly|focused with '\.only'/.test(msg)) return { status: 'error', durationMs, hash, message: FOCUSED };
       return { status: 'error', durationMs, hash, message: msg.slice(0, 600) };
     }
-    const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) });
+    const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) }, marksByTest(code, ran));
     const out: TestRunResult = { durationMs, hash, ...verdict };
     if (verdict.status === 'failed' && verdict.message) Object.assign(out, parseFailure(verdict.message));
     // The test that failed is the one that must pass: a test changed since (by a fix, or by hand) proves nothing about the fix.

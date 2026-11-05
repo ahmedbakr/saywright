@@ -33,6 +33,12 @@ describe('a real run', () => {
     'focused-marks.spec.ts': "test.only('first', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\ntest('second', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] broken', async () => expect(1).toBe(2));\n});\n",
     // The same marks in two tests: the second test's check never runs.
     'twice.spec.ts': "test('first', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\ntest('second', async () => {\n  await test.step('[1] start', async () => {});\n  if (Date.now() < 0) await test.step('[check 1] never', async () => expect(1).toBe(2));\n});\n",
+    // The first test runs its check twice, the second never runs its own.
+    'loops-2.spec.ts': "test('first', async () => {\n  await test.step('[1] start', async () => {});\n  for (let i = 0; i < 2; i++) await test.step('[check 1] first', async () => expect(1).toBe(1));\n});\ntest('second', async () => {\n  await test.step('[1] start', async () => {});\n  if (Date.now() < 0) await test.step('[check 1] second', async () => expect(1).toBe(2));\n});\n",
+    // Tests made in a loop, on one line: each has the marks, and each runs them.
+    'made-in-a-loop.spec.ts': "for (const n of [1, 2]) test(`case ${n}`, async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(n).toBeGreaterThan(0));\n});\n",
+    // A step written in a helper above the tests: it counts for the file, as often as it is written.
+    'helper.spec.ts': "const start = () => test.step('[1] start', async () => {});\ntest('one', async () => {\n  await start();\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\n",
   });
 
   it('a check that failed inside a caught block fails the run', async () => {
@@ -62,6 +68,17 @@ describe('a real run', () => {
   it('a mark written twice must run twice: a second test whose check never ran doesn’t verify the file', async () => {
     const r = await run(p, 'twice.spec.ts');
     expect(r).toMatchObject({ status: 'passed', verified: false, counts: { steps: 2, checks: 2, stepsPassed: 2, checksPassed: 1 } });
-    expect(r.unverified).toMatch(/didn’t report running \(\[check 1\]\)/);
+    expect(r.unverified).toMatch(/didn’t report running \(\[check 1\] in “second”\)/);
+  }, 60_000);
+
+  it('each test runs its own checks: one run twice in one test stands for no other test’s', async () => {
+    const r = await run(p, 'loops-2.spec.ts');
+    expect(r).toMatchObject({ status: 'passed', verified: false, counts: { steps: 2, checks: 2, stepsPassed: 2, checksPassed: 1 } });
+    expect(r.unverified).toMatch(/didn’t report running \(\[check 1\] in “second”\)/);
+  }, 60_000);
+
+  it('tests made in a loop each run the steps written once for them, and a step in a helper counts for the file', async () => {
+    expect(await run(p, 'made-in-a-loop.spec.ts')).toMatchObject({ status: 'passed', verified: true, counts: { steps: 2, checks: 2, stepsPassed: 2, checksPassed: 2 } });
+    expect(await run(p, 'helper.spec.ts')).toMatchObject({ status: 'passed', verified: true, counts: { steps: 1, checks: 1, stepsPassed: 1, checksPassed: 1 } });
   }, 60_000);
 });

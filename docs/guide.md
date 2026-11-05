@@ -89,7 +89,7 @@ A test starts on the page the app was on when you switched to **Write test**. **
 | **Passed: all 4 steps and 1 check ran** | Verified: every test in the file passed on its first try, every step and check reported that it ran and passed, Playwright ended cleanly, and (after a fix) the test is the one that failed, unchanged. |
 | **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run or was skipped, it passed only when tried again, it has no check, Playwright didn't end cleanly, or the test changed since it failed (by hand, or by any AI request). The next run judges the test as it is then. |
 
-A step or check written twice (two tests that each have `[check 1]`) must run as often as it is written. A file with `test.only` or `describe.only` isn't run, since its other tests would be left out: remove `.only` and run it again.
+Each test must run its own steps and checks, as often as it has them: two tests that each have `[check 1]` both run theirs, and a check run twice in one test stands for no other test's. A file with `test.only` or `describe.only` isn't run, since its other tests would be left out: remove `.only` and run it again.
 
 A check that failed is a failure, even when the test catches its error and goes on. A test holds up to 1,000 steps and 100 checks, every one of them written: past that, nothing is written and the studio says so, so split it into shorter tests.
 
