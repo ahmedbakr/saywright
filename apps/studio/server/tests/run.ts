@@ -113,13 +113,23 @@ function masker(values: string[]): (text: string | undefined) => string | undefi
 }
 
 /**
- * What a run proves. `steps`: what the report says of each step and check; `marks`: what the test has. A pass with
- * a step or check missing from the report proves nothing about it.
+ * What a run proves, from every test the file has (`results`: each one's last try). `marks`: the steps and checks
+ * the test has. `ended`: how Playwright itself ended. A pass is believed only when every test passed on its first
+ * try, every step and check reported running and none of them failed (even where the test caught the error and went
+ * on), and Playwright ended cleanly.
  */
-export function judge(result: PwResult, marks: string[], mask: (t: string | undefined) => string | undefined): Pick<TestRunResult, 'status' | 'verified' | 'unverified' | 'failedAt' | 'steps' | 'counts' | 'message'> {
-  const steps: RunStep[] = (result.steps ?? [])
-    .filter((s) => MARK.test(s.title))
-    .map((s) => ({ title: mask(s.title)!, check: /^\[check /.test(s.title), ok: !s.error, error: s.error?.message ? mask(s.error.message.replace(ANSI, '').slice(0, 1200)) : undefined }));
+export function judge(
+  results: PwResult | PwResult[],
+  marks: string[],
+  mask: (t: string | undefined) => string | undefined,
+  ended: { exit?: number | null; errors?: string[] } = {},
+): Pick<TestRunResult, 'status' | 'verified' | 'unverified' | 'failedAt' | 'steps' | 'counts' | 'message'> {
+  const all = Array.isArray(results) ? results : [results];
+  const steps: RunStep[] = all.flatMap((r) =>
+    (r.steps ?? [])
+      .filter((s) => MARK.test(s.title))
+      .map((s) => ({ title: mask(s.title)!, check: /^\[check /.test(s.title), ok: !s.error, error: s.error?.message ? mask(s.error.message.replace(ANSI, '').slice(0, 1200)) : undefined })),
+  );
   const seen = new Set(steps.map((s) => MARK.exec(s.title)![1]));
   const isCheck = (m: string) => m.startsWith('check ');
   const counts = {
@@ -128,17 +138,29 @@ export function judge(result: PwResult, marks: string[], mask: (t: string | unde
     stepsPassed: steps.filter((s) => !s.check && s.ok).length,
     checksPassed: steps.filter((s) => s.check && s.ok).length,
   };
-  if (result.status === 'passed') {
+  const bad = all.find((r) => r.status !== 'passed' && r.status !== 'skipped');
+  const failing = steps.find((s) => !s.ok);
+  if (!bad) {
+    // A check (or step) that failed, though its test caught the error and went on: it failed all the same.
+    if (failing) {
+      const why = `${failing.title} failed, though the test caught the error and went on: ${failing.error ?? 'no message'}`;
+      return { status: 'failed', failedAt: failing.check ? 'check' : 'step', message: why.slice(0, 1200), steps, counts };
+    }
+    if (all.every((r) => r.status === 'skipped')) return { status: 'error', message: 'The test was skipped, so it shows nothing.', steps, counts };
     const missing = marks.filter((m) => !seen.has(m));
     if (!marks.length) return { status: 'passed', verified: false, unverified: 'This test has no numbered steps (an older version of Saywright wrote it, or it was written by hand), so a pass can’t show that each step and check ran. Generate it again.', steps, counts };
     if (!counts.checks) return { status: 'passed', verified: false, unverified: 'This test has no check, so a pass only shows its steps ran.', steps, counts };
     if (missing.length) return { status: 'passed', verified: false, unverified: `The test passed, but ${missing.length === 1 ? 'a step' : `${missing.length} steps`} of it didn’t report running (${missing.map((m) => `[${m}]`).join(', ')}).`, steps, counts };
-    if ((result.retry ?? 0) > 0) return { status: 'passed', verified: false, unverified: 'The test passed only when tried again.', steps, counts };
+    if (all.some((r) => r.status === 'skipped')) return { status: 'passed', verified: false, unverified: `${all.filter((r) => r.status === 'skipped').length === 1 ? 'A test' : 'Some tests'} in this file were skipped, so the file wasn’t run whole.`, steps, counts };
+    if (all.some((r) => (r.retry ?? 0) > 0)) return { status: 'passed', verified: false, unverified: 'The test passed only when tried again.', steps, counts };
+    // Every test passed, and Playwright still ended with an error (in its setup, or outside the tests): not clean.
+    if ((ended.exit ?? 0) !== 0 || ended.errors?.length) {
+      const said = ended.errors?.[0] ? mask(ended.errors[0].replace(ANSI, ''))!.split('\n')[0].slice(0, 300) : `it exited with code ${ended.exit}`;
+      return { status: 'passed', verified: false, unverified: `The test passed, but Playwright didn’t end cleanly: ${said}.`, steps, counts };
+    }
     return { status: 'passed', verified: true, steps, counts };
   }
-  if (result.status === 'skipped') return { status: 'error', message: 'The test was skipped, so it shows nothing.', steps, counts };
-  const failing = steps.find((s) => !s.ok);
-  const message = mask((failing?.error ?? result.error?.message ?? result.errors?.[0]?.message ?? result.status).replace(ANSI, ''))!;
+  const message = mask((failing?.error ?? bad.error?.message ?? bad.errors?.[0]?.message ?? bad.status).replace(ANSI, ''))!;
   return { status: 'failed', failedAt: failing?.check ? 'check' : 'step', message: message.slice(0, 1200), steps, counts };
 }
 
@@ -229,12 +251,13 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
     }
     const runs: PwResult[][] = [];
     for (const s of report.suites ?? []) collect(s, runs);
-    const first = runs.find((r) => r.length)?.[0];
-    if (!first) {
+    // Every test in the file, each by its last try: a file with a second test that fails doesn't pass.
+    const finals = runs.filter((r) => r.length).map((r) => r[r.length - 1]);
+    if (!finals.length) {
       const msg = mask(report.errors?.[0]?.message?.replace(ANSI, '') ?? `Playwright exited with code ${exit}`)!;
       return { status: 'error', durationMs, hash, message: msg.slice(0, 600) };
     }
-    const verdict = judge(first, marksOf(code), mask);
+    const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) });
     const out: TestRunResult = { durationMs, hash, ...verdict };
     if (verdict.status === 'failed' && verdict.message) Object.assign(out, parseFailure(verdict.message));
     // The test that failed is the one that must pass: a test changed since (by a fix, or by hand) proves nothing about the fix.

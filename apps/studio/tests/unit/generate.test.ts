@@ -319,6 +319,24 @@ describe('what a run proves', () => {
     expect(atStep).toMatchObject({ status: 'failed', failedAt: 'step', counts: { stepsPassed: 1, checksPassed: 0 } });
   });
 
+  it('a check that failed is a failure, though the test caught its error and went on', () => {
+    const caught = judge({ status: 'passed', duration: 1, steps: [...all.slice(0, 3), step('[check 1] The total should show $80.80', 'Expected: "$80.80"')] }, marks, mask);
+    expect(caught).toMatchObject({ status: 'failed', failedAt: 'check', counts: { checksPassed: 0 } });
+    expect(caught.verified).toBeUndefined();
+    expect(caught.message).toMatch(/^\[check 1\] The total should show \$80\.80 failed, though the test caught the error and went on/);
+  });
+
+  it('judges every test in the file, and how Playwright itself ended', () => {
+    // A second test that fails fails the file.
+    const second = judge([{ status: 'passed', duration: 1, steps: all }, { status: 'failed', duration: 1, error: { message: 'Expected 2, received 1' }, steps: [] }], marks, mask);
+    expect(second).toMatchObject({ status: 'failed', message: 'Expected 2, received 1' });
+    // One skipped: the file wasn't run whole.
+    expect(judge([{ status: 'passed', duration: 1, steps: all }, { status: 'skipped', duration: 0, steps: [] }], marks, mask)).toMatchObject({ status: 'passed', verified: false, unverified: expect.stringMatching(/skipped/) });
+    // All passed, but Playwright ended with an error (its setup, an error outside the tests): not clean, not verified.
+    expect(judge({ status: 'passed', duration: 1, steps: all }, marks, mask, { exit: 1, errors: ['Error: globalTeardown failed\n    at x'] })).toMatchObject({ status: 'passed', verified: false, unverified: 'The test passed, but Playwright didn’t end cleanly: Error: globalTeardown failed.' });
+    expect(judge({ status: 'passed', duration: 1, steps: all }, marks, mask, { exit: 0 })).toMatchObject({ verified: true });
+  });
+
   it('knows a generated test’s steps and checks from its code, and masks the secrets it was given out of what a run says', () => {
     const code = generateSpec(input);
     expect(marksOf(code)).toEqual(['1', '2', '3', 'check 1']);
