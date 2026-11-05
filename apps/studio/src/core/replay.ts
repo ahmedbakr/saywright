@@ -271,7 +271,7 @@ export class Replayer {
           failed = { i, t: s.t, description: s.description, descriptionAr: s.descriptionAr, reason: 'secret' };
           break;
         }
-        const r = await this.host.bridge.replay(s.locator, { kind: s.kind as 'click' | 'fill' | 'press', value, key: s.key, checked: s.checked, select: s.select }, false, s.like);
+        const r = await this.host.bridge.replay(s.locator, { kind: s.kind as 'click' | 'fill' | 'press', value, key: s.key, checked: s.checked, select: s.select, values: s.values, byValue: s.byValue }, false, s.like);
         if (!r.ok) {
           failed = { i, t: s.t, description: s.description, descriptionAr: s.descriptionAr, reason: r.error ?? 'failed' };
           break;

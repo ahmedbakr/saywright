@@ -130,6 +130,8 @@ export interface RecordedStep {
   select?: string[];
   /** The same options' values, when the app's bridge said them. */
   values?: string[];
+  /** Another option of the list says the same as one chosen: the options are chosen by their values. */
+  byValue?: boolean;
   /** A checkbox or radio button: check or uncheck it. */
   checked?: boolean;
   key?: string;

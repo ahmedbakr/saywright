@@ -6,7 +6,7 @@
  * clicked, filled or pressed.
  */
 import { NAME_ATTR, SRC_ATTR } from '../protocol';
-import { accessibleName, collapse, fieldValue, isField, isVisible, labelText, shapeOf, visibleText } from './dom';
+import { accessibleName, collapse, deepAll, fieldValue, isField, isVisible, labelText, shapeOf, visibleText } from './dom';
 import { ROLE_SELECTORS, roleFor } from './locator';
 import { scriptedInput } from './own';
 
@@ -160,7 +160,7 @@ function byText(scope: ParentNode, text: string | RegExp, exact: boolean): Eleme
   const needle = typeof text === 'string' ? norm(text).toLowerCase() : '';
   const somewhere = text instanceof RegExp ? loose(text) : null;
   const hits: Element[] = [];
-  const all = scope.querySelectorAll('body *');
+  const all = deepAll(scope === document ? document.body : scope, '*');
   for (let i = 0; i < all.length; i++) {
     const el = all[i];
     if (el instanceof HTMLScriptElement || el instanceof HTMLStyleElement) continue;
@@ -225,11 +225,11 @@ function elementsFor(calls: Call[], like?: Like): Element[] | null {
     const text = (v: Arg | undefined): string | RegExp => (v instanceof RegExp ? v : String(v));
     switch (c.name) {
       case 'getByTestId':
-        set = within((sc) => Array.from(sc.querySelectorAll(`[data-testid="${CSS.escape(String(a))}"]`)));
+        set = within((sc) => deepAll(sc, `[data-testid="${CSS.escape(String(a))}"]`));
         break;
       case 'getByRole': {
         const role = String(a);
-        set = within((sc) => Array.from(sc.querySelectorAll(ROLE_SELECTORS[role] ?? `[role="${CSS.escape(role)}"]`)).filter((el) => roleFor(el) === role && (opt.name == null || matches(accessibleName(el), text(opt.name), !!opt.exact))));
+        set = within((sc) => deepAll(sc, ROLE_SELECTORS[role] ?? `[role="${CSS.escape(role)}"]`).filter((el) => roleFor(el) === role && (opt.name == null || matches(accessibleName(el), text(opt.name), !!opt.exact))));
         break;
       }
       case 'filter': {
@@ -240,17 +240,17 @@ function elementsFor(calls: Call[], like?: Like): Element[] | null {
         break;
       }
       case 'getByLabel':
-        set = within((sc) => Array.from(sc.querySelectorAll('input, textarea, select, [aria-label]')).filter((el) => matches(labelText(el) || el.getAttribute('aria-label') || '', text(a), !!opt.exact)));
+        set = within((sc) => deepAll(sc, 'input, textarea, select, [aria-label]').filter((el) => matches(labelText(el) || el.getAttribute('aria-label') || '', text(a), !!opt.exact)));
         break;
       case 'getByPlaceholder':
-        set = within((sc) => Array.from(sc.querySelectorAll('[placeholder]')).filter((el) => matches(el.getAttribute('placeholder') ?? '', text(a), !!opt.exact)));
+        set = within((sc) => deepAll(sc, '[placeholder]').filter((el) => matches(el.getAttribute('placeholder') ?? '', text(a), !!opt.exact)));
         break;
       case 'getByText':
         set = within((sc) => byText(sc, text(a), !!opt.exact));
         break;
       case 'locator':
         try {
-          set = (!set && like ? relocated(String(a), like) : null) ?? within((sc) => Array.from(sc.querySelectorAll(String(a))));
+          set = (!set && like ? relocated(String(a), like) : null) ?? within((sc) => deepAll(sc, String(a)));
         } catch {
           return null;
         }
@@ -332,7 +332,7 @@ const mouse = (type: string, x: number, y: number) => new MouseEvent(type, { bub
  * person couldn't use now (disabled, inert) is refused: clicking it would do nothing, and the replay would go on as
  * if it had worked.
  */
-export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] }): void {
+export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean }): void {
   if (unusable(el)) throw new Error('disabled');
   scriptedInput();
   const r = el.getBoundingClientRect();
@@ -358,6 +358,8 @@ export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value
       if (el.checked !== (step.checked ?? !el.checked)) el.click();
       return;
     }
+    // Options that say the same as another are chosen by their values; the rest by what they say.
+    if (el instanceof HTMLSelectElement && step.byValue && step.values?.length) return choose(el, step.values);
     if (el instanceof HTMLSelectElement && step.select?.length) return choose(el, step.select);
     setValue(el, step.value ?? '');
     return;

@@ -36,8 +36,8 @@ describe('a test’s steps', () => {
   it('keep only what a step is, whatever else was sent', () => {
     const [s] = validSteps([{ ...click(1), script: 'alert(1)', value: 'ignored for a click', checked: true }]);
     expect(s).toEqual(click(1));
-    const [f] = validSteps([{ kind: 'fill', locator: "page.getByLabel('Size')", value: '', select: ['Large'], values: ['l'], description: 'Choose “Large”', extra: 1 }]);
-    expect(f).toEqual({ kind: 'fill', locator: "page.getByLabel('Size')", value: '', select: ['Large'], values: ['l'], description: 'Choose “Large”' });
+    const [f] = validSteps([{ kind: 'fill', locator: "page.getByLabel('Size')", value: '', select: ['Large'], values: ['l'], byValue: true, description: 'Choose “Large”', extra: 1 }]);
+    expect(f).toEqual({ kind: 'fill', locator: "page.getByLabel('Size')", value: '', select: ['Large'], values: ['l'], byValue: true, description: 'Choose “Large”' });
     // An absent field may be sent as null.
     expect(validSteps([{ kind: 'note', description: 'Looks off', locator: null, url: null }])).toEqual([{ kind: 'note', description: 'Looks off' }]);
   });
@@ -56,6 +56,8 @@ describe('a test’s steps', () => {
       [{ kind: 'click', locator: "page.evaluate(() => fetch('/x'))", description: 'Click' }, 'Step 2: “page.evaluate(() => fetch(\'/x\'))” isn’t a locator a test can use.'],
       [{ kind: 'goto', description: 'Open the cart' }, 'Step 2 (goto) names no address (url).'],
       [{ kind: 'press', locator: "page.getByLabel('Search')", key: ['Enter'], description: 'Press' }, 'Step 2: key must be text, not ["Enter"].'],
+      [{ kind: 'fill', locator: "page.getByLabel('Size')", select: ['Large'], byValue: 'yes', description: 'Choose' }, 'Step 2: byValue must be true or false, not yes.'],
+      [{ kind: 'fill', locator: "page.getByLabel('Size')", select: ['Large'], byValue: true, description: 'Choose' }, 'Step 2 chooses by value, and names no values.'],
     ];
     for (const [bad, said] of cases) {
       const r = refusal(() => validSteps([click(1), bad]));

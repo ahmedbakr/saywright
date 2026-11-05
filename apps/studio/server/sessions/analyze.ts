@@ -400,7 +400,7 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
         refFile(e.el.src);
         // A list's choice is a choice (every option chosen), not text to type: selectOption in a test.
         const list = e.checked === undefined && (e.el.tag === 'select' || e.el.role === 'combobox' || e.el.role === 'listbox');
-        if (e.el.locator) steps.push({ t: at, kind: 'fill', locator: e.el.locator, value: e.value, ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(list ? { select: e.options?.length ? e.options : [e.value] } : {}), description: `Set ${nameOf(e.el)}`, descriptionAr: `اضبط ${nameOfAr(e.el)}`, ...likeOf(e.el) });
+        if (e.el.locator) steps.push({ t: at, kind: 'fill', locator: e.el.locator, value: e.value, ...(e.checked !== undefined ? { checked: e.checked } : {}), ...(list ? { select: e.options?.length ? e.options : [e.value] } : {}), ...(list && e.byValue && e.values?.length ? { values: e.values, byValue: true } : {}), description: `Set ${nameOf(e.el)}`, descriptionAr: `اضبط ${nameOfAr(e.el)}`, ...likeOf(e.el) });
         break;
       }
       case 'submit':

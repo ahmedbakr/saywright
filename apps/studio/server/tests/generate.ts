@@ -182,11 +182,13 @@ function stepCode(step: RecordedStep): string | null {
 
 /**
  * The options a step chose, as selectOption takes them: by what each says ({ label: 'Express' }), or by its value
- * when what it says has numbers in it (a price changes, its value doesn't) or isn't known.
+ * when what it says has numbers in it (a price changes, its value doesn't) or isn't known; by value alone when another
+ * option of the list says the same as one chosen ({ value: 'std-us' }).
  */
 function optionsCode(step: RecordedStep): string {
   const labels = step.select ?? [];
   const values = step.values ?? [];
+  if (step.byValue && values.length) return values.length === 1 ? `{ value: ${q(values[0])} }` : `[${values.map((v) => `{ value: ${q(v)} }`).join(', ')}]`;
   const one = (i: number) => {
     const label = labels[i] ?? '';
     const value = values[i];

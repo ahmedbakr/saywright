@@ -205,6 +205,9 @@ export interface SessionStep {
   secret?: string;
   /** A choice in a list: what each option chosen says. */
   select?: string[];
+  /** Their values, chosen by (`byValue`) when another option of the list says the same as one chosen. */
+  values?: string[];
+  byValue?: boolean;
   key?: string;
   url?: string;
   description: string;

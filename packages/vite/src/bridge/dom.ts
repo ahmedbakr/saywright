@@ -41,6 +41,61 @@ export function collapse(s: string | null | undefined, max = 80): string {
   return t.length > max ? t.slice(0, max - 1) + '…' : t;
 }
 
+/** The page's open shadow roots (nested ones too), as last looked for. */
+let shadows: { at: number; roots: ShadowRoot[] } = { at: -Infinity, roots: [] };
+
+/**
+ * The page's open shadow roots, nested ones too: what Playwright's locators see into. Looked for again at most once a
+ * second (a page of thousands of elements takes a few milliseconds), or at once for an element in one not seen yet.
+ */
+export function shadowRoots(seen?: Node): ShadowRoot[] {
+  const now = performance.now();
+  const root = seen?.getRootNode();
+  if (now - shadows.at < 1000 && !(root instanceof ShadowRoot && !shadows.roots.includes(root))) return shadows.roots;
+  const roots: ShadowRoot[] = [];
+  const walk = (scope: ParentNode) => {
+    const all = scope.querySelectorAll('*');
+    for (let i = 0; i < all.length; i++) {
+      const open = all[i].shadowRoot;
+      if (open) {
+        roots.push(open);
+        walk(open);
+      }
+    }
+  };
+  walk(document);
+  shadows = { at: now, roots };
+  return roots;
+}
+
+/** Whether `node` is in `scope`, counting what is in the open shadow roots of what is in it. */
+function within(scope: ParentNode, node: Node): boolean {
+  for (let n: Node | null = node; n; ) {
+    if (scope === n || (scope instanceof Node && scope.contains(n))) return true;
+    const root = n.getRootNode();
+    n = root instanceof ShadowRoot ? root.host : null;
+  }
+  return false;
+}
+
+/** Every element `selector` matches in `scope`, and in the open shadow roots in it: as Playwright's locators find them. */
+export function deepAll(scope: ParentNode, selector: string): Element[] {
+  const out = Array.from(scope.querySelectorAll(selector));
+  for (const root of shadowRoots()) if (root !== scope && within(scope, root.host)) for (const el of Array.from(root.querySelectorAll(selector))) out.push(el);
+  return out;
+}
+
+/** The element edited as a whole (contenteditable: a rich text editor) that `el` is in, or null. */
+export function editableOf(el: Element | null): HTMLElement | null {
+  if (!(el instanceof HTMLElement) || !el.isContentEditable) return null;
+  let host: HTMLElement = el;
+  while (host.parentElement?.isContentEditable) host = host.parentElement;
+  return host;
+}
+
+/** What a rich text editor holds, as its text: line by line, without the line break it ends with. */
+export const editedText = (el: HTMLElement) => (el.innerText ?? el.textContent ?? '').replace(/\n+$/, '');
+
 /**
  * Text as a person reads it on screen, line by line: blank lines dropped, spaces collapsed, long lines cut, whole
  * lines up to `max` characters, card numbers masked to their last four digits, and keys and tokens masked.
@@ -127,10 +182,12 @@ export function roleOf(el: Element): string | null {
   }
 }
 
-function textOfIds(ids: string): string {
+/** The words of the elements these ids name, in `el`'s own document or shadow root (where its ids are). */
+function textOfIds(el: Element, ids: string): string {
+  const root = el.getRootNode() as Document | ShadowRoot;
   return ids
     .split(/\s+/)
-    .map((id) => document.getElementById(id)?.textContent ?? '')
+    .map((id) => (id ? (root.getElementById?.(id)?.textContent ?? '') : ''))
     .join(' ');
 }
 
@@ -261,7 +318,9 @@ export function labelText(el: Element): string {
   if (!isField(el)) return '';
   const parts: string[] = [];
   if (el.id) {
-    for (const l of Array.from(document.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`))) parts.push(labelWords(l));
+    // A label is for a field in its own document or shadow root.
+    const root = el.getRootNode() as Document | ShadowRoot;
+    for (const l of Array.from(root.querySelectorAll(`label[for="${CSS.escape(el.id)}"]`))) parts.push(labelWords(l));
   }
   const wrapping = el.closest('label');
   if (wrapping) parts.push(labelWords(wrapping));
@@ -281,8 +340,10 @@ export function accessibleName(el: Element): string {
   const aria = el.getAttribute('aria-label');
   if (aria) return collapse(aria, NAME_MAX);
   const labelledBy = el.getAttribute('aria-labelledby');
-  if (labelledBy) return collapse(textOfIds(labelledBy), NAME_MAX);
+  if (labelledBy) return collapse(textOfIds(el, labelledBy), NAME_MAX);
   if (isField(el)) return labelText(el) || collapse(el.getAttribute('title'), NAME_MAX);
+  // A text box (a rich text editor) isn't named by what is typed into it.
+  if (editableOf(el) === el || el.getAttribute('role') === 'textbox') return collapse(el.getAttribute('title'), NAME_MAX);
   if (el instanceof HTMLImageElement) return collapse(el.alt, NAME_MAX);
   const title = el.getAttribute('title');
   const text = collapse(el.querySelector(NAMED_INSIDE) ? contentName(el) : ((el as HTMLElement).innerText ?? el.textContent), NAME_MAX);

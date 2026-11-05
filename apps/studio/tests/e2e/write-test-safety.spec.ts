@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { E2E_SHOP, appPoint, expectIsland, openStudio, resetAll, store, STUDIO } from './helpers';
+import { E2E_SHOP, appPoint, expectIsland, openStudio, resetAll, runToEnd, store, STUDIO } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -114,7 +114,7 @@ test('a choice in a list is chosen with selectOption, several in a multi-select,
   expect(spec).toContain("await page.getByRole('combobox', { name: 'Delivery' }).selectOption({ label: 'Express' });");
   expect(spec).toContain("await page.getByRole('listbox', { name: 'Interests' }).selectOption([{ label: 'Ceramics' }, { label: 'Linen' }]);");
   expect(spec).not.toMatch(/\.fill\(/);
-  await page.getByRole('button', { name: 'Run it' }).click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /Test passed in [\d.]+ s: all \d+ steps and 1 check ran/);
 });
 
@@ -143,7 +143,7 @@ test('a test that never reaches its check says it doesn’t show the bug yet, an
 
   // The real test fails at its check: the bug shows. A “fix” that only loosens the check is refused, the test untouched.
   fs.writeFileSync(file, good);
-  await page.getByRole('button', { name: 'Run test' }).first().click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run test' }).first().click());
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);
   const res = await page.evaluate(async (path) => {
     const r = await fetch('/api/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, failure: 'expected $80.80', text: 'fix it, change the test' }) });

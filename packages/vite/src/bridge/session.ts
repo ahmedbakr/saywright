@@ -583,8 +583,18 @@ export class SessionRecorder {
       // Every option chosen, in a list that takes several; the first is the value, as it always was.
       const options = el instanceof HTMLSelectElement ? Array.from(el.selectedOptions, (o) => collapse(o.label || o.text, 80)) : undefined;
       const value = el instanceof HTMLSelectElement ? (options![0] ?? el.value) : el.type === 'file' ? Array.from(el.files ?? []).map((f) => f.name).join(', ') : el.value;
+      // Two options that say the same (“Standard”, “Standard”): their values tell which was chosen.
+      const all = el instanceof HTMLSelectElement ? Array.from(el.options, (o) => collapse(o.label || o.text, 80)) : [];
+      const byValue = !!options?.some((n) => all.filter((x) => x === n).length > 1);
       this.recordLater(
-        { type: 'change', el: target, value: collapse(value, 200), checked: el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined, ...(options && options.length > 1 ? { options } : {}) },
+        {
+          type: 'change',
+          el: target,
+          value: collapse(value, 200),
+          checked: el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined,
+          ...(options && (options.length > 1 || byValue) ? { options } : {}),
+          ...(byValue && el instanceof HTMLSelectElement ? { values: Array.from(el.selectedOptions, (o) => o.value), byValue } : {}),
+        },
         eventTime(e),
         [[target, el]],
       );

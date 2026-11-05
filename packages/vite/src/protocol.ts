@@ -108,11 +108,12 @@ export interface LocatorInfo {
  * A step of Write test, as the app's bridge saw it. A secret (a password, a card number…) comes as `secret`, the
  * name a test reads it under (PASSWORD), with an empty `value`: what was typed never leaves the page. A choice in a
  * list comes as a `fill` with `select`, the options chosen (by what they say, and `values` by their value), so a
- * studio that doesn't know `select` still writes a step rather than leaving one out.
+ * studio that doesn't know `select` still writes a step rather than leaving one out. `byValue`: another option of the
+ * list says the same as one chosen, so the options are chosen by their values.
  */
 export type RecordedAction =
   | { kind: 'click'; locator: string; description: string }
-  | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[]; checked?: boolean }
+  | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[]; byValue?: boolean; checked?: boolean }
   | { kind: 'press'; locator: string; key: string; description: string };
 
 /** An element as a test session remembers it. Cheap fields are read at once; `locator`, `description` and `path` when the browser is idle. */
@@ -159,8 +160,11 @@ export type SessionEventBody =
   | { type: 'click'; x: number; y: number; button: number; pointer: string; el: SessionTarget; count: number; disabled?: boolean }
   /** `masked`: a secret (`value` is a dot per character); `secret`: the name a test would read it under (PASSWORD). */
   | { type: 'input'; el: SessionTarget; value: string; masked: boolean; secret?: string }
-  /** `options`: what each option chosen in a list says (several, in a list that takes more than one); `value` is the first. */
-  | { type: 'change'; el: SessionTarget; value: string; checked?: boolean; options?: string[] }
+  /**
+   * `options`: what each option chosen in a list says (several, in a list that takes more than one); `value` is the
+   * first. `values` and `byValue`: their values, when another option of the list says the same as one chosen.
+   */
+  | { type: 'change'; el: SessionTarget; value: string; checked?: boolean; options?: string[]; values?: string[]; byValue?: boolean }
   | { type: 'submit'; el: SessionTarget }
   | { type: 'key'; key: string; mods: string; el: SessionTarget | null }
   | { type: 'focus'; el: SessionTarget }
@@ -240,7 +244,7 @@ export type StudioToBridge = Base &
         reqId: number;
         locator: string;
         /** `select`: the options to choose, by what they say or their value (all of them, in a list that takes several). */
-        step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] };
+        step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean };
         read?: boolean;
         like?: { tag: string; name: string; text: string; shape?: string };
       }

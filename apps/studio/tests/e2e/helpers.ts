@@ -146,3 +146,13 @@ async function islandText(page: Page): Promise<string> {
 export async function expectIsland(page: Page, re: RegExp): Promise<void> {
   await expect.poll(() => islandText(page), { timeout: 15_000 }).toMatch(re);
 }
+
+/**
+ * Start a run of the test being written and wait until it is over: a run starts Playwright and a browser, which on a
+ * busy machine takes longer than what it then says is waited for.
+ */
+export async function runToEnd(page: Page, start: () => Promise<unknown>): Promise<void> {
+  const since = (await store<number | null>(page, 's.recorder.run ? s.recorder.run.at : null')) ?? 0;
+  await start();
+  await expect.poll(() => store<boolean>(page, `!s.recorder.running && !!s.recorder.run && s.recorder.run.at > ${since}`), { timeout: 120_000, intervals: [500] }).toBe(true);
+}

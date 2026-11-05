@@ -4,7 +4,7 @@
  * written in the code: that is only known to the dev server, and moves with every edit above it.
  */
 import { jsString as q, type LocatorInfo } from '../protocol';
-import { accessibleName, collapse, isField, labelText, NAMED_INSIDE, roleOf, visibleText } from './dom';
+import { accessibleName, collapse, deepAll, editableOf, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
 
 /** Values like "$78.40", "12", "−$19.60" change when the code changes, so they make poor locators. */
 function looksVolatile(s: string): boolean {
@@ -115,7 +115,7 @@ function byRole(scope: ParentNode, role: string, name: string | Pattern | null, 
   const sel = ROLE_SELECTORS[role] ?? `[role="${role}"]`;
   const needle = name === null ? '' : typeof name === 'string' ? squash(name) : name.hint;
   const out: Element[] = [];
-  const all = scope.querySelectorAll(sel);
+  const all = deepAll(scope, sel);
   for (let i = 0; i < all.length && out.length < limit; i++) {
     const el = all[i];
     // The name comes from these (or a label, for fields; an image's alt or a part's label inside): if none holds the words, it can't match. Costs nothing on a page of thousands.
@@ -151,7 +151,7 @@ function countByRoleAndName(role: string, name: string | Pattern, exact: boolean
 function byText(scope: ParentNode, text: string | Pattern): Element[] {
   const out: Element[] = [];
   const is = typeof text === 'string' ? (t: string) => t === text : (t: string) => text.re.test(t);
-  const all = scope.querySelectorAll('*');
+  const all = deepAll(scope, '*');
   for (let i = 0; i < all.length; i++) {
     const el = all[i] as HTMLElement;
     if (typeof text !== 'string' && !squash(el.textContent).includes(text.hint)) continue;
@@ -188,7 +188,7 @@ const TAG_WORDS: Record<string, string> = { td: 'cell', th: 'heading', dd: 'valu
 function inners(el: Element, keep: Keep): Inner[] {
   const out: Inner[] = [];
   const testId = el.getAttribute('data-testid');
-  if (testId) out.push({ code: `getByTestId(${q(testId)})`, words: testId, count: (s) => s.querySelectorAll(`[data-testid="${CSS.escape(testId)}"]`).length });
+  if (testId) out.push({ code: `getByTestId(${q(testId)})`, words: testId, count: (s) => deepAll(s, `[data-testid="${CSS.escape(testId)}"]`).length });
   const role = roleFor(el);
   const name = named(role) ? accessibleName(el) : '';
   const byName = !namedByText(el) || keep === always;
@@ -202,32 +202,32 @@ function inners(el: Element, keep: Keep): Inner[] {
   }
   if (isField(el)) {
     const label = labelText(el);
-    if (label) out.push({ code: `getByLabel(${q(label)})`, words: `the “${label}” field`, count: (s) => Array.from(s.querySelectorAll('input, textarea, select')).filter((f) => labelText(f) === label).length });
+    if (label) out.push({ code: `getByLabel(${q(label)})`, words: `the “${label}” field`, count: (s) => deepAll(s, 'input, textarea, select').filter((f) => labelText(f) === label).length });
     const ph = el.getAttribute('placeholder');
-    if (ph) out.push({ code: `getByPlaceholder(${q(ph)})`, words: `the “${ph}” field`, count: (s) => s.querySelectorAll(`[placeholder="${CSS.escape(ph)}"]`).length });
+    if (ph) out.push({ code: `getByPlaceholder(${q(ph)})`, words: `the “${ph}” field`, count: (s) => deepAll(s, `[placeholder="${CSS.escape(ph)}"]`).length });
   }
   const text = visibleText(el);
-  if (!isField(el) && text && text.length <= 40) {
+  if (!isField(el) && !editableOf(el) && text && text.length <= 40) {
     const open = numbersOpen(text);
     if (open && keep(open)) out.push({ code: `getByText(${open.code})`, words: `“${text}”`, count: (s) => byText(s, open).length });
     if (!looksVolatile(text) && keep(text)) out.push({ code: `getByText(${q(text)}, { exact: true })`, words: `“${text}”`, count: (s) => byText(s, text).length });
   }
   const tag = el.tagName.toLowerCase();
   const cls = namingClass(el);
-  if (cls) out.push({ code: `locator(${q(`${tag}.${cls}`)})`, words: `the ${cls.replace(/[-_]/g, ' ')}`, count: (s) => s.querySelectorAll(`${tag}.${CSS.escape(cls)}`).length });
+  if (cls) out.push({ code: `locator(${q(`${tag}.${cls}`)})`, words: `the ${cls.replace(/[-_]/g, ' ')}`, count: (s) => deepAll(s, `${tag}.${CSS.escape(cls)}`).length });
   // Last, its kind alone, for the one of its kind in its card or row (the cell of a “You pay” row that holds the amount).
-  out.push({ code: `locator(${q(tag)})`, words: `the ${TAG_WORDS[tag] ?? tag}`, count: (s) => s.querySelectorAll(tag).length });
+  out.push({ code: `locator(${q(tag)})`, words: `the ${TAG_WORDS[tag] ?? tag}`, count: (s) => deepAll(s, tag).length });
   return out;
 }
 
 /** A container, as a locator, and the elements that locator finds on the page. */
 function boxOf(node: Element): { code: string; all: () => Element[] } | null {
   const testId = node.getAttribute('data-testid');
-  if (testId) return { code: `page.getByTestId(${q(testId)})`, all: () => Array.from(document.querySelectorAll(`[data-testid="${CSS.escape(testId)}"]`)) };
+  if (testId) return { code: `page.getByTestId(${q(testId)})`, all: () => deepAll(document, `[data-testid="${CSS.escape(testId)}"]`) };
   const role = roleFor(node);
   if (role && CONTAINERS.has(role)) return { code: `page.getByRole(${q(role)})`, all: () => byRole(document, role, null, false) };
   const cls = namingClass(node);
-  if (cls) return { code: `page.locator(${q(`.${cls}`)})`, all: () => Array.from(document.querySelectorAll(`.${CSS.escape(cls)}`)) };
+  if (cls) return { code: `page.locator(${q(`.${cls}`)})`, all: () => deepAll(document, `.${CSS.escape(cls)}`) };
   return null;
 }
 
@@ -271,8 +271,10 @@ function scoped(el: Element, keep: Keep): LocatorInfo | null {
   if (own && ownTitle && keep(ownTitle) && own.all().filter((c) => matchesText(c, ownTitle)).length === 1) {
     return { code: `${own.code}.filter({ hasText: ${q(ownTitle)} })`, description: `“${ownTitle}”`, text, within: ownTitle };
   }
-  let node = el.parentElement;
-  for (let level = 0; node && node !== document.body && level < SCOPE_LEVELS; level++, node = node.parentElement) {
+  // Out through a shadow root to its host, as Playwright's filters see.
+  const up = (n: Element): Element | null => n.parentElement ?? (n.parentNode instanceof ShadowRoot ? n.parentNode.host : null);
+  let node = up(el);
+  for (let level = 0; node && node !== document.body && level < SCOPE_LEVELS; level++, node = up(node)) {
     const way = ways.find((w) => w.count(node!) === 1);
     if (!way) break; // more than one in here: further out holds more still
     const box = boxOf(node);
@@ -305,7 +307,7 @@ function nth(el: Element, keep: Keep): LocatorInfo {
   };
   if (role && name && !looksVolatile(name) && name.length <= 60) return pick(`page.getByRole(${q(role)}, { name: ${q(name)}, exact: true })`, byRole(document, role, name, true), describeRole(role, name).replace(/^the /, ''));
   const css = cls ? `${tag}.${cls}` : tag;
-  return pick(`page.locator(${q(css)})`, Array.from(document.querySelectorAll(cls ? `${tag}.${CSS.escape(cls)}` : tag)), cls ? cls.replace(/[-_]/g, ' ') : tag);
+  return pick(`page.locator(${q(css)})`, deepAll(document, cls ? `${tag}.${CSS.escape(cls)}` : tag), cls ? cls.replace(/[-_]/g, ' ') : tag);
 }
 
 /**
@@ -330,9 +332,11 @@ export function buildLocator(el: Element, opts: { cheap?: boolean; check?: strin
   // A check reads what the element shows: it isn't found by words the fix will change.
   const keep = opts.check !== undefined ? keeper(el, opts.check) : always;
   const byName = !namedByText(el) || keep === always;
+  // One in a shadow root just made is counted with the rest of the page.
+  shadowRoots(el);
 
   const testId = el.getAttribute('data-testid');
-  if (testId && document.querySelectorAll(`[data-testid="${CSS.escape(testId)}"]`).length === 1) {
+  if (testId && deepAll(document, `[data-testid="${CSS.escape(testId)}"]`).length === 1) {
     // Name it the way a person would: its label, or its text without the values that change.
     const name = collapse((accessibleName(el) || text).replace(/[-−–+]?\s?[$€£¥]?\s?\d[\d.,]*%?/g, ' '), 30);
     return { code: `page.getByTestId(${q(testId)})`, description: name && !looksVolatile(name) ? `“${name}” (${testId})` : testId, text };
@@ -364,19 +368,21 @@ export function buildLocator(el: Element, opts: { cheap?: boolean; check?: strin
     }
   }
 
-  if (isField(el)) {
+  const editable = editableOf(el) === el;
+  if (isField(el) || editable) {
     // Counted as Playwright finds them: a label or placeholder matches any that contains it (“Password” finds “Show
-    // password” too), unless it is exact. A long label is found by its beginning.
-    const full = labelText(el);
+    // password” too), unless it is exact. A long label is found by its beginning. A rich text editor by its own
+    // label (aria-label), which getByLabel finds too.
+    const full = isField(el) ? labelText(el) : collapse(el.getAttribute('aria-label'), 60);
     const label = full.replace(/…$/, '');
     if (label) {
-      const by = (exact: boolean) => Array.from(document.querySelectorAll('input, textarea, select, [aria-label]')).filter((f) => sameWords(labelText(f) || f.getAttribute('aria-label') || '', label, exact)).length;
+      const by = (exact: boolean) => deepAll(document, 'input, textarea, select, [aria-label]').filter((f) => sameWords(labelText(f) || f.getAttribute('aria-label') || '', label, exact)).length;
       if (by(false) === 1) return { code: `page.getByLabel(${q(label)})`, description: `the “${label}” field`, text };
       if (label === full && by(true) === 1) return { code: `page.getByLabel(${q(label)}, { exact: true })`, description: `the “${label}” field`, text };
     }
     const ph = el.getAttribute('placeholder');
     if (ph) {
-      const by = (exact: boolean) => Array.from(document.querySelectorAll('[placeholder]')).filter((f) => sameWords(f.getAttribute('placeholder') ?? '', ph, exact)).length;
+      const by = (exact: boolean) => deepAll(document, '[placeholder]').filter((f) => sameWords(f.getAttribute('placeholder') ?? '', ph, exact)).length;
       if (by(false) === 1) return { code: `page.getByPlaceholder(${q(ph)})`, description: `the “${ph}” field`, text };
       if (by(true) === 1) return { code: `page.getByPlaceholder(${q(ph)}, { exact: true })`, description: `the “${ph}” field`, text };
     }
@@ -384,7 +390,7 @@ export function buildLocator(el: Element, opts: { cheap?: boolean; check?: strin
 
   // Counting matches by text walks the whole page: skipped when the caller can't afford it on a large page.
   const affordable = !opts.cheap || document.getElementsByTagName('*').length < 2500;
-  if (affordable && text && text.length <= 40 && !isField(el)) {
+  if (affordable && text && text.length <= 40 && !isField(el) && !editable) {
     const open = numbersOpen(text);
     if (open && keep(open) && byText(document.body, open).length === 1) return { code: `page.getByText(${open.code})`, description: `“${text}”`, text };
     if (!looksVolatile(text) && keep(text) && byText(document.body, text).length === 1) return { code: `page.getByText(${q(text)}, { exact: true })`, description: `“${text}”`, text };

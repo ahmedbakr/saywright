@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { E2E_SHOP, expectIsland, openStudio, resetAll, store } from './helpers';
+import { E2E_SHOP, expectIsland, openStudio, resetAll, runToEnd, store } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -165,15 +165,15 @@ test('a test changed after it failed doesn’t pass as verified: the bug is stil
   await say(page, app.getByTestId('summary-total'), 'this should show $80.80');
   await page.getByRole('button', { name: 'Generate test' }).first().click();
   await expectIsland(page, /Test saved to tests\/saywright\//);
-  await page.getByRole('button', { name: 'Run it' }).click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);
 
   // Someone (or an AI asked for something else) makes the test expect what the bug shows.
   const spec = path.join(E2E_SHOP, await store<string>(page, 's.recorder.spec.path'));
   fs.writeFileSync(spec, fs.readFileSync(spec, 'utf8').replace("toContainText('$80.80')", "toContainText('$78.40')"));
-  await page.evaluate(() => (window as unknown as { __saywright: { runTest(): Promise<void> } }).__saywright.runTest());
+  await runToEnd(page, () => page.evaluate(() => (window as unknown as { __saywright: { runTest(): Promise<void> } }).__saywright.runTest()));
   await expectIsland(page, /Couldn’t verify\. The test changed since it failed/);
   // Said once: the next run judges the test as it is now.
-  await page.evaluate(() => (window as unknown as { __saywright: { runTest(): Promise<void> } }).__saywright.runTest());
+  await runToEnd(page, () => page.evaluate(() => (window as unknown as { __saywright: { runTest(): Promise<void> } }).__saywright.runTest()));
   await expectIsland(page, /Test passed in/);
 });

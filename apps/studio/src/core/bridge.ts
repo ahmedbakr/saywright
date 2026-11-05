@@ -257,7 +257,7 @@ export class BridgeClient {
    */
   async replay(
     locator: string,
-    step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] },
+    step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean },
     read = false,
     like?: { tag: string; name: string; text: string; shape?: string },
     timeout = 5000,

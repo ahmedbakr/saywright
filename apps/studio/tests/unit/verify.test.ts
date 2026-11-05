@@ -59,6 +59,12 @@ describe('replay and verify', () => {
     expect(press).toMatchObject({ kind: 'click', like: { tag: 'button', name: 'IconButton', text: '', shape: 'button.icon#abc' } });
   });
 
+  it('a choice of an option that says the same as another is a step with its value, to be played back by it', () => {
+    const list = { src: 'src/Ship.tsx:4:5', name: 'select', tag: 'select', role: 'combobox', label: 'Shipping', text: 'Standard', rect: [0, 0, 120, 24] as [number, number, number, number], locator: "page.getByLabel('Shipping')" };
+    const a = analyze(meta('d'), [page, { seq: ++seq, t: at(500), page: 'p', type: 'change', el: list, value: 'Standard', options: ['Standard'], values: ['std-us'], byValue: true }] as unknown as StoredEvent[], [], []);
+    expect(a.steps.at(-1)).toMatchObject({ kind: 'fill', select: ['Standard'], values: ['std-us'], byValue: true });
+  });
+
   it('keys a problem the same way across runs: ids and numbers vary, a failing request fails with any status', () => {
     expect(normKey('net:POST /api/coupon/123:500')).toBe(normKey('net:POST /api/coupon/987:502'));
     // A session analysed before ids became placeholders still matches a replay analysed after.

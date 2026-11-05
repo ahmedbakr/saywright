@@ -84,10 +84,13 @@ function step(v: unknown, i: number): RecordedStep {
   if (select) out.select = select;
   const values = texts(o, 'values', what);
   if (values) out.values = values;
-  if (o.checked !== undefined && o.checked !== null) {
-    if (typeof o.checked !== 'boolean') throw refuse(`${what}: checked must be true or false, not ${shown(o.checked)}.`);
-    out.checked = o.checked;
+  for (const flag of ['checked', 'byValue'] as const) {
+    const v = o[flag];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'boolean') throw refuse(`${what}: ${flag} must be true or false, not ${shown(v)}.`);
+    out[flag] = v;
   }
+  if (out.byValue && !out.values?.length) throw refuse(`${what} chooses by value, and names no values.`);
   return out;
 }
 

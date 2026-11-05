@@ -99,6 +99,19 @@ describe('generateSpec', () => {
     expect(code).toContain("test('shipping menu should have Express chosen'");
   });
 
+  it('chooses by value an option that says the same as another of its list (“Standard” twice): by what it says, the first would be chosen', () => {
+    const code = generateSpec({
+      startUrl: 'http://localhost:5174/',
+      steps: [
+        { kind: 'fill', locator: "page.getByLabel('Shipping')", value: 'std-us', select: ['Standard'], values: ['std-us'], byValue: true, description: 'Choose “Standard” in the “Shipping” menu' },
+        { kind: 'fill', locator: "page.getByLabel('Rooms')", value: 'a', select: ['Twin', 'Twin'], values: ['a', 'b'], byValue: true, description: 'Choose “Twin”, “Twin”' },
+      ],
+      expectations: [{ locator: "page.getByTestId('chosen')", description: 'the chosen shipping', expected: 'std-us', actual: 'std-us' }],
+    });
+    expect(code).toContain("await page.getByLabel('Shipping').selectOption({ value: 'std-us' });");
+    expect(code).toContain("await page.getByLabel('Rooms').selectOption([{ value: 'a' }, { value: 'b' }]);");
+  });
+
   it('checks a field by its value, not its text', () => {
     const code = generateSpec({ ...input, expectations: [{ locator: "page.getByLabel('Quantity')", description: 'the quantity', expected: '2.5', actual: '1', field: 'value' }] });
     expect(code).toContain("await expect(page.getByLabel('Quantity')).toHaveValue(new RegExp('2\\\\.5'));");

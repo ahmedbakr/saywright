@@ -1,5 +1,5 @@
 import { MASK, maskSecrets, type RecordedAction } from '../protocol';
-import { collapse, isField, isSecretField, secretNameOf } from './dom';
+import { collapse, editableOf, editedText, isField, isSecretField, secretNameOf } from './dom';
 import { EnterSubmits } from './forms';
 import { buildLocator } from './locator';
 
@@ -23,17 +23,26 @@ const isCombobox = (el: Element) => el.getAttribute('role') === 'combobox' || el
 /** What an option is called: its label, else its text. */
 const optionName = (o: HTMLOptionElement) => collapse(o.label || o.text, 80);
 
+/** The element an event happened on, also inside an open shadow root (where the page sees only the root's host). */
+function targetOf(e: Event): Element | null {
+  const t = e.composedPath()[0] ?? e.target;
+  return t instanceof Element ? t : null;
+}
+
 /**
  * Records what the user does in the app as Playwright steps: clicks, text
- * entry (one `fill` per field, flushed on change, blur or Enter), choices in
- * lists (every option chosen, in a list that takes several) and Enter. A
- * secret (a password, a card number…) is recorded by its name alone: what was
- * typed never leaves the page.
+ * entry (one `fill` per field, flushed on change, blur or Enter; a rich text
+ * editor's text too), choices in lists (every option chosen, in a list that
+ * takes several) and Enter, in open shadow roots as well. A secret (a password,
+ * a card number…) is recorded by its name alone: what was typed never leaves
+ * the page.
  */
 export class Recorder {
   private on = false;
   private pendingFill = new Map<Element, ReturnType<typeof setTimeout>>();
   private submits = new EnterSubmits();
+  /** Shadow roots listened to: a change in one (a box ticked, an option chosen) never reaches the document. */
+  private roots = new WeakSet<ShadowRoot>();
 
   constructor(private emit: Emit) {
     document.addEventListener('pointerdown', this.onPointerDown, true);
@@ -55,22 +64,34 @@ export class Recorder {
     for (const el of Array.from(this.pendingFill.keys())) this.flush(el);
   }
 
+  /** Listen for changes in the shadow root `el` is in, once: they don't reach the document. */
+  private watch(el: Element | null): void {
+    const root = el?.getRootNode();
+    if (!(root instanceof ShadowRoot) || this.roots.has(root)) return;
+    this.roots.add(root);
+    root.addEventListener('change', this.onChange, true);
+  }
+
   private onFocus = (e: FocusEvent) => {
+    const t = targetOf(e);
+    this.watch(t);
     // A password field is remembered as one before anything is typed, should “show password” make it a text field.
-    if (this.on && e.target instanceof Element && isField(e.target)) isSecretField(e.target);
+    if (this.on && t && isField(t)) isSecretField(t);
   };
 
   /** What was being typed comes before what is clicked now: a combobox's suggestion keeps the focus in its field. */
   private onPointerDown = (e: PointerEvent) => {
+    const t = targetOf(e);
+    this.watch(t);
     if (!this.on) return;
-    const t = e.target instanceof Node ? e.target : null;
     for (const el of Array.from(this.pendingFill.keys())) if (!t || !el.contains(t)) this.flush(el);
   };
 
   private onClick = (e: Event) => {
     if (!this.on) return;
-    const t = e.target instanceof Element ? e.target : null;
+    const t = targetOf(e);
     if (!t) return;
+    if (editableOf(t)) return; // a click into a rich text editor: its `fill` is the step
     const el = t.closest(INTERACTIVE) ?? t;
     if (isTextField(el) || isPicked(el)) return; // focusing a field is implied by `fill`
     if (isToggle(el)) return; // a box or a radio: its change is the step (check)
@@ -83,9 +104,12 @@ export class Recorder {
   };
 
   private onInput = (e: Event) => {
-    if (!this.on) return;
-    const el = e.target;
-    if (!(el instanceof Element) || !isTextField(el)) return;
+    const t = targetOf(e);
+    this.watch(t);
+    if (!this.on || !t) return;
+    // What is typed into a rich text editor is the whole editor's text.
+    const el = isTextField(t) ? t : editableOf(t);
+    if (!el) return;
     const prev = this.pendingFill.get(el);
     if (prev) clearTimeout(prev);
     this.pendingFill.set(el, setTimeout(() => this.flush(el), 1200));
@@ -93,8 +117,8 @@ export class Recorder {
 
   private onChange = (e: Event) => {
     if (!this.on) return;
-    const el = e.target;
-    if (!(el instanceof Element)) return;
+    const el = targetOf(e);
+    if (!el) return;
     if (isTextField(el)) this.flush(el);
     else if (isPicked(el)) {
       // A date typed a part at a time changes as each part is done: its last value is the step.
@@ -110,12 +134,16 @@ export class Recorder {
       const chosen = Array.from(el.selectedOptions);
       const names = chosen.map(optionName);
       const said = names.length ? names.map((n) => `“${n}”`).join(', ') : 'nothing';
+      // Two options that say the same (“Standard”, “Standard”): only their values tell them apart.
+      const all = Array.from(el.options, optionName);
+      const byValue = names.some((n) => all.filter((x) => x === n).length > 1);
       this.emit({
         kind: 'fill',
         locator: loc.code,
         value: chosen[0]?.value ?? '',
         select: names,
         values: chosen.map((o) => o.value),
+        ...(byValue ? { byValue: true } : {}),
         description: `Choose ${said} in ${loc.description}`,
       });
     }
@@ -123,16 +151,17 @@ export class Recorder {
 
   private onBlur = (e: Event) => {
     if (!this.on) return;
-    const el = e.target;
-    if (el instanceof Element && this.pendingFill.has(el)) this.flush(el);
+    const t = targetOf(e);
+    const el = t && (this.pendingFill.has(t) ? t : editableOf(t));
+    if (el && this.pendingFill.has(el)) this.flush(el);
   };
 
   private onKeyDown = (e: KeyboardEvent) => {
     if (!this.on) return;
     if (KEY_NAME[e.key]) {
       // Choosing from a combobox's list with the keyboard: what was typed, then each key.
-      const el = e.target;
-      if (!(el instanceof Element) || !isCombobox(el)) return;
+      const el = targetOf(e);
+      if (!el || !isCombobox(el)) return;
       if (this.pendingFill.has(el)) this.flush(el);
       const loc = buildLocator(el);
       this.emit({ kind: 'press', locator: loc.code, key: e.key, description: `Press ${KEY_NAME[e.key]} in ${loc.description}` });
@@ -140,8 +169,8 @@ export class Recorder {
     }
     if (e.key !== 'Enter') return;
     this.submits.keydown(e);
-    const el = e.target;
-    if (!(el instanceof Element) || !isField(el)) return;
+    const el = targetOf(e);
+    if (!el || !isField(el)) return;
     if (this.pendingFill.has(el)) this.flush(el);
     const loc = buildLocator(el);
     this.emit({ kind: 'press', locator: loc.code, key: 'Enter', description: `Press Enter in ${loc.description}` });
@@ -154,6 +183,14 @@ export class Recorder {
     if (isPicked(el)) {
       const loc = buildLocator(el);
       this.emit({ kind: 'fill', locator: loc.code, value: el.value, description: `Set ${loc.description} to “${collapse(el.value, 60)}”` });
+      return;
+    }
+    const editor = editableOf(el);
+    if (editor === el) {
+      // A rich text editor: its text as a whole, as fill puts it back (any card number or key in it masked).
+      const loc = buildLocator(editor);
+      const value = maskSecrets(editedText(editor));
+      this.emit({ kind: 'fill', locator: loc.code, value, description: `Type “${collapse(value, 60)}” into ${loc.description}` });
       return;
     }
     if (!isTextField(el)) return;
