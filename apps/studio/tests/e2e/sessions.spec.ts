@@ -68,7 +68,9 @@ test('a session in the studio: what you did and said, linked to what you pointed
   const narrated = await canNarrate();
   // The narration plays from the moment the microphone opens: no countdown before it (see countdown.spec.ts).
   await page.addInitScript(() => localStorage.setItem('saywright.session.prefs', JSON.stringify({ lang: 'auto', mic: true, screen: true, video: true, countdown: 0 })));
-  await openStudio(page);
+  // The panel closed, so the app has the studio's whole width: where the screen is shared from a headless browser on a
+  // Mac, the app inside lays itself out as wide as the screen, and part of it would sit under the panel.
+  await openStudio(page, { onboarded: true, theme: 'dark', ui: { panelOpen: false, panelTab: 'changes', device: 'fill', commitOnKeep: false } });
   await page.getByRole('button', { name: 'Record session', exact: true }).click();
   await page.getByRole('radio', { name: 'Both' }).click();
   await page.getByPlaceholder('What are you testing? (optional)').fill('Coupon on checkout');

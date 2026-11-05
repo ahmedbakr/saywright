@@ -346,14 +346,18 @@ test('right after a typed request, Enter keeps and Ctrl Z undoes from the comman
   await bar.fill('rename to Use code');
   await bar.press('Enter');
   // The island says which keys decide, and they work with focus still in the empty command bar.
-  await expectIsland(page, new RegExp(`Rename.*${literally((await keyNames(page)).keepUndo)}`));
+  const decide = new RegExp(`Rename.*${literally((await keyNames(page)).keepUndo)}`);
+  await expectIsland(page, decide);
   await expect(bar).toBeFocused();
   await bar.press('Control+z');
   await expectIsland(page, /Undone/);
   expect(shopFile('src/components/CouponField.tsx')).toBe(before);
   await bar.fill('rename to Use code');
   await bar.press('Enter');
-  await expectIsland(page, /Rename/);
+  // The new preview is there, and the bar emptied (the island's word about the undone one also names a rename).
+  await expect.poll(() => store<number>(page, "s.changes.filter((c) => c.status === 'preview').length")).toBe(1);
+  await expect(bar).toHaveValue('');
+  await expectIsland(page, decide);
   await bar.press('Enter');
   await expectIsland(page, /Kept/);
   expect(await store<string>(page, 's.changes[0].status')).toBe('kept');

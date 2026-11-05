@@ -3,7 +3,8 @@
 // (projects/<name>/usage.json) says where its sources are, whether it needs `npm install`, and whether it has a dev
 // server (Vite) or is a folder the studio serves itself. Writes where everything runs to .usage-work/projects.json.
 //
-// No AI unless EVAL_AI=real: every AI key is taken out of the studio's environment, so a run costs nothing.
+// No AI unless EVAL_AI=real: every AI key is taken out of the studio's environment, and every AI it would find on this
+// computer (a plan's app, a model served locally) is turned off, so a run costs nothing and uses no AI at all.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,8 +26,15 @@ fs.mkdirSync(WORK, { recursive: true });
 process.env.SAYWRIGHT_HOME = path.join(STUDIO, 'tests/.usage-home');
 fs.rmSync(process.env.SAYWRIGHT_HOME, { recursive: true, force: true });
 delete process.env.SAYWRIGHT_AI;
-if (process.env.EVAL_AI !== 'real')
+const offline = process.env.EVAL_AI !== 'real';
+if (offline) {
   for (const k of Object.keys(process.env)) if (/^(ANTHROPIC|OPENAI|GEMINI|GOOGLE|OPENROUTER|GROQ|DEEPSEEK|MISTRAL|XAI)_/.test(k)) delete process.env[k];
+  // What the studio finds by itself (server/ai/connections.ts: a plan's app, a key in .env.local or a CLI profile, a
+  // local server), turned off as a person would in Settings → AI.
+  fs.mkdirSync(process.env.SAYWRIGHT_HOME, { recursive: true });
+  const off = ['claude-code', 'codex', 'gemini-cli', 'anthropic', 'openai', 'gemini', 'ollama', 'lmstudio'];
+  fs.writeFileSync(path.join(process.env.SAYWRIGHT_HOME, 'ai.json'), JSON.stringify({ off }));
+}
 
 const servers = [];
 const projects = [];
@@ -63,11 +71,21 @@ fs.writeFileSync(path.join(WORK, 'projects.json'), JSON.stringify(projects, null
 
 const studio = await createServer({ root: STUDIO, configFile: path.join(STUDIO, 'vite.config.ts'), server: { port: STUDIO_PORT, strictPort: true }, logLevel: 'warn', clearScreen: false });
 await studio.listen();
-console.log(`usage: studio on http://localhost:${STUDIO_PORT} (${process.env.EVAL_AI === 'real' ? 'your AI' : 'no AI'}), ${projects.length} projects`);
 
-const stop = async () => {
+const stop = async (code = 0) => {
   await Promise.allSettled([studio.close(), ...servers.map((s) => s.close())]);
-  process.exit(0);
+  process.exit(code);
 };
-process.on('SIGINT', stop);
-process.on('SIGTERM', stop);
+if (offline) {
+  // And checked: a run that says it has no AI has none the studio could use.
+  const { connections } = await (await fetch(`http://localhost:${STUDIO_PORT}/api/ai?refresh=1`)).json();
+  const usable = connections.filter((c) => !c.disabled && c.status === 'ready');
+  if (usable.length) {
+    console.error(`usage: no AI was asked for, but the studio could use ${usable.map((c) => c.label).join(', ')}`);
+    await stop(1);
+  }
+}
+console.log(`usage: studio on http://localhost:${STUDIO_PORT} (${offline ? 'no AI' : 'your AI'}), ${projects.length} projects`);
+
+process.on('SIGINT', () => stop());
+process.on('SIGTERM', () => stop());
