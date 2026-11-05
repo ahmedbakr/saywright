@@ -88,9 +88,18 @@ function collect(suite: PwSuite, out: PwResult[][]): void {
 
 export function parseFailure(message: string): { expected?: string; received?: string } {
   const clean = message.replace(ANSI, '');
-  const expected = /Expected (?:substring|string|pattern|value)?:?\s*"?(.*?)"?\s*$/m.exec(clean)?.[1];
+  const said = /Expected (?:substring|string|pattern|value)?:?\s*"?(.*?)"?\s*$/m.exec(clean)?.[1];
   const received = /Received (?:string|value)?:?\s*"?(.*?)"?\s*$/m.exec(clean)?.[1];
+  const expected = said && plainPattern(said);
   return { expected, received: focusOn(received, expected) };
+}
+
+/** A pattern a test wrote for a value as said (/80\.80/): that value, as it was said. Any other text, as it is. */
+function plainPattern(s: string): string {
+  const m = /^\/(.*)\/[dgimsuy]*$/.exec(s);
+  if (!m) return s;
+  const text = m[1].replace(/\\(.)/g, '$1');
+  return text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&') === m[1] ? text : s;
 }
 
 const NEEDS_BROWSER = /Executable doesn't exist|download new browsers|npx playwright install/i;

@@ -104,6 +104,18 @@ describe('generateSpec', () => {
     expect(code).toContain("await expect(page.getByLabel('Quantity')).toHaveValue(new RegExp('2\\\\.5'));");
   });
 
+  it('checks a long value as text (a pattern that long is more than a browser compiles), and keeps the file readable', () => {
+    const long = `${'Dear team, '.repeat(9_000)}thanks.`;
+    const code = generateSpec({ ...input, expectations: [{ locator: "page.getByLabel('Notes')", description: 'the notes', expected: long, actual: long, field: 'value' }] });
+    expect(code).toContain(`await expect.poll(() => page.getByLabel('Notes').inputValue()).toContain(${jsString(long)});`);
+    expect(code).not.toContain('new RegExp');
+    // What the field showed is a comment, cut short; what it should hold is checked whole.
+    const comment = code.split('\n').find((l) => l.includes('// You said'))!;
+    expect(comment.length).toBeLessThan(600);
+    expect(code.split('\n').find((l) => l.startsWith('test('))!.length).toBeLessThan(300);
+    expect(() => parse(code, { sourceType: 'module', plugins: ['typescript'] })).not.toThrow();
+  });
+
   it('checks or unchecks a box, rather than filling it', () => {
     const code = generateSpec({
       ...input,
@@ -281,6 +293,14 @@ describe('parseFailure', () => {
   it('pulls expected and received values out of Playwright errors', () => {
     const msg = 'Error: expect(locator).toContainText(expected) failed\n\nLocator: getByTestId(\'summary-total\')\nExpected substring: "$80.80"\nReceived string:    "Total$78.40"\n';
     expect(parseFailure(msg)).toEqual({ expected: '$80.80', received: '$78.40' });
+  });
+
+  it('says a field’s expected value as it was said, not as the pattern the test checks it with', () => {
+    const value = 'Error: expect(locator).toHaveValue(expected) failed\n\nLocator: getByLabel(\'Total\')\nExpected pattern: /80\\.80 \\(incl\\. VAT\\)/\nReceived string:  "$78.40"\n';
+    expect(parseFailure(value)).toEqual({ expected: '80.80 (incl. VAT)', received: '$78.40' });
+    // A page's address is a pattern of its own: said as it is.
+    const url = 'Expected pattern: /^[a-z]+:\\/\\/[^/]+\\/checkout\\/?(?:[?#]|$)/\nReceived string: "http://localhost:5174/cart"';
+    expect(parseFailure(url).expected).toBe('/^[a-z]+:\\/\\/[^/]+\\/checkout\\/?(?:[?#]|$)/');
   });
 
   it('shows the part of a long received text that looks like the expectation', () => {

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Plugin } from 'vite';
 import { AI_TASKS, type AiEffort, type AiTask, type Budget } from '../shared/ai.ts';
-import type { Expectation, IntentResult, NextStep, RecordedStep, RefInfo, StatusResponse } from '../shared/api.ts';
+import type { IntentResult, NextStep, RefInfo, StatusResponse } from '../shared/api.ts';
 import { AppManager, appAddress } from './apps/manager.ts';
 import { envFor } from './apps/registry.ts';
 import { appRoutes } from './apps/routes.ts';
@@ -43,6 +43,7 @@ import type { SpeechLang } from './speech/catalog.ts';
 import { SpeechService } from './speech/service.ts';
 import { sanitizeSteps, writeSpec } from './tests/generate.ts';
 import { installBrowser, runSpec } from './tests/run.ts';
+import { validChecks, validSteps } from './tests/validate.ts';
 import { secretKey, TestSecrets } from './tests/secrets.ts';
 
 /** Connect-style middleware, as Vite and the standalone server mount it. */
@@ -451,18 +452,22 @@ export async function createStudioApi(layout: StudioLayout) {
   const runsDir = (w: { app: { id: string } }) => path.join(dataDir, 'test-runs', w.app.id);
 
   router.post('/tests/generate', (req) => {
-    const body = (req.body ?? {}) as { name?: string; startUrl?: string; steps?: RecordedStep[]; expectations?: Expectation[]; replace?: { path?: unknown; code?: unknown } };
-    if (!Array.isArray(body.expectations) || !body.expectations.length) throw new HttpError(400, 'Say what you expected first');
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as { name?: unknown; startUrl?: unknown; steps?: unknown; expectations?: unknown; replace?: { path?: unknown; code?: unknown } };
+    // Every step and check, or none: a test written from part of them would pass without checking the rest.
+    const steps = validSteps(body.steps);
+    const expectations = validChecks(body.expectations, steps.length);
+    const name = body.name === undefined || body.name === null ? undefined : asString(body.name, 'name', 300);
+    const startUrl = body.startUrl === undefined || body.startUrl === null ? undefined : asString(body.startUrl, 'startUrl', 8000);
     const { project, metrics } = ws();
     if (!project.hasCode) throw new HttpError(409, 'A test is saved with your app’s code, and this app has none on this computer: link its folder to write tests.', 'no-code');
     const spec = writeSpec(project, {
-      name: body.name,
-      startUrl: typeof body.startUrl === 'string' ? body.startUrl : project.url,
+      name,
+      startUrl: startUrl ?? project.url,
       // Whatever sent them, secrets go in as names only.
-      steps: sanitizeSteps(Array.isArray(body.steps) ? body.steps.slice(0, 100) : []),
-      expectations: body.expectations.slice(0, 20),
+      steps: sanitizeSteps(steps),
+      expectations,
     }, typeof body.replace?.path === 'string' && typeof body.replace.code === 'string' ? { path: body.replace.path, code: body.replace.code } : undefined);
-    metrics.record({ type: 'test-generated', path: spec.path, steps: body.steps?.length ?? 0 });
+    metrics.record({ type: 'test-generated', path: spec.path, steps: steps.length, checks: expectations.length });
     return spec;
   });
 

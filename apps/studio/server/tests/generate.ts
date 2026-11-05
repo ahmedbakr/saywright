@@ -104,10 +104,12 @@ function testTitle(input: GenerateInput): string {
   if (input.name?.trim()) return input.name.trim();
   const e = input.expectations[0];
   if (!e) return 'narrated flow';
-  return `${e.description.replace(/^the /i, '')} ${shouldBe(e, plain)}`;
+  return `${e.description.replace(/^the /i, '')} ${shouldBe({ ...e, expected: brief(e.expected) }, plain)}`;
 }
 
 const plain = (s: string) => s;
+/** A value in words: at most 200 characters of it. */
+const brief = (s: string) => (s.length > 200 ? `${s.slice(0, 200)}…` : s);
 
 /** A secret's name as the test reads it: capitals, digits and underscores (PASSWORD, CARD_NUMBER). */
 const secretKey = (name: string) => secretEnvName(name).slice(SECRET_ENV_PREFIX.length);
@@ -199,13 +201,22 @@ function optionsCode(step: RecordedStep): string {
 }
 
 /**
- * A check, as code: text for most things, the value for a field, whether a checkbox is checked, the options chosen in
- * a list (one of them says it, however many are chosen).
+ * How long a field's expected value may be and still be checked as a pattern (which says where the field was and what
+ * it held when it fails). A longer one is checked as text: a pattern that long is more than a browser will compile.
+ */
+const PATTERN_MAX = 1000;
+
+/**
+ * A check, as code: text for most things, the value for a field (holding what was said), whether a checkbox is
+ * checked, the options chosen in a list (one of them says it, however many are chosen).
  */
 function checkCode(e: Expectation): string {
   const loc = safeLocator(e.locator);
   if (e.field === 'checked') return `await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`;
-  if (e.field === 'value') return `await expect(${loc}).toHaveValue(new RegExp(${q(escapeRe(e.expected))}));`;
+  if (e.field === 'value') {
+    if (e.expected.length > PATTERN_MAX) return `await expect.poll(() => ${loc}.inputValue()).toContain(${q(e.expected)});`;
+    return `await expect(${loc}).toHaveValue(new RegExp(${q(escapeRe(e.expected))}));`;
+  }
   if (e.field === 'select') return `await expect(${loc}.locator('option:checked')).toContainText([${q(e.expected)}]);`;
   return `await expect(${loc}).toContainText(${q(e.expected)});`;
 }
@@ -247,9 +258,11 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
   }
   // What the page showed goes into the file only masked: a key or a card number on screen is no part of a test.
   const check = (e: Expectation) => {
-    const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : `it showed ${e.actual || 'nothing'}`;
-    step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} ${shouldBe(e, plain)}`), [
-      `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(e, plain)} (${was}).`))}`,
+    // In words, a long value is cut short; the check itself holds all of it.
+    const said = { ...e, expected: brief(e.expected) };
+    const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : `it showed ${brief(e.actual) || 'nothing'}`;
+    step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} ${shouldBe(said, plain)}`), [
+      `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(said, plain)} (${was}).`))}`,
       checkCode(e),
     ]);
   };
