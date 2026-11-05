@@ -75,7 +75,7 @@ test('a password typed while writing a test never leaves the app, and the test t
   expect(spec).toContain("await page.getByLabel('Password', { exact: true }).fill(secret('PASSWORD'));");
 
   // Without the secret, the test doesn't run with an empty password: it asks for it.
-  await page.getByRole('button', { name: 'Run it' }).click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /This test types PASSWORD/);
   await page.getByRole('button', { name: 'Open the Test tab' }).click();
   const secrets = page.locator('div', { has: page.getByText('PASSWORD', { exact: true }) }).filter({ hasText: 'Not set' }).last();
@@ -85,7 +85,7 @@ test('a password typed while writing a test never leaves the app, and the test t
   await expect(page.getByText('Saved', { exact: true })).toBeVisible();
 
   // With it, the test signs in, every step and the check ran: verified.
-  await page.getByRole('button', { name: 'Run test' }).first().click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run test' }).first().click());
   await expectIsland(page, /Test passed in [\d.]+ s: all \d+ steps and 1 check ran/);
   expect(await store<boolean>(page, 's.recorder.run.verified')).toBe(true);
 

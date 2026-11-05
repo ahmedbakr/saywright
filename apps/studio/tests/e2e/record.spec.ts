@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { E2E_SHOP, appPoint, expectIsland, openStudio, resetAll, shopFile, store } from './helpers';
+import { E2E_SHOP, appPoint, expectIsland, openStudio, resetAll, runToEnd, shopFile, store } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -32,10 +32,11 @@ test('narrate a bug → Playwright test → failing → fixed by Claude → pass
   const specPath = await store<string>(page, 's.recorder.spec.path');
   expect(fs.readFileSync(path.join(E2E_SHOP, specPath), 'utf8')).toContain("toContainText('$80.80')");
 
-  await page.getByRole('button', { name: 'Run it' }).click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);
 
-  await page.getByRole('button', { name: /^Fix with / }).first().click();
+  // The fix, then the same test run again with it.
+  await runToEnd(page, () => page.getByRole('button', { name: /^Fix with / }).first().click());
   await expectIsland(page, /The test passes with this fix/);
   expect(shopFile('src/lib/pricing.ts')).toContain('const discount = round2(subtotal * rate);');
   await page.getByRole('button', { name: 'Keep fix' }).click();
@@ -69,7 +70,7 @@ test('a form sent with Enter is one step, and its generated test fails for the r
   expect(spec).toContain(".press('Enter')");
   expect(spec).not.toContain('coupon-apply');
   // It fails on the wrong total, not on a button that is gone once the coupon is applied.
-  await page.getByRole('button', { name: 'Run it' }).click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);
 });
 
@@ -104,6 +105,6 @@ test('a step on one of several identical buttons is written so a test finds the 
   // The check is where it was said: after the last step.
   expect(spec.indexOf('[check 1]')).toBeGreaterThan(spec.indexOf("test.step('[8] "));
   // Playwright follows every step to the wrong total.
-  await page.getByRole('button', { name: 'Run it' }).click();
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);
 });
