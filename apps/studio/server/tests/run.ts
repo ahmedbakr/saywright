@@ -103,6 +103,7 @@ function plainPattern(s: string): string {
 }
 
 const NEEDS_BROWSER = /Executable doesn't exist|download new browsers|npx playwright install/i;
+const FOCUSED = 'This test file has test.only (or describe.only): a run would leave its other tests out, so the studio doesn’t run it. Remove .only and run it again.';
 /** A step or check of a generated test, by the mark its title starts with. */
 const MARK = /^\[(\d+|check \d+)\] /;
 
@@ -139,7 +140,14 @@ export function judge(
       .filter((s) => MARK.test(s.title))
       .map((s) => ({ title: mask(s.title)!, check: /^\[check /.test(s.title), ok: !s.error, error: s.error?.message ? mask(s.error.message.replace(ANSI, '').slice(0, 1200)) : undefined })),
   );
-  const seen = new Set(steps.map((s) => MARK.exec(s.title)![1]));
+  // Each mark as often as the code has it: a mark written twice (two tests that each have a [1]) ran twice.
+  const ran = new Map<string, number>();
+  for (const s of steps) {
+    const m = MARK.exec(s.title)![1];
+    ran.set(m, (ran.get(m) ?? 0) + 1);
+  }
+  const wanted = new Map<string, number>();
+  for (const m of marks) wanted.set(m, (wanted.get(m) ?? 0) + 1);
   const isCheck = (m: string) => m.startsWith('check ');
   const counts = {
     steps: marks.filter((m) => !isCheck(m)).length,
@@ -156,7 +164,7 @@ export function judge(
       return { status: 'failed', failedAt: failing.check ? 'check' : 'step', message: why.slice(0, 1200), steps, counts };
     }
     if (all.every((r) => r.status === 'skipped')) return { status: 'error', message: 'The test was skipped, so it shows nothing.', steps, counts };
-    const missing = marks.filter((m) => !seen.has(m));
+    const missing = [...wanted].filter(([m, n]) => (ran.get(m) ?? 0) < n).map(([m]) => m);
     if (!marks.length) return { status: 'passed', verified: false, unverified: 'This test has no numbered steps (an older version of Saywright wrote it, or it was written by hand), so a pass can’t show that each step and check ran. Generate it again.', steps, counts };
     if (!counts.checks) return { status: 'passed', verified: false, unverified: 'This test has no check, so a pass only shows its steps ran.', steps, counts };
     if (missing.length) return { status: 'passed', verified: false, unverified: `The test passed, but ${missing.length === 1 ? 'a step' : `${missing.length} steps`} of it didn’t report running (${missing.map((m) => `[${m}]`).join(', ')}).`, steps, counts };
@@ -231,6 +239,8 @@ export default {
   outputDir: ${js(outputDir)},
   retries: 0,
   workers: 1,
+  // A focused test (test.only) leaves the rest of the file out: refused, so a file is only ever judged whole.
+  forbidOnly: true,
   timeout: 60000,
   expect: { timeout: 10000 },
   reporter: [['json', { outputFile: ${js(reportFile)} }]],
@@ -264,6 +274,7 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
     const finals = runs.filter((r) => r.length).map((r) => r[r.length - 1]);
     if (!finals.length) {
       const msg = mask(report.errors?.[0]?.message?.replace(ANSI, '') ?? `Playwright exited with code ${exit}`)!;
+      if (/forbidOnly|focused with '\.only'/.test(msg)) return { status: 'error', durationMs, hash, message: FOCUSED };
       return { status: 'error', durationMs, hash, message: msg.slice(0, 600) };
     }
     const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) });

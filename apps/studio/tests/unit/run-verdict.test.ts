@@ -28,6 +28,11 @@ describe('a real run', () => {
     'caught.spec.ts': "test('caught', async () => {\n  await test.step('[1] start', async () => {});\n  try {\n    await test.step('[check 1] broken', async () => expect(1).toBe(2));\n  } catch {}\n});\n",
     'second.spec.ts': "test('first', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\ntest('second', async () => expect(1).toBe(2));\n",
     'good.spec.ts': "test('good', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\n",
+    // A passing test focused, the failing one after it left out of the run.
+    'focused.spec.ts': "test.only('first', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\ntest('second', async () => expect(1).toBe(2));\n",
+    'focused-marks.spec.ts': "test.only('first', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\ntest('second', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] broken', async () => expect(1).toBe(2));\n});\n",
+    // The same marks in two tests: the second test's check never runs.
+    'twice.spec.ts': "test('first', async () => {\n  await test.step('[1] start', async () => {});\n  await test.step('[check 1] okay', async () => expect(1).toBe(1));\n});\ntest('second', async () => {\n  await test.step('[1] start', async () => {});\n  if (Date.now() < 0) await test.step('[check 1] never', async () => expect(1).toBe(2));\n});\n",
   });
 
   it('a check that failed inside a caught block fails the run', async () => {
@@ -44,5 +49,19 @@ describe('a real run', () => {
 
   it('a file whose steps and check all pass is verified', async () => {
     expect(await run(p, 'good.spec.ts')).toMatchObject({ status: 'passed', verified: true, counts: { steps: 1, checks: 1, stepsPassed: 1, checksPassed: 1 } });
+  }, 60_000);
+
+  it('a focused test (test.only) is refused, never verified alone: the rest of its file would be left out', async () => {
+    for (const file of ['focused.spec.ts', 'focused-marks.spec.ts']) {
+      const r = await run(p, file);
+      expect(r, file).toMatchObject({ status: 'error', message: expect.stringMatching(/^This test file has test\.only/) });
+      expect(r.verified, file).toBeFalsy();
+    }
+  }, 60_000);
+
+  it('a mark written twice must run twice: a second test whose check never ran doesn’t verify the file', async () => {
+    const r = await run(p, 'twice.spec.ts');
+    expect(r).toMatchObject({ status: 'passed', verified: false, counts: { steps: 2, checks: 2, stepsPassed: 2, checksPassed: 1 } });
+    expect(r.unverified).toMatch(/didn’t report running \(\[check 1\]\)/);
   }, 60_000);
 });
