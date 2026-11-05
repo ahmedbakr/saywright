@@ -4,7 +4,7 @@
  * written in the code: that is only known to the dev server, and moves with every edit above it.
  */
 import { jsString as q, type LocatorInfo } from '../protocol';
-import { accessibleName, collapse, deepAll, editableOf, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
+import { accessibleName, collapse, deepAll, deepLists, editableOf, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
 
 /** Values like "$78.40", "12", "−$19.60" change when the code changes, so they make poor locators. */
 function looksVolatile(s: string): boolean {
@@ -115,17 +115,18 @@ function byRole(scope: ParentNode, role: string, name: string | Pattern | null, 
   const sel = ROLE_SELECTORS[role] ?? `[role="${role}"]`;
   const needle = name === null ? '' : typeof name === 'string' ? squash(name) : name.hint;
   const out: Element[] = [];
-  const all = deepAll(scope, sel);
-  for (let i = 0; i < all.length && out.length < limit; i++) {
-    const el = all[i];
-    // The name comes from these (or a label, for fields; an image's alt or a part's label inside): if none holds the words, it can't match. Costs nothing on a page of thousands.
-    if (name !== null && !isField(el) && !(el instanceof HTMLImageElement) && !el.hasAttribute('aria-labelledby') && !squash(el.textContent).includes(needle) && !squash(el.getAttribute('aria-label')).includes(needle) && !squash(el.getAttribute('title')).includes(needle) && !el.querySelector(NAMED_INSIDE)) continue;
-    if (roleFor(el) !== role) continue;
-    if (name !== null) {
-      const an = accessibleName(el);
-      if (!(typeof name !== 'string' ? name.re.test(an) : exact ? an === name : an.toLowerCase().includes(name.toLowerCase()))) continue;
+  for (const all of deepLists(scope, sel)) {
+    for (let i = 0; i < all.length && out.length < limit; i++) {
+      const el = all[i];
+      // The name comes from these (or a label, for fields; an image's alt or a part's label inside): if none holds the words, it can't match. Costs nothing on a page of thousands.
+      if (name !== null && !isField(el) && !(el instanceof HTMLImageElement) && !el.hasAttribute('aria-labelledby') && !squash(el.textContent).includes(needle) && !squash(el.getAttribute('aria-label')).includes(needle) && !squash(el.getAttribute('title')).includes(needle) && !el.querySelector(NAMED_INSIDE)) continue;
+      if (roleFor(el) !== role) continue;
+      if (name !== null) {
+        const an = accessibleName(el);
+        if (!(typeof name !== 'string' ? name.re.test(an) : exact ? an === name : an.toLowerCase().includes(name.toLowerCase()))) continue;
+      }
+      out.push(el);
     }
-    out.push(el);
   }
   return out;
 }
@@ -151,11 +152,12 @@ function countByRoleAndName(role: string, name: string | Pattern, exact: boolean
 function byText(scope: ParentNode, text: string | Pattern): Element[] {
   const out: Element[] = [];
   const is = typeof text === 'string' ? (t: string) => t === text : (t: string) => text.re.test(t);
-  const all = deepAll(scope, '*');
-  for (let i = 0; i < all.length; i++) {
-    const el = all[i] as HTMLElement;
-    if (typeof text !== 'string' && !squash(el.textContent).includes(text.hint)) continue;
-    if (is(collapse(el.innerText ?? '', 200)) && !Array.from(el.children).some((c) => is(collapse((c as HTMLElement).innerText ?? '', 200)))) out.push(el);
+  for (const all of deepLists(scope, '*')) {
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i] as HTMLElement;
+      if (typeof text !== 'string' && !squash(el.textContent).includes(text.hint)) continue;
+      if (is(collapse(el.innerText ?? '', 200)) && !Array.from(el.children).some((c) => is(collapse((c as HTMLElement).innerText ?? '', 200)))) out.push(el);
+    }
   }
   return out;
 }

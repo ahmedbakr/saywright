@@ -53,10 +53,10 @@ export function shadowRoots(seen?: Node): ShadowRoot[] {
   const root = seen?.getRootNode();
   if (now - shadows.at < 1000 && !(root instanceof ShadowRoot && !shadows.roots.includes(root))) return shadows.roots;
   const roots: ShadowRoot[] = [];
-  const walk = (scope: ParentNode) => {
-    const all = scope.querySelectorAll('*');
-    for (let i = 0; i < all.length; i++) {
-      const open = all[i].shadowRoot;
+  const walk = (scope: Node) => {
+    const walker = document.createTreeWalker(scope, NodeFilter.SHOW_ELEMENT);
+    for (let el = walker.nextNode() as Element | null; el; el = walker.nextNode() as Element | null) {
+      const open = el.shadowRoot;
       if (open) {
         roots.push(open);
         walk(open);
@@ -78,11 +78,20 @@ function within(scope: ParentNode, node: Node): boolean {
   return false;
 }
 
+/**
+ * What `selector` matches in `scope`, and in each open shadow root in it, as lists to go through in place (a page of
+ * thousands of buttons isn't copied for each count).
+ */
+export function deepLists(scope: ParentNode, selector: string): ArrayLike<Element>[] {
+  const lists: ArrayLike<Element>[] = [scope.querySelectorAll(selector)];
+  for (const root of shadowRoots()) if (root !== scope && within(scope, root.host)) lists.push(root.querySelectorAll(selector));
+  return lists;
+}
+
 /** Every element `selector` matches in `scope`, and in the open shadow roots in it: as Playwright's locators find them. */
 export function deepAll(scope: ParentNode, selector: string): Element[] {
-  const out = Array.from(scope.querySelectorAll(selector));
-  for (const root of shadowRoots()) if (root !== scope && within(scope, root.host)) for (const el of Array.from(root.querySelectorAll(selector))) out.push(el);
-  return out;
+  const lists = deepLists(scope, selector);
+  return lists.length === 1 ? Array.from(lists[0]) : lists.flatMap((l) => Array.from(l));
 }
 
 /** The element edited as a whole (contenteditable: a rich text editor) that `el` is in, or null. */
