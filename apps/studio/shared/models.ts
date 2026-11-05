@@ -111,6 +111,17 @@ export const PRESETS: CompatiblePreset[] = [
   { id: 'custom', label: 'Other (OpenAI-compatible)', baseUrl: '', keyUrl: null, note: 'Any server that speaks the OpenAI Chat Completions API.' },
 ];
 
+/**
+ * Models that can answer a request without being picked: those Claude's server-side fallback runs a declined request
+ * on (Claude Opus 5 or Opus 4.8 for Opus 5.5, Claude Sonnet 5 for Sonnet 5.5), at their list prices, so what they
+ * used is counted at their own rates.
+ */
+const SERVED_PRICES: Record<string, Price> = {
+  'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+};
+
 /** What the studio knows about a model: from the catalog for its provider, or the shared table for compatible providers. */
 export function modelInfo(kind: ProviderKind, id: string): ModelInfo | null {
   const known = CATALOG[kind]?.find((m) => m.id === id);
@@ -121,7 +132,7 @@ export function modelInfo(kind: ProviderKind, id: string): ModelInfo | null {
     const m = list?.find((x) => x.id === bare || x.id === id);
     if (m) return { ...m, id };
   }
-  const price = COMPATIBLE_PRICES[id] ?? COMPATIBLE_PRICES[bare];
+  const price = COMPATIBLE_PRICES[id] ?? COMPATIBLE_PRICES[bare] ?? SERVED_PRICES[bare];
   return price ? { id, label: id, price } : null;
 }
 

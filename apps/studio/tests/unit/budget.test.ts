@@ -1,14 +1,16 @@
 /**
  * A budget set to stop is a hard limit for every call the studio makes: each turn of a change, each report, and calls
  * made at the same time. The stand-in model here answers with all the room it is given, at Claude Sonnet 5.5's
- * price, so nothing stays under a limit by luck.
+ * price, so nothing stays under a limit by luck. And what a call used is counted in full, at the rates of the models
+ * that ran it: a declined request run again on another model counts both attempts.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { ConnectionView } from '../../shared/ai';
+import type { ConnectionView, Usage } from '../../shared/ai';
+import type { CallSize } from '../../server/ai/usage';
 import type { ChatModel, ChatRequest, ChatResult } from '../../server/ai/llm/types';
 import { AiService } from '../../server/ai/service';
 import { tempShop } from './helpers';
@@ -32,11 +34,11 @@ function standIn(): ChatModel & { calls: ChatRequest[] } {
   };
 }
 
-function service(chat: ChatModel, auth: ConnectionView['auth'] = 'key'): AiService {
+function service(chat: ChatModel, auth: ConnectionView['auth'] = 'key', model = 'claude-sonnet-5-5'): AiService {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-budget-'));
   const ai = new AiService({ dataDir, envDir: dataDir, mcp: null as never, origin: () => '', app: () => null, appNames: () => ({}) });
   const connection = { id: 'claude', kind: 'anthropic', label: 'Claude', auth, status: 'ready', models: [] } as unknown as ConnectionView;
-  ai.connections.route = () => ({ connection, model: 'claude-sonnet-5-5' });
+  ai.connections.route = () => ({ connection, model });
   ai.connections.chatModel = () => chat;
   return ai;
 }
@@ -107,5 +109,116 @@ describe('a budget set to stop', () => {
     ai.usage.setBudget({ dailyUsd: 0, monthlyUsd: null, dailyTokens: null, mode: 'warn' });
     await expect(report(ai, 1000)).resolves.toMatchObject({ value: { ok: true } });
     expect(chat.calls.map((c) => c.maxTokens)).toEqual([1000]);
+  });
+});
+
+const used = (input: number, output: number): Usage => ({ input, output, cacheRead: 0, cacheWrite: 0 });
+
+/**
+ * Claude Opus 5.5 behind the server-side fallback: each call is answered as `answer` says (the model that answered,
+ * each attempt billed), a JSON answer for a report and a question's answer for a change.
+ */
+function opus(answer: (req: ChatRequest) => Partial<ChatResult> = () => ({})): ChatModel & { calls: ChatRequest[] } {
+  const calls: ChatRequest[] = [];
+  return {
+    kind: 'anthropic',
+    model: 'claude-opus-5-5',
+    vision: true,
+    fallback: true,
+    calls,
+    async chat(req): Promise<ChatResult> {
+      calls.push(req);
+      return { text: req.json ? '{"ok":true}' : 'It is $78.40.', calls: [], stop: 'end', usage: used(100, 100), model: 'claude-opus-5-5', raw: null, ...answer(req) };
+    },
+  };
+}
+
+/** Opus 5.5 declines after 300 tokens; Opus 4.8 answers in 1,000. What the provider reports at the top is only the last. */
+const declinedThenAnswered = (): Partial<ChatResult> => ({
+  model: 'claude-opus-4-8',
+  usage: used(100, 1000),
+  attempts: [
+    { model: 'claude-opus-5-5', usage: used(100, 300) },
+    { model: 'claude-opus-4-8', usage: used(100, 1000) },
+  ],
+});
+
+describe('what a call used, by the models that ran it', () => {
+  it('counts both attempts of a declined request that another model answered, each at its own price', async () => {
+    const chat = opus(declinedThenAnswered);
+    const ai = service(chat, 'key', 'claude-opus-5-5');
+    ai.usage.setBudget({ dailyUsd: 1, monthlyUsd: null, dailyTokens: null, mode: 'warn' });
+    await report(ai, 2000);
+    // Only warning: the provider may run a declined request again.
+    expect(chat.calls[0].fallback).toBe(true);
+    const { today } = ai.usage.totals();
+    expect({ input: today.input, output: today.output }).toEqual({ input: 200, output: 1300 });
+    // $0.0004 + $0.006 at Opus 5.5's price, then $0.0005 + $0.025 at Opus 4.8's.
+    expect(today.usd).toBeCloseTo(0.0319, 6);
+    expect(ai.usage.summary().byModel.map((r) => r.label).sort()).toEqual(['claude-opus-4-8', 'claude-opus-5-5']);
+  });
+
+  it('under a budget set to stop, a declined request isn’t run again on another model, and says why', async () => {
+    const chat = opus(() => ({ stop: 'refusal', text: '' }));
+    const ai = service(chat, 'key', 'claude-opus-5-5');
+    ai.usage.setBudget({ dailyUsd: 1, monthlyUsd: null, dailyTokens: null, mode: 'stop' });
+    await expect(report(ai, 1000)).rejects.toMatchObject({ code: 'refused', message: expect.stringMatching(/^The model declined to write this\. With the budget set to stop, it isn’t tried again on another model/) });
+    await expect(change(ai)).rejects.toMatchObject({ code: 'refused', message: expect.stringMatching(/declined this request\. Try rephrasing it\. With the budget set to stop/) });
+    expect(chat.calls.map((c) => c.fallback)).toEqual([false, false]);
+    // Without a limit to keep to, or only warning, it may be.
+    ai.usage.setBudget({ dailyUsd: null });
+    await expect(report(ai, 1000)).rejects.toMatchObject({ message: 'The model declined to write this.' });
+    ai.usage.setBudget({ dailyUsd: 1, mode: 'warn' });
+    await expect(report(ai, 1000)).rejects.toMatchObject({ message: 'The model declined to write this.' });
+    expect(chat.calls.map((c) => c.fallback)).toEqual([false, false, true, true]);
+  });
+
+  it('a provider that runs it again anyway is still counted in full: the limit shows as passed, and the next call waits', async () => {
+    const chat = opus(() => ({ ...declinedThenAnswered(), attempts: [{ model: 'claude-opus-5-5', usage: used(100, 300) }, { model: 'claude-opus-4-8', usage: used(100, 1200) }] }));
+    const ai = service(chat, 'key', 'claude-opus-5-5');
+    ai.usage.setBudget({ dailyUsd: null, monthlyUsd: null, dailyTokens: 1600, mode: 'stop' });
+    await report(ai, 1000);
+    expect(ai.usage.totals().today).toMatchObject({ input: 200, output: 1500 });
+    await expect(report(ai, 1000)).rejects.toMatchObject({ code: 'budget' });
+    expect(chat.calls).toHaveLength(1);
+  });
+
+  it('prices a call at the model that answered it: another model, a dated name, or one it doesn’t know (then as the one asked)', async () => {
+    const answered = ['claude-opus-4-8', 'claude-opus-5-5-20261015', 'claude-opus-9-9'];
+    const chat = opus(() => ({ model: answered[chat.calls.length - 1] }));
+    const ai = service(chat, 'key', 'claude-opus-5-5');
+    const costs: number[] = [];
+    for (let i = 0; i < answered.length; i++) {
+      const before = spent(ai);
+      await report(ai, 1000);
+      costs.push(spent(ai) - before);
+    }
+    // 100 tokens in and 100 out: $0.003 at Opus 4.8's price, $0.0024 at Opus 5.5's.
+    expect(costs.map((c) => +c.toFixed(6))).toEqual([0.003, 0.0024, 0.0024]);
+    expect(ai.usage.totals().today.unpriced).toBe(0);
+  });
+
+  it('a model that sends more than estimated has its later calls held that much bigger, up to four times', async () => {
+    const held: number[] = [];
+    let times = 2.5;
+    // The same report each time, so the first call held what the estimate says: it sends `times` that.
+    const chat = opus(() => ({ usage: used(Math.round(held[0] * times), 10) }));
+    const ai = service(chat, 'key', 'claude-opus-5-5');
+    ai.usage.setBudget({ dailyUsd: 1, monthlyUsd: null, dailyTokens: null, mode: 'stop' });
+    const hold = ai.usage.hold.bind(ai.usage);
+    ai.usage.hold = (call: CallSize, now?: number) => (held.push(call.input), hold(call, now));
+    await report(ai, 1000);
+    await report(ai, 1000);
+    const estimate = held[0];
+    expect(held[1]).toBeGreaterThanOrEqual(Math.round(estimate * 2.5));
+    expect(held[1]).toBeLessThanOrEqual(Math.round(estimate * 2.5) + 1);
+    // Sending less later doesn't make it trust the estimate again; sending far more is held at most four times over.
+    times = 0.5;
+    await report(ai, 1000);
+    expect(held[2]).toBe(held[1]);
+    times = 40;
+    await report(ai, 1000);
+    await report(ai, 1000);
+    expect(held[4]).toBe(estimate * 4);
   });
 });

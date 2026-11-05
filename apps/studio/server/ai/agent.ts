@@ -12,7 +12,8 @@
 import { z } from 'zod';
 import type { AiEffort } from '../../shared/api.ts';
 import { systemPrompt, userMessage } from './context.ts';
-import { inputTokens, unwatched, type Admit, type ChatModel, type ChatResult, type Msg, type ToolCall, type ToolDef } from './llm/types.ts';
+import { inputTokens } from './llm/tokens.ts';
+import { noFallback, unwatched, type Admit, type ChatModel, type ChatResult, type Msg, type ToolCall, type ToolDef } from './llm/types.ts';
 import { applyEditSpecs, listFilesTool, readFileTool, searchCode } from './tools.ts';
 import { AgentError, type AgentContext, type AgentInput, type AgentOutput, type AgentProvider } from './types.ts';
 
@@ -104,13 +105,13 @@ export class ModelAgent implements AgentProvider {
       const started = Date.now();
       let res: ChatResult;
       try {
-        res = await this.chat.chat({ system, messages, tools: TOOLS, maxTokens: ticket.maxTokens, effort: this.effort, signal, cacheKey: `saywright-${hash(project.root)}`, cache: 'conversation' });
+        res = await this.chat.chat({ system, messages, tools: TOOLS, maxTokens: ticket.maxTokens, effort: this.effort, signal, cacheKey: `saywright-${hash(project.root)}`, cache: 'conversation', fallback: ticket.fallback });
       } catch (err) {
         ticket.settle(null);
         throw err;
       }
       ticket.settle(res, Date.now() - started);
-      if (res.stop === 'refusal') throw new AgentError(`${this.name} declined this request. Try rephrasing it.`, 'refused');
+      if (res.stop === 'refusal') throw new AgentError(`${this.name} declined this request. Try rephrasing it.${noFallback(this.chat, ticket)}`, 'refused');
       if (!res.calls.length) {
         if (res.text) return { kind: 'answer', text: res.text };
         if (res.stop === 'length' && ticket.maxTokens < MAX_ANSWER) throw new AgentError(`${this.name} ran out of room before finishing: what is left of your budget let it answer in only about ${Math.round(ticket.maxTokens / 1000)}K tokens. Raise the limit in Settings → Usage and budget, or try a smaller request.`, 'budget');

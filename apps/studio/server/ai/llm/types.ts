@@ -46,6 +46,11 @@ export interface ChatRequest {
    * write a cache nobody reads.
    */
   cache?: 'system' | 'conversation';
+  /**
+   * Whether a request the model declines may be run again on another model by the provider (Claude's server-side
+   * fallback). Off under a budget set to stop: that second attempt's cost can't be set aside before it is sent.
+   */
+  fallback?: boolean;
 }
 
 export interface ChatResult {
@@ -58,11 +63,18 @@ export interface ChatResult {
   raw: unknown;
   /** The cost the provider itself reported (OpenRouter), in USD. */
   usd?: number;
+  /**
+   * Each attempt billed, when there were several (a declined one, then a fallback model's), with the model that ran
+   * it: `usage` is then only the last one's.
+   */
+  attempts?: { model: string; usage: Usage }[];
 }
 
 /** A model call's place in the budget: the room it may answer in, held against the budget until it is settled. */
 export interface Ticket {
   maxTokens: number;
+  /** Whether the provider may run a declined request again on another model (see ChatRequest.fallback). */
+  fallback: boolean;
   /** What the call used (written down), or null when it failed: either way, what was held for it is let go. */
   settle(res: ChatResult | null, ms?: number): void;
 }
@@ -74,47 +86,21 @@ export interface Ticket {
 export type Admit = (call: { input: number; maxTokens: number; minTokens: number }) => Ticket;
 
 /** A ticket for a call no budget watches. */
-export const unwatched = (maxTokens: number): Ticket => ({ maxTokens, settle: () => undefined });
-
-/**
- * About how many tokens a request sends, counted generously so a budget is never short: a token for every three
- * characters of plain text and one for every other character (Arabic, Chinese…), a picture as the most a provider
- * charges for one, and what the tools and the answer's schema add.
- */
-export function inputTokens(req: { system: string; messages: Msg[]; tools?: ToolDef[]; schema?: unknown }): number {
-  let plain = 0;
-  let wide = 0;
-  let images = 0;
-  const count = (s: string) => {
-    let w = 0;
-    for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 0x7f) w++;
-    plain += s.length - w;
-    wide += w;
-  };
-  count(req.system);
-  for (const m of req.messages) {
-    if (m.role === 'user') {
-      for (const part of m.parts) {
-        if (part.type === 'text') count(part.text);
-        else images++;
-      }
-    } else if (m.role === 'assistant') {
-      // What is sent back: the provider's own form of the turn when there is one.
-      if (m.raw !== undefined) count(JSON.stringify(m.raw) ?? '');
-      else count(m.text + JSON.stringify(m.calls));
-    } else for (const r of m.results) count(r.output);
-  }
-  if (req.tools) count(JSON.stringify(req.tools));
-  if (req.schema !== undefined) count(JSON.stringify(req.schema) ?? '');
-  return Math.ceil(plain / 3) + wide + images * 1600 + 20 * req.messages.length + 50;
-}
+export const unwatched = (maxTokens: number): Ticket => ({ maxTokens, fallback: true, settle: () => undefined });
 
 export interface ChatModel {
   readonly kind: ProviderKind;
   readonly model: string;
   /** Can read screenshots. */
   readonly vision: boolean;
+  /** The provider can run a request the model declines again on another model (see ChatRequest.fallback). */
+  readonly fallback?: boolean;
   chat(req: ChatRequest): Promise<ChatResult>;
+}
+
+/** Why a declined request wasn't tried on another model, when the provider could have but a budget set to stop said no. */
+export function noFallback(chat: ChatModel, ticket: Ticket): string {
+  return chat.fallback && !ticket.fallback ? ' With the budget set to stop, it isn’t tried again on another model, whose cost can’t be held in advance: set the budget to warn in Settings → Usage and budget to allow that.' : '';
 }
 
 /** A provider's HTTP error, in plain words, with what the person can do about it. */

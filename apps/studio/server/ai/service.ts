@@ -12,7 +12,8 @@ import type { McpServer } from '../mcp.ts';
 import { ModelAgent } from './agent.ts';
 import { CliAgent, cliJson, type CliDeps, type CliKind, type CliUsage } from './cli.ts';
 import { Connections, kindLabel } from './connections.ts';
-import { dropNulls, inputTokens, jsonSchemaOf, type Admit, type ChatModel, type ChatResult, type Msg, type Part } from './llm/types.ts';
+import { inputTokens } from './llm/tokens.ts';
+import { dropNulls, jsonSchemaOf, noFallback, type Admit, type ChatModel, type ChatResult, type Msg, type Part } from './llm/types.ts';
 import { AgentError, type AgentProvider } from './types.ts';
 import { UsageLedger } from './usage.ts';
 
@@ -80,8 +81,16 @@ export class AiService {
   /** A model's price; a plan's own default model isn't named, so it is priced as the app's most capable one (an estimate, for comparison only). */
   private priceOf(c: ConnectionView, model: string): Price | undefined {
     const priced = model === 'default' ? (c.models.find((m) => m.id !== 'default' && m.price)?.id ?? model) : model;
-    return (c.models.find((m) => m.id === priced) ?? modelInfo(c.kind, priced))?.price;
+    // A dated name ("claude-opus-5-5-20261015") is priced as the model it names.
+    const undated = priced.replace(/-\d{8}$/, '');
+    return (c.models.find((m) => m.id === priced || m.id === undated) ?? modelInfo(c.kind, priced) ?? modelInfo(c.kind, undated))?.price;
   }
+
+  /**
+   * How many more tokens than estimated a model's requests have been seen to send (its tokenizer counts more than the
+   * estimate does): later estimates are made that much bigger, so a budget isn't short twice for the same reason.
+   */
+  private inputScale = new Map<string, number>();
 
   /**
    * Each call's place in the budget, for calls to `model`: the most it can cost is held before it is sent (its room
@@ -89,24 +98,36 @@ export class AiService {
    */
   private admit(c: ConnectionView, model: string, feature: string): Admit {
     const price = this.priceOf(c, model);
+    const billed = c.auth === 'key';
+    const key = `${c.id}:${model}`;
     return (call) => {
-      const held = this.usage.hold({ ...call, price, billed: c.auth === 'key' });
+      const input = Math.ceil(call.input * (this.inputScale.get(key) ?? 1));
+      const held = this.usage.hold({ ...call, input, price, billed });
       if ('refused' in held) throw new AgentError(`${held.refused} ${CARRY_ON}`, 'budget');
       let settled = false;
       return {
         maxTokens: held.maxTokens,
+        // A second attempt on another model (a declined request's fallback) can't be set aside: not under a hard limit.
+        fallback: !this.usage.bounded(billed),
         settle: (res, ms = 0) => {
           if (settled) return;
           settled = true;
-          if (res) this.record(c, model, res.usage, feature, ms, res.usd);
+          if (res) {
+            // Every attempt, each at the price of the model that ran it (else the one that answered, else the one asked).
+            const attempts = res.attempts?.length ? res.attempts : [{ model: res.model || model, usage: res.usage }];
+            attempts.forEach((a, i) => this.record(c, a.model, a.usage, feature, i ? 0 : ms, attempts.length === 1 ? res.usd : undefined, model));
+            const sent = attempts[0].usage.input + attempts[0].usage.cacheRead + attempts[0].usage.cacheWrite;
+            if (call.input > 0 && sent > input) this.inputScale.set(key, Math.min(4, sent / call.input));
+          }
           this.usage.release(held);
         },
       };
     };
   }
 
-  private record(c: ConnectionView, model: string, u: Usage, feature: string, ms: number, reportedUsd?: number): void {
-    const price = this.priceOf(c, model);
+  /** One call, or one attempt of it, written down: priced at the model that ran it (else `asked`'s, the model asked). */
+  private record(c: ConnectionView, model: string, u: Usage, feature: string, ms: number, reportedUsd?: number, asked?: string): void {
+    const price = this.priceOf(c, model) ?? (asked ? this.priceOf(c, asked) : undefined);
     const usd = reportedUsd ?? costOf(price, u);
     const app = this.deps.app();
     this.usage.record({
@@ -137,7 +158,7 @@ export class AiService {
       mcp: this.deps.mcp,
       origin: this.deps.origin,
       gate: () => this.allowed(c.auth === 'key'),
-      used: (u: CliUsage, ms) => this.record(c, u.model || model, u.usage, feature, ms, u.usd),
+      used: (u: CliUsage, ms) => this.record(c, u.model || model, u.usage, feature, ms, u.usd, model),
     };
   }
 
@@ -224,13 +245,13 @@ export async function jsonFrom<T>(chat: ChatModel, req: Pick<JsonRequest<T>, 'sy
     const started = Date.now();
     let res: ChatResult;
     try {
-      res = await chat.chat({ system: req.system, messages, json: { name: req.name, schema: req.schema }, maxTokens: ticket.maxTokens, effort: req.effort, signal: req.signal, cache: req.cache });
+      res = await chat.chat({ system: req.system, messages, json: { name: req.name, schema: req.schema }, maxTokens: ticket.maxTokens, effort: req.effort, signal: req.signal, cache: req.cache, fallback: ticket.fallback });
     } catch (err) {
       ticket.settle(null);
       throw err;
     }
     ticket.settle(res, Date.now() - started);
-    if (res.stop === 'refusal') throw new AgentError('The model declined to write this.', 'refused');
+    if (res.stop === 'refusal') throw new AgentError(`The model declined to write this.${noFallback(chat, ticket)}`, 'refused');
     if (res.stop === 'length') throw new AgentError('The answer was too long for the model’s limit.', 'other');
     let problem: string;
     try {

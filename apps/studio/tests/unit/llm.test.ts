@@ -24,7 +24,7 @@ const free: Admit = (call) => unwatched(call.maxTokens);
 /** What each call used, written down, with no budget. */
 const watch =
   (into: ChatResult[]): Admit =>
-  (call) => ({ maxTokens: call.maxTokens, settle: (r) => void (r && into.push(r)) });
+  (call) => ({ maxTokens: call.maxTokens, fallback: true, settle: (r) => void (r && into.push(r)) });
 
 type Handler = (body: Record<string, unknown>, req: http.IncomingMessage) => unknown;
 let server: http.Server;
@@ -268,6 +268,38 @@ describe('Anthropic', () => {
       },
     });
     await expect(agent.run({ text: 'x', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined })).rejects.toThrow(/daily budget/);
+  });
+
+  it('reads each attempt of a declined request with the model that ran it, and asks for no fallback when told not to', async () => {
+    const sent: Record<string, unknown>[] = [];
+    const iteration = (type: string, model: string, output: number) => ({ type, model, input_tokens: 100, output_tokens: output, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation: null });
+    const replies = [
+      // Opus 5.5 declined after 300 tokens, and Opus 4.8 answered: the top-level usage is only its attempt.
+      {
+        model: 'claude-opus-4-8',
+        stop_reason: 'end_turn',
+        content: [{ type: 'fallback', from: { model: 'claude-opus-5-5' }, to: { model: 'claude-opus-4-8' } }, { type: 'text', text: 'It is $78.40.' }],
+        usage: { input_tokens: 100, output_tokens: 1000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, iterations: [iteration('message', 'claude-opus-5-5', 300), iteration('fallback_message', 'claude-opus-4-8', 1000)] },
+      },
+      { model: 'claude-opus-5-5', stop_reason: 'end_turn', content: [{ type: 'text', text: 'It is $78.40.' }], usage: { input_tokens: 100, output_tokens: 20, iterations: [iteration('message', 'claude-opus-5-5', 20)] } },
+    ];
+    const client = { beta: { messages: { stream: (p: Record<string, unknown>) => (sent.push(JSON.parse(JSON.stringify(p))), { finalMessage: async () => replies[sent.length - 1] }) } } };
+    const chat = new AnthropicModel('claude-opus-5-5', () => client as never);
+    const ask = { system: 's', messages: [{ role: 'user' as const, parts: [{ type: 'text' as const, text: 'What is the total?' }] }], maxTokens: 2000 };
+    const first = await chat.chat(ask);
+    expect(chat.fallback).toBe(true);
+    expect(sent[0]).toMatchObject({ fallbacks: 'default', betas: ['server-side-fallback-2026-07-01'] });
+    expect(first).toMatchObject({ text: 'It is $78.40.', model: 'claude-opus-4-8', usage: { input: 100, output: 1000, cacheRead: 0, cacheWrite: 0 } });
+    expect(first.attempts).toEqual([
+      { model: 'claude-opus-5-5', usage: { input: 100, output: 300, cacheRead: 0, cacheWrite: 0 } },
+      { model: 'claude-opus-4-8', usage: { input: 100, output: 1000, cacheRead: 0, cacheWrite: 0 } },
+    ]);
+    // Under a budget set to stop: no second attempt is asked for, and one attempt needs no list.
+    const second = await chat.chat({ ...ask, fallback: false });
+    expect(sent[1].fallbacks).toBeUndefined();
+    expect(sent[1].betas).toBeUndefined();
+    expect(second.attempts).toBeUndefined();
+    expect(new AnthropicModel('claude-haiku-5-5').fallback).toBe(false);
   });
 });
 

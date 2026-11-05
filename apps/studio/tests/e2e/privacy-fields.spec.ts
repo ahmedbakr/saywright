@@ -37,7 +37,7 @@ async function typeEach(page: Page, app: FrameLocator): Promise<void> {
 }
 
 const masked = (app: FrameLocator, id: string) =>
-  app.getByTestId(id).evaluate((el) => ({ marked: el.hasAttribute('data-saywright-masked'), dots: getComputedStyle(el).webkitTextSecurity === 'disc', blurred: getComputedStyle(el).filter.includes('blur') }));
+  app.getByTestId(id).evaluate((el) => ({ marked: el.hasAttribute('data-saywright-masked'), dots: getComputedStyle(el).getPropertyValue('-webkit-text-security') === 'disc', blurred: getComputedStyle(el).filter.includes('blur') }));
 
 test('Write test records what is typed into private editors and a shadow root’s key field by name only, and the test holds no secret', async ({ page }) => {
   await openStudio(page);
@@ -100,7 +100,11 @@ test('a session masks them in its pictures, in shadow roots too (added later, an
         const roots: ShadowRoot[] = [];
         const walk = (n: Node) => {
           const w = document.createTreeWalker(n, NodeFilter.SHOW_ELEMENT);
-          for (let el = w.nextNode() as Element | null; el; el = w.nextNode() as Element | null) if (el.shadowRoot) (roots.push(el.shadowRoot), walk(el.shadowRoot));
+          for (let el = w.nextNode() as Element | null; el; el = w.nextNode() as Element | null) {
+            if (!el.shadowRoot) continue;
+            roots.push(el.shadowRoot);
+            walk(el.shadowRoot);
+          }
         };
         walk(document);
         return {

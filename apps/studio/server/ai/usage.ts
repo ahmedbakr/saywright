@@ -8,7 +8,10 @@
  *
  * A stop is a hard limit: before a call is sent, the most it can cost is held
  * against the budget (see `hold`), so no call, and no calls made at the same
- * time, can together go past it.
+ * time, can together go past it. What a call sends is an estimate made before
+ * it goes (a generous one, raised for a model seen to send more): when a
+ * provider counts more, the limit can be passed by that much, and then nothing
+ * more is sent.
  *
  * One JSON line per call, a file per month, in the studio's data folder.
  */
@@ -264,6 +267,11 @@ export class UsageLedger {
     if (billed && b.monthlyUsd != null) out.push({ dollars: true, left: b.monthlyUsd - month.usd - usd, spent: month.usd, limit: b.monthlyUsd, name: 'monthly budget' });
     if (b.dailyTokens != null) out.push({ dollars: false, left: b.dailyTokens - tokensOf(today) - tokens, spent: tokensOf(today), limit: b.dailyTokens, name: 'daily tokens' });
     return out;
+  }
+
+  /** Whether a call is held to a hard limit: the budget is set to stop, and a limit applies to it. */
+  bounded(billed: boolean, now = Date.now()): boolean {
+    return this.state.budget.mode === 'stop' && this.limits(now, billed).length > 0;
   }
 
   /**

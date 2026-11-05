@@ -62,6 +62,10 @@ export class AnthropicModel implements ChatModel {
     private client: () => Client = () => new Anthropic({ maxRetries: 2, timeout: 10 * 60_000 }),
   ) {}
 
+  get fallback(): boolean {
+    return FALLBACK.has(this.model);
+  }
+
   async chat(req: ChatRequest): Promise<ChatResult> {
     const format = req.json ? zodOutputFormat(req.json.schema) : null;
     const params: BetaMessageStreamParams = {
@@ -73,7 +77,7 @@ export class AnthropicModel implements ChatModel {
       ...(req.cache === 'conversation' ? { cache_control: { type: 'ephemeral' as const } } : {}),
       ...(req.tools?.length ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters as Anthropic.Beta.BetaTool.InputSchema })) } : {}),
       output_config: { ...(req.effort ? { effort: req.effort } : {}), ...(format ? { format: { type: format.type, schema: format.schema } } : {}) },
-      ...(FALLBACK.has(this.model) ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+      ...(this.fallback && req.fallback !== false ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
     };
     let msg: Anthropic.Beta.BetaMessage;
     try {
@@ -88,6 +92,11 @@ export class AnthropicModel implements ChatModel {
       else if (b.type === 'tool_use') calls.push({ id: b.id, name: b.name, args: (b.input ?? {}) as Record<string, unknown> });
     }
     const u = msg.usage;
+    // Each attempt as billed (a declined one, then the fallback model's): the top-level usage is only the last one's.
+    const attempts = (u.iterations ?? []).map((it) => ({
+      model: ('model' in it && it.model) || msg.model,
+      usage: { input: it.input_tokens ?? 0, output: it.output_tokens ?? 0, cacheRead: it.cache_read_input_tokens ?? 0, cacheWrite: it.cache_creation_input_tokens ?? 0 },
+    }));
     return {
       text: text.join('\n').trim(),
       calls,
@@ -100,6 +109,7 @@ export class AnthropicModel implements ChatModel {
       },
       model: msg.model,
       raw: msg.content,
+      ...(attempts.length > 1 ? { attempts } : {}),
     };
   }
 }
