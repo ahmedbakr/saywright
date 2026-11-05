@@ -2,6 +2,28 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-11-05
+
+What a second audit, of 0.2.2, found, each fixed with a test: what is private stays private everywhere, a focused test is never verified, and a budget counts all it pays for.
+
+### Fixed
+
+- **A private rich text editor stays private.** A rich text editor (`contenteditable`) marked private, itself or through a part of the page it is in (`data-private`, `data-saywright-secret`…), had its text recorded in Write test's step and in the test. It is recorded by name, as a secret field is (`secret('PRIVATE_NOTES')`). What it holds, or what a part marked private says, is left out of a session's targets, headings and screen text and of what Autopilot reads, also when it is inside the element described.
+- **Screen masking reaches into shadow roots.** While a session recorded, a secret field inside a web component's open shadow root showed in its pictures and video. Every open shadow root is masked now, nested ones and ones added later too, and nothing of the mask is left when the session ends.
+- **A focused test is never verified.** A file with `test.only` (or `describe.only`) ran only that test, so a passing one before a failing one was verified. The studio refuses to run it and says to remove `.only`. A mark written twice (`[check 1]` in two tests) must run twice.
+- **Every attempt is counted, at its own model's price.** When Claude declines a request and runs it again on another model (its server-side fallback), both attempts are billed, but only the last was counted, at the price of the model asked for. Each is counted now at the price of the model that ran it, as is a request answered by another model or under a dated name. Under a budget set to Stop, a declined request isn't run again on another model, since that second run's cost can't be set aside first, and the message says so.
+- **A budget's estimate is no longer short.** What a request sends was estimated below Claude's own count (it counts a fifth to a half more for code, CSS and JSON, and three times more for a large screenshot), so a request under Stop could pass a limit. It is estimated now from each kind of text and each picture's size, at rates measured against Claude's count, and a model seen to send more than estimated has its later requests counted that much bigger.
+
+### Tests and benchmarks
+
+- `npm run eval:usage` without `EVAL_AI=real` turns off every AI the studio would find on the computer (a plan's app, a key in `.env.local`, a local server), and stops if one is still usable: an installed Codex was used for its reports.
+- The keyboard test waits for the new preview before pressing Enter, and the session test records with the panel closed: where a headless browser on a Mac shares the screen, the app inside lays itself out as wide as the screen.
+
+### Documentation
+
+- [AI in Saywright](docs/ai.md#usage-and-budget): how a request is counted before it goes, what is counted when Claude declines one, and why Stop doesn't run it again on another model.
+- [Write test](docs/guide.md#write-test-narrate-a-bug-get-a-playwright-test) and [Sessions](docs/session-report.md#what-is-captured): private rich text editors, shadow roots, and focused tests.
+
 ## [0.2.2] - 2026-11-05
 
 What a fresh audit of 0.2.1 found, each fixed with a test: a studio that keeps running whatever the browser does, a pass you can believe, your edits never lost, and a budget that is a limit.

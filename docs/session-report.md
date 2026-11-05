@@ -28,12 +28,12 @@ Sessions are listed in the side panel's **Sessions** tab, newest first, with the
 
 | | |
 | --- | --- |
-| What you did | Clicks (and on what, with a Playwright locator), typing (passwords and card numbers masked), page changes, scrolling, what you rested the pointer on |
+| What you did | Clicks (and on what, with a Playwright locator), typing (what goes into a password, card or other secret field, or into a part marked private, masked), page changes, scrolling, what you rested the pointer on |
 | What went wrong | JavaScript errors and unhandled promise rejections (with the line in your code, through source maps), console errors, failed and slow requests, data requests answered with a web page (a missing API route), repeated clicks, clicks that did nothing, clicks on disabled buttons |
 | How it felt | Page speed: largest contentful paint, layout shifts, slow interactions, long tasks |
 | What you said | Your narration, transcribed on your computer, each sentence linked to what you were pointing at and to the code behind it |
-| What the screen said | The page's text (its main region, and dialogs and messages shown outside it) as each page opened, and again once the screen settled after each thing you did, when it changed. Card numbers are masked; what you type in password and card fields is never read. |
-| What it looked like | Screenshots at the moments that matter (errors, speech, clicks, marks), and a video if you record the screen |
+| What the screen said | The page's text (its main region, and dialogs and messages shown outside it) as each page opened, and again once the screen settled after each thing you did, when it changed. Card numbers are masked; what you type in password and card fields is never read, and what a part marked private says (`data-private`, `data-saywright-secret`…) is left out. |
+| What it looked like | Screenshots at the moments that matter (errors, speech, clicks, marks), and a video if you record the screen. While a session records, secret fields show as dots and parts marked private are blurred on the screen, in web components' open shadow roots too, so neither shows them. |
 
 Recording starts in your app before the studio says “Recording”. Events are numbered and stored in order, sent again if a request fails, kept in the tab across a reload, and counted once. A busy app is recorded in full: quick, successful requests to the same address within a second are counted as one event. If the studio stops answering, the page keeps up to 5,000 events, and the report says how many it had to drop.
 

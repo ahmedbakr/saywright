@@ -1,6 +1,6 @@
 {
   "name": "@saywright/vite",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Vite plugin for Saywright: traces every element of your running React app to its file and line, so you can point at it and say what to change. Dev server only.",
   "keywords": [
     "vite",
