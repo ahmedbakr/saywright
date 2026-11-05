@@ -26,10 +26,11 @@ import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerRespon
 import https from 'node:https';
 import net from 'node:net';
 import path from 'node:path';
-import { pipeline, Transform } from 'node:stream';
+import { Transform } from 'node:stream';
 import tls from 'node:tls';
 import zlib from 'node:zlib';
 import { PROXY_CREDENTIALS_HEADER as CREDENTIALS_HEADER } from '@saywright/vite/protocol';
+import { relay } from '../streams.ts';
 import { freePort } from './runner.ts';
 
 interface ProxyOptions {
@@ -501,10 +502,13 @@ export class AppProxy {
     const upstreamReq = lib.request(
       url,
       { method: req.method, headers: this.requestHeaders(req, target, proxyOrigin), servername: url.hostname, timeout: 30_000 },
-      (up) => void this.respond(target, req, up, res, proxyOrigin),
+      (up) => this.answer(up, res, () => this.respond(target, req, up, res, proxyOrigin)),
     );
+    untilGone(res, upstreamReq);
     upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('timed out')));
     upstreamReq.on('error', (err) => {
+      // The browser went first (it cancelled, or reloaded): no one to tell.
+      if (res.destroyed) return;
       if (res.headersSent) return void res.destroy();
       res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`<!doctype html><meta charset="utf-8"><body style="font:14px system-ui;padding:32px;color:#333"><h2 style="margin:0 0 8px">${target.upstream.origin} didn’t answer</h2><p>${String(err.message).replace(/[<>&]/g, '')}</p><p>Check that it is running, then reload.</p>`);
@@ -555,6 +559,7 @@ export class AppProxy {
     const tlsOptions = secure ? { rejectUnauthorized: false, servername: url.hostname === 'localhost' ? 'localhost' : undefined } : {};
     // What the API's CORS rules don't let a page of the site read, the page doesn't get: as in the site's own tab.
     const blocked = (why: string) => {
+      if (res.destroyed) return;
       if (res.headersSent) return void res.destroy();
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Saywright-Blocked': 'cors' });
       res.end(`Blocked as the browser blocks it outside the studio: ${why}`);
@@ -562,21 +567,25 @@ export class AppProxy {
     // A beacon (no-cors): its answer is never read by the page, so it isn't held back.
     const opaque = req.headers['sec-fetch-mode'] === 'no-cors';
     const send = () => {
-      const upstreamReq = lib.request(url, { method: req.method, headers, timeout: 30_000, ...tlsOptions }, (up) => {
-        if (!opaque && !corsAllows(up.headers, origin, credentials)) {
-          up.resume();
-          return blocked(`${url.host} doesn’t let pages of ${origin} read what it answers${credentials ? ' with their cookies' : ''} (CORS).`);
-        }
-        const out: Record<string, string | string[]> = {};
-        for (const [k, v] of Object.entries(up.headers)) {
-          if (v === undefined || HOP.has(k) || DROP_RESPONSE.has(k)) continue;
-          if (k === 'set-cookie') out[k] = (Array.isArray(v) ? v : [v]).map((c) => rewriteSetCookie(c, target.port, viaPrefix(url)));
-          else if (k === 'location') out[k] = this.viaLocation(String(v), url, target, proxyOrigin);
-          else out[k] = v;
-        }
-        res.writeHead(up.statusCode ?? 502, out);
-        up.pipe(res);
-      });
+      if (res.destroyed) return;
+      const upstreamReq = lib.request(url, { method: req.method, headers, timeout: 30_000, ...tlsOptions }, (up) =>
+        this.answer(up, res, () => {
+          if (!opaque && !corsAllows(up.headers, origin, credentials)) {
+            up.resume();
+            return blocked(`${url.host} doesn’t let pages of ${origin} read what it answers${credentials ? ' with their cookies' : ''} (CORS).`);
+          }
+          const out: Record<string, string | string[]> = {};
+          for (const [k, v] of Object.entries(up.headers)) {
+            if (v === undefined || HOP.has(k) || DROP_RESPONSE.has(k)) continue;
+            if (k === 'set-cookie') out[k] = (Array.isArray(v) ? v : [v]).map((c) => rewriteSetCookie(c, target.port, viaPrefix(url)));
+            else if (k === 'location') out[k] = this.viaLocation(String(v), url, target, proxyOrigin);
+            else out[k] = v;
+          }
+          res.writeHead(up.statusCode ?? 502, out);
+          relay(up, res);
+        }),
+      );
+      untilGone(res, upstreamReq);
       upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('timed out')));
       upstreamReq.on('error', () => res.destroy());
       req.pipe(upstreamReq);
@@ -587,11 +596,14 @@ export class AppProxy {
     const ask: IncomingHttpHeaders = { host: url.host, origin, 'access-control-request-method': want.method, 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site' };
     if (want.headers.length) ask['access-control-request-headers'] = want.headers.join(',');
     if (req.headers['user-agent']) ask['user-agent'] = req.headers['user-agent'];
-    const pre = lib.request(url, { method: 'OPTIONS', headers: ask, timeout: 30_000, ...tlsOptions }, (up) => {
-      up.resume();
-      if (preflightAllows(up.statusCode ?? 0, up.headers, want, origin, credentials)) send();
-      else blocked(`${url.host} doesn’t allow a ${want.method} request${want.headers.length ? ` with ${want.headers.join(', ')}` : ''} from ${origin} (CORS).`);
-    });
+    const pre = lib.request(url, { method: 'OPTIONS', headers: ask, timeout: 30_000, ...tlsOptions }, (up) =>
+      this.answer(up, res, () => {
+        up.resume();
+        if (preflightAllows(up.statusCode ?? 0, up.headers, want, origin, credentials)) send();
+        else blocked(`${url.host} doesn’t allow a ${want.method} request${want.headers.length ? ` with ${want.headers.join(', ')}` : ''} from ${origin} (CORS).`);
+      }),
+    );
+    untilGone(res, pre);
     pre.on('timeout', () => pre.destroy(new Error('timed out')));
     pre.on('error', () => res.destroy());
     pre.end();
@@ -608,7 +620,21 @@ export class AppProxy {
     return rewriteLocation(location, target.upstream, proxyOrigin);
   }
 
-  private async respond(target: Target, req: IncomingMessage, up: IncomingMessage, res: ServerResponse, proxyOrigin: string): Promise<void> {
+  /**
+   * What to do with the site's answer, once it comes: nothing when the browser has gone meanwhile (the site's answer is
+   * let go), and never a thrown error, which would end the studio.
+   */
+  private answer(up: IncomingMessage, res: ServerResponse, handle: () => void): void {
+    if (res.destroyed || res.writableEnded) return void up.destroy();
+    try {
+      handle();
+    } catch {
+      up.destroy();
+      res.destroy();
+    }
+  }
+
+  private respond(target: Target, req: IncomingMessage, up: IncomingMessage, res: ServerResponse, proxyOrigin: string): void {
     const headers: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(up.headers)) {
       if (v === undefined || HOP.has(k) || DROP_RESPONSE.has(k)) continue;
@@ -625,7 +651,7 @@ export class AppProxy {
     const decode = html || css ? decoders(up.headers['content-encoding']) : null;
     if (!decode || req.method === 'HEAD' || up.statusCode === 204 || up.statusCode === 304) {
       res.writeHead(up.statusCode ?? 502, headers);
-      up.pipe(res);
+      relay(up, res);
       return;
     }
     // Pages and styles are rewritten as they arrive: streamed server rendering shows as it comes.
@@ -650,9 +676,7 @@ export class AppProxy {
     headers['content-type'] = type.replace(/charset\s*=\s*["']?[\w-]+["']?/i, 'charset=utf-8');
     if (html) headers['cache-control'] = 'no-store';
     res.writeHead(up.statusCode ?? 200, headers);
-    pipeline([up, ...decode, text, res], (err) => {
-      if (err) res.destroy();
-    });
+    relay(up, res, ...decode, text);
   }
 
   /**
@@ -697,6 +721,13 @@ export class AppProxy {
     for (const t of this.targets.values()) shut(t);
     this.targets.clear();
   }
+}
+
+/** The browser gave up on its request (a reload, a cancelled fetch, a closed tab): so does the request to the site. */
+function untilGone(res: ServerResponse, upstream: http.ClientRequest): void {
+  res.on('close', () => {
+    if (!res.writableFinished) upstream.destroy();
+  });
 }
 
 /** A proxy's servers closed, with the connections still open to them (kept alive by browsers). */

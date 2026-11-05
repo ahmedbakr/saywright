@@ -567,3 +567,60 @@ describe('a page that streams', () => {
     expect(out).toMatch(/^<!doctype html><script>window\.__SAYWRIGHT_PROXY__=.*saywright\.js"><\/script><title>Bare<\/title><p>bare<\/p>$/);
   });
 });
+
+describe('a browser that gives up on a request', () => {
+  it('cancels the request to the site, and the studio carries on (it used to crash when the site answered after)', async () => {
+    let arrived = () => {};
+    let aborted = 0;
+    // A site that answers a moment later, as a slow page does.
+    const site = http.createServer((req, res) => {
+      arrived();
+      req.on('close', () => {
+        if (!res.headersSent) aborted++;
+      });
+      setTimeout(() => {
+        if (res.destroyed) return;
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html><head></head><body>slow page</body></html>');
+      }, 100);
+    });
+    await new Promise<void>((r) => site.listen(0, '127.0.0.1', r));
+    const apps = new AppProxy({ studio: () => 'http://localhost:5173', port: 5590, stateFile: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-proxy-')), 'ports.json') });
+    try {
+      const url = await apps.open(`http://127.0.0.1:${(site.address() as net.AddressInfo).port}/`);
+      for (let i = 0; i < 10; i++) {
+        const hit = new Promise<void>((r) => (arrived = r));
+        // A page (HTML, rewritten as it streams) and a plain file: both ways of passing an answer on.
+        const req = http.get(i % 2 ? `${url}app.js` : url, { headers: { Accept: i % 2 ? '*/*' : 'text/html' } }, (r) => r.resume());
+        req.on('error', () => undefined);
+        await hit;
+        req.destroy();
+        await new Promise((r) => setTimeout(r, 160));
+      }
+      // The site's requests were let go, and the proxy still answers.
+      expect(aborted).toBe(10);
+      const page = await fetch(url, { headers: { Accept: 'text/html' } });
+      expect(await page.text()).toContain('slow page');
+    } finally {
+      apps.close();
+      site.close();
+    }
+  });
+
+  it('a file that goes before it is sent ends that answer only', async () => {
+    const { sendFile } = await import('../../server/streams');
+    const server = http.createServer((_req, res) => sendFile(path.join(os.tmpdir(), 'saywright-no-such-file.wasm'), res));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const failed = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`).then(
+        () => false,
+        () => true,
+      );
+      expect(failed).toBe(true);
+      // Still serving.
+      expect(server.listening).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+});

@@ -24,6 +24,7 @@ import { browserSpeechReady, ensureBrowserSpeech, modelsDir } from './assets.ts'
 import { aiHttpError, autopilotRoutes } from './autopilot.ts';
 import { inspect } from './inspect.ts';
 import { componentWrittenAt, sanitizeRefs } from './refs.ts';
+import { sendFile } from './streams.ts';
 import type { Project } from './project.ts';
 import { Metrics } from './metrics.ts';
 import { describeOptions, propEdit, quickEdit } from './quick/index.ts';
@@ -819,7 +820,7 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
       if (!name || !/\.(wasm|m?js)$/.test(name) || !fs.existsSync(file)) return next();
       res.setHeader('Content-Type', name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
       res.setHeader('Cache-Control', 'public, max-age=86400');
-      fs.createReadStream(file).pipe(res);
+      sendFile(file, res);
     };
 
   // For React apps not built with Vite (Next.js, Create React App, webpack): one script tag connects them.
@@ -843,7 +844,7 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
     res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    fs.createReadStream(layout.axeFile).pipe(res);
+    sendFile(layout.axeFile, res);
   };
   /** A package's folder, in development only: the built studio carries what it needs, or loads it from a CDN. */
   const devDir = (pkg: string, ...sub: string[]): string | null => {
@@ -872,7 +873,7 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     if (req.method === 'HEAD') return res.end();
-    fs.createReadStream(file).pipe(res);
+    sendFile(file, res);
   };
 
   return [

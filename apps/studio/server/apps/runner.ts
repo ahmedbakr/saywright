@@ -14,6 +14,7 @@ import https from 'node:https';
 import net from 'node:net';
 import path from 'node:path';
 import type { AppRun, LinkedApp, RunStatus } from '../../shared/apps.ts';
+import { sendFile } from '../streams.ts';
 
 const MAX_LOG = 300;
 // oxlint-disable-next-line no-control-regex -- the escape character starts the terminal's colour and title codes
@@ -186,7 +187,7 @@ function staticServer(root: string): http.Server {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (req.method === 'HEAD') return res.end();
-    fs.createReadStream(real).pipe(res);
+    sendFile(real, res);
   });
 }
 
