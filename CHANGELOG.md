@@ -2,6 +2,31 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-11-05
+
+What a fresh audit of 0.2.1 found, each fixed with a test: a studio that keeps running whatever the browser does, a pass you can believe, your edits never lost, and a budget that is a limit.
+
+### Fixed
+
+- **The studio keeps running when a browser gives up on a request.** A reload, a cancelled request or a closed tab while the app behind the proxy was still answering ended the studio (`ERR_STREAM_UNABLE_TO_PIPE`). The answer is dropped, what fed it is freed, and the proxy serves the next request. Files the studio sends (the app's pages, videos, screenshots) are sent the same way.
+- **Verified means every check ran and passed.** A check that failed inside a `try`/`catch`, a second test in the file that failed, a skipped part, or a Playwright run that didn't end cleanly could still be called verified. A run is verified now only when every test, step and check in the file passed on its first try and Playwright ended cleanly; a check that failed is a failure, even when the test caught its error.
+- **Long tests are written whole.** A test of more than 100 steps or 20 checks was cut to that without a word, so a failing 21st check never ran and the test passed, verified. Up to 1,000 steps and 100 checks are written whole; past that, nothing is written and the studio says so. A step or check that can't be written (one that isn't a step, a fill with no locator, a value that isn't text, a check that could never fail) is refused with what is wrong, not with a server error.
+- **A long expected value is checked.** A field's expected value of more than 1,000 characters is checked as text: as a pattern it was more than a browser compiles (“Regular expression too large”). A failure says the value as it was said (“80.80”), not as its pattern (“/80\.80/”).
+- **A change is never written over your edits.** A change made from a file you saved meanwhile (in your editor, or by another change made at the same time) replaced your edit, and Undo then put back the file as it was before both. Each file is checked against what the change was made from, when the change arrives and again right before it is written: if it changed, nothing is written and the studio says so, with **Ask again**. An AI app over MCP is told to read the file again.
+- **A budget set to Stop is a limit.** A $0 limit still let a call through, a call could cost more than was left ($0.03 on a $0.01 budget), the steps of a change weren't counted ahead, and two reports at once could together go past the limit. Before each call, the most it could cost is now set aside until what it used is recorded: a call that could go past a limit isn't sent, and when little is left a step of a change answers in less room. Dollar limits apply to API keys; plans and local models count toward the token limit.
+- **A click as a recording starts lands where it was aimed.** The session bar slid in as the recording began, moving the app under the mouse: a click on a small control right after **Start recording** could miss it. The bar takes its place at once.
+- **Write test records every field.** An option that says the same as another of its list (“Standard” twice) was written by what it says, so a run chose the first; it is chosen by its value now, in the test, in Replay & verify and in a test made from a session. What is typed into a rich text editor (`contenteditable`) or into a field inside an open shadow root wasn't recorded at all; both are, and replayed.
+
+### Tests and benchmarks
+
+- **The benchmarks fail when a case does.** `npm run eval:usage` failed no test when a journey failed, `npm run eval:ai` passed a case that didn't finish or didn't reproduce its bug, and a session a failed case left recording kept the next from starting. Each fails now, its rates count every case (and say how many didn't get that far), and a session left recording is stopped.
+- The browser tests read the keys as the studio names them on the computer they run on (Return and ⌘Z on a Mac), and wait for a test run to end rather than a fixed time.
+
+### Documentation
+
+- [AI in Saywright](docs/ai.md#usage-and-budget): what **Stop** does, call by call.
+- [Write test](docs/guide.md#write-test-narrate-a-bug-get-a-playwright-test): what verified means, how long a test can be, lists with options that say the same, rich text editors and web components.
+
 ## [0.2.1] - 2026-11-05
 
 The rest of what the five test users found: the smaller things, each fixed with a test.
@@ -224,6 +249,7 @@ The first release: `@saywright/studio` (the studio, and its command `saywright`)
 - [Getting started](docs/getting-started.md): every feature on the sample shop, one step at a time, with a picture of each and what you should see.
 - Screenshots of the real studio throughout the documentation, taken again by `npm run media:screenshots` when the interface changes.
 
+[0.2.2]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.2
 [0.2.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.1

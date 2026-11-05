@@ -86,14 +86,18 @@ A test starts on the page the app was on when you switched to **Write test**. **
 | --- | --- |
 | **The test fails at its check, so it reproduces the bug** | Every step ran and the check failed: the bug shows. **Fix with …** is offered. |
 | **It doesn’t show the bug yet** | A step before the checks failed (a field that isn’t there, a page that didn’t come): the test never got to its check. Fix the step, then run it again. |
-| **Passed: all 4 steps and 1 check ran** | Verified: it passed on the first try, every step and check reported that it ran, and (after a fix) the test is the one that failed, unchanged. |
-| **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run, it passed only when tried again, it has no check, or the test changed since it failed (by hand, or by any AI request). The next run judges the test as it is then. |
+| **Passed: all 4 steps and 1 check ran** | Verified: every test in the file passed on its first try, every step and check reported that it ran and passed, Playwright ended cleanly, and (after a fix) the test is the one that failed, unchanged. |
+| **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run or was skipped, it passed only when tried again, it has no check, Playwright didn't end cleanly, or the test changed since it failed (by hand, or by any AI request). The next run judges the test as it is then. |
+
+A check that failed is a failure, even when the test catches its error and goes on. A test holds up to 1,000 steps and 100 checks, every one of them written: past that, nothing is written and the studio says so, so split it into shorter tests.
 
 A fix may not change the test it is checked against: if the AI's change edits that test, that part is left out (and a change that only edits the test is refused), so a weakened check can't pass for a fix.
 
 **Passwords and other secrets.** What you type into a password field, or a field for a card number, a one-time code, an API key or a token, is never recorded: the step names it (`PASSWORD`, `CARD_NUMBER`), and the test types it from the environment variable `SAYWRIGHT_SECRET_PASSWORD`. The **Secrets** section of the Test tab saves its value on this computer, with the studio's data, outside your code; the studio sets it when it runs the test, and Replay & verify types it in the replay. Elsewhere (your CI), set the variable yourself. To mark a field of your own as secret, give it (or a parent) `data-saywright-secret`; the marks session-replay tools use (`data-private`, `data-sentry-mask`, `.rr-mask`, `.fs-mask`…) work too.
 
-**Lists.** A choice in a drop-down becomes `selectOption({ label: 'Express' })` (by its value when what it says has numbers in it, like a price); in a list that takes several choices, every one chosen.
+**Lists.** A choice in a drop-down becomes `selectOption({ label: 'Express' })` (by its value when what it says has numbers in it, like a price, and `selectOption({ value: 'std-us' })` when another option says the same, like two “Standard”); in a list that takes several choices, every one chosen.
+
+**Rich text and web components.** What you type into a rich text editor (`contenteditable`) becomes a `fill` of its text, found by its label or test id, never by what it holds; a field inside a web component's open shadow root is recorded and found like any other (Playwright's locators see into open shadow roots). A closed shadow root can't be seen into, by the studio or by Playwright.
 
 **Checks that hold once the fix is in.** A check reads what an element shows, so it is never found by the words it checks, which the fix changes: the value in a table row by the row's heading (`getByRole('row').filter({ hasText: 'You pay' }).locator('td')`), a name with a price or a count by a pattern with the numbers left open (`getByRole('button', { name: /^Like this portfolio \(\d[\d.,]*\)$/ })`), else by its place among the same. Steps find a name with numbers the same way, so a fix that changes a total doesn't lose the Pay button. A box checks `toBeChecked()`, and a list the options chosen in it.
 
