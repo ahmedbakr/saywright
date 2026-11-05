@@ -79,12 +79,14 @@ export function SessionBar() {
   return (
     <AnimatePresence initial={false}>
       {recording && (
+        // Its full height at once, while it says “Starting…”, and only its look fades: the app below never moves once
+        // the recording is on, or a click as it begins would land where the control used to be.
         <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: 40, opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          transition={{ type: 'spring', stiffness: 420, damping: 40 }}
-          className="relative z-10 shrink-0 overflow-hidden border-b border-bad/25 bg-[linear-gradient(90deg,var(--bad-soft),transparent_55%)]"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18 }}
+          className="relative z-10 h-10 shrink-0 overflow-hidden border-b border-bad/25 bg-[linear-gradient(90deg,var(--bad-soft),transparent_55%)]"
         >
           <div className="flex h-10 items-center gap-3 px-3">
             <div className="flex items-center gap-2">

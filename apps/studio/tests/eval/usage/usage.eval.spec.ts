@@ -183,6 +183,12 @@ async function link(page: Page, p: Project): Promise<void> {
   await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 60_000 }).toBe(true);
 }
 
+/** Stop a session left recording (a journey that failed halfway): the next one could not start its own. */
+async function stopRecording(): Promise<void> {
+  const { session } = await api<{ session?: { id: string } | null }>('/sessions/active').catch(() => ({ session: null }));
+  if (session) await api(`/sessions/${session.id}/stop`, 'POST', {}).catch(() => undefined);
+}
+
 /** Back to Edit mode on the app's first page, with nothing waiting. */
 async function fresh(page: Page): Promise<void> {
   await page.keyboard.press('Escape');
@@ -320,6 +326,7 @@ const session: Journey = async (page, p, out) => {
     } catch (err) {
       out({ item: x.name, ok: false, ms: Date.now() - t0, detail: (err instanceof Error ? err.message.split('\n')[0] : String(err)).replace(ANSI, '') });
     }
+    await stopRecording();
     await page.goto('/');
     await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 30_000 }).toBe(true);
   }
@@ -527,18 +534,30 @@ const JOURNEYS: [string, Journey][] = [
 
 for (const p of fs.existsSync(path.join(WORK, 'projects.json')) ? projects() : []) {
   test(`${p.manifest.name} (${p.manifest.stack})`, async ({ page }) => {
-    await link(page, p);
-    for (const [journey, run] of JOURNEYS) {
-      try {
-        await run(page, p, (r) => keep({ project: p.manifest.name, journey, ...r }));
-      } catch (err) {
-        // One journey's trouble is a result like any other; the next journey starts afresh.
-        keep({ project: p.manifest.name, journey, item: '(the journey)', ok: false, detail: (err instanceof Error ? err.message.split('\n')[0] : String(err)).replace(ANSI, '') });
-        await page.goto('/').catch(() => undefined);
-        await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 30_000 }).toBe(true).catch(() => undefined);
+    const failed: string[] = [];
+    const out = (journey: string) => (r: Omit<Row, 'project' | 'journey'>) => {
+      keep({ project: p.manifest.name, journey, ...r });
+      if (!r.ok && !r.skipped) failed.push(`${journey} · ${r.item}: ${r.detail ?? 'failed'}`);
+    };
+    try {
+      await link(page, p);
+      for (const [journey, run] of JOURNEYS) {
+        try {
+          await run(page, p, out(journey));
+        } catch (err) {
+          // One journey's trouble is a result like any other; the next journey starts afresh.
+          out(journey)({ item: '(the journey)', ok: false, detail: (err instanceof Error ? err.message.split('\n')[0] : String(err)).replace(ANSI, '') });
+          await stopRecording();
+          await page.goto('/').catch(() => undefined);
+          await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 30_000 }).toBe(true).catch(() => undefined);
+        }
       }
+    } finally {
+      await stopRecording();
+      await api('/apps/close', 'POST', {}).catch(() => undefined);
     }
-    await api('/apps/close', 'POST', {}).catch(() => undefined);
+    // Every journey is run whatever happens to the others; the project passes only when all of them did.
+    expect(failed, `${p.manifest.name}: journeys that failed`).toEqual([]);
   });
 }
 

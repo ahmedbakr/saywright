@@ -187,8 +187,8 @@ for (const a of fs.existsSync(path.join(WORK, 'apps.json')) ? apps() : []) {
       row.reproduce = { runs: runs.map(({ hash: _h, ...r }) => r), reproduced, falsePositive: a.variant === 'twin' && runs.some((r) => !(r.status === 'passed' && r.verified)) };
 
       // ---- fix: the AI, checked by the same test, untouched, and by what it never saw ----
-      if (a.variant === 'twin') return;
-      if (!reproduced) row.fix = { skipped: 'not reproduced' };
+      if (a.variant === 'twin') row.fix = { skipped: 'no bug to fix' };
+      else if (!reproduced) row.fix = { skipped: 'not reproduced' };
       else if ((await spent()) >= BUDGET) row.fix = { skipped: 'budget' };
       else {
         // The run the fix is checked against: the studio's own last one, in its state.
@@ -244,8 +244,18 @@ for (const a of fs.existsSync(path.join(WORK, 'apps.json')) ? apps() : []) {
       fs.mkdirSync(OUT, { recursive: true });
       fs.appendFileSync(ROWS, `${JSON.stringify(row)}\n`);
       console.log(JSON.stringify(row));
+      // A session left recording would keep the next app's from starting.
+      const { session } = await api<{ session?: { id: string } | null }>('/sessions/active').catch(() => ({ session: null }));
+      if (session) await api(`/sessions/${session.id}/stop`, 'POST', {}).catch(() => undefined);
       await api('/apps/close', 'POST', {}).catch(() => undefined);
     }
+    // What doesn't depend on how good the model is must hold: the case finishes, the generated test fails at its
+    // check on every run with the bug, and passes, verified, on every run of the bug-free twin. (Whether the report
+    // finds the bug and the fix holds are the model's results: they are in the summary.)
+    expect(row.error, 'the case finished').toBeUndefined();
+    expect(row.reproduce?.runs ?? [], 'the generated test ran').toHaveLength(RUNS);
+    if (a.variant === 'bug') expect(row.reproduce?.reproduced, 'runs that failed at the check, with the bug').toBe(RUNS);
+    else expect(row.reproduce?.falsePositive, 'a run that failed on the bug-free twin').toBe(false);
   });
 }
 
@@ -255,11 +265,15 @@ function summary(all: Row[]): string {
   const obs = (r: Row) => (r.observe && 'found' in r.observe ? r.observe : null);
   const fix = (r: Row) => (r.fix && 'verified' in r.fix ? r.fix : null);
   const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}% (${n}/${d})` : '—');
+  // Every case counts in what it is out of: one that didn't get that far (an error, the budget) counts as not done.
+  const short = (done: number, of: number, what: string) => (of > done ? ` · ${of - done} ${what} didn’t get that far` : '');
   const found = bug.filter((r) => obs(r)?.found).length;
   const observed = bug.filter((r) => obs(r)).length;
-  const runs = bug.reduce((n, r) => n + (r.reproduce?.runs.length ?? 0), 0);
+  const runs = bug.length * RUNS;
+  const ran = bug.reduce((n, r) => n + (r.reproduce?.runs.length ?? 0), 0);
   const repro = bug.reduce((n, r) => n + (r.reproduce?.reproduced ?? 0), 0);
-  const twinRuns = twin.reduce((n, r) => n + (r.reproduce?.runs.length ?? 0), 0);
+  const twinRuns = twin.length * RUNS;
+  const twinRan = twin.reduce((n, r) => n + (r.reproduce?.runs.length ?? 0), 0);
   const twinFalse = twin.reduce((n, r) => n + (r.reproduce?.runs.filter((x) => !(x.status === 'passed' && x.verified)).length ?? 0), 0);
   const reportFalse = twin.reduce((n, r) => n + (obs(r)?.falsePositives ?? 0), 0);
   const fixes = bug.filter((r) => fix(r));
@@ -268,13 +282,15 @@ function summary(all: Row[]): string {
   const mean = (xs: number[]) => (xs.length ? (xs.reduce((a, b) => a + b, 0) / xs.length).toFixed(1) : '—');
   return [
     'Saywright AI benchmark',
-    `  Bug found by the session report:       ${pct(found, observed)}`,
+    `  Cases finished:                        ${pct(all.filter((r) => !r.error).length, all.length)}`,
+    `  Bug found by the session report:       ${pct(found, bug.length)}${short(observed, bug.length, 'cases')}`,
     `  Report bug findings on bug-free twins: ${reportFalse} (false positives)`,
-    `  Bug reproduced by the generated test:  ${pct(repro, runs)} of runs`,
-    `  Test failing on bug-free twins:        ${pct(twinFalse, twinRuns)} of runs (false positives)`,
-    `  Fixed (verified, test untouched, oracle right): ${pct(fixed, fixes.length)}`,
+    `  Bug reproduced by the generated test:  ${pct(repro, runs)} of runs${short(ran, runs, 'runs')}`,
+    `  Test failing on bug-free twins:        ${pct(twinFalse, twinRuns)} of runs (false positives)${short(twinRan, twinRuns, 'runs')}`,
+    `  Fixed (verified, test untouched, oracle right): ${pct(fixed, bug.length)}${short(fixes.length, bug.length, 'cases')}`,
     `  Report time: ${mean(all.flatMap((r) => (obs(r) ? [obs(r)!.seconds] : [])))} s on average · fix time: ${mean(fixes.map((r) => fix(r)!.seconds))} s on average`,
     `  Cost: $${usd.toFixed(3)} in all`,
     ...all.filter((r) => r.error).map((r) => `  Could not finish ${r.app} (${r.variant}): ${r.error}`),
+    ...all.flatMap((r) => [r.observe, r.fix].flatMap((x) => (x && 'skipped' in x && x.skipped !== 'no bug to fix' ? [`  Skipped for ${r.app} (${r.variant}): ${x.skipped}`] : []))),
   ].join('\n');
 }

@@ -160,3 +160,28 @@ test('a shared screen whose first picture is late doesn’t hold the start up, a
   await page.evaluate(() => (window as unknown as { __firstFrame: () => void }).__firstFrame());
   await shot;
 });
+
+test('once a session records, the app stays where it is: a click as it begins lands on what it was aimed at', async ({ page }) => {
+  await openStudio(page);
+  const app = page.frameLocator('iframe');
+  await expect(app.getByTestId('coupon-apply')).toBeVisible();
+  await record(page, 'Steady start');
+  // Where the app is on the studio's page, every frame for the first moments of the recording.
+  const tops = await page.evaluate(
+    () =>
+      new Promise<number[]>((done) => {
+        const frame = document.querySelector('iframe')!;
+        const out: number[] = [];
+        const t0 = performance.now();
+        const tick = () => {
+          out.push(Math.round(frame.getBoundingClientRect().top * 10) / 10);
+          if (performance.now() - t0 < 700) requestAnimationFrame(tick);
+          else done(out);
+        };
+        tick();
+      }),
+  );
+  expect(tops.length).toBeGreaterThan(5);
+  expect([...new Set(tops)]).toEqual([tops[0]]);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+});
