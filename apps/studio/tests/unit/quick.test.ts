@@ -23,6 +23,23 @@ describe('quickEdit on the sample shop', () => {
     expect(r.title).toBe('“Apply” Button looks like “Pay $98.00” Button, but smaller');
   });
 
+  it('several picked: the same edit on each, as one change (once per place in the code)', () => {
+    const p = tempShop();
+    const apply = srcOf(p, 'src/components/CouponField.tsx', '<Button variant="secondary"');
+    const pay = srcOf(p, 'src/components/OrderSummary.tsx', '<Button size="lg"');
+    const r = quickEdit('make these red', [ref('pin 1', apply, 'Button', 'Apply'), ref('pin 2', pay, 'Button', 'Pay $98.00'), ref('pin 3', apply, 'Button', 'Apply')], p);
+    expect(r?.kind).toBe('edit');
+    if (r?.kind !== 'edit') return;
+    expect(r.edits.map((e) => e.path).sort()).toEqual(['src/components/CouponField.tsx', 'src/components/OrderSummary.tsx']);
+    expect(r.edits.find((e) => e.path.endsWith('CouponField.tsx'))!.after).toContain('<Button variant="danger" size="sm"');
+    expect(r.edits.find((e) => e.path.endsWith('OrderSummary.tsx'))!.after).toContain('variant="danger"');
+    expect(r.title).toMatch(/\(2 picked\)$/);
+    // One that can't be done stops them all, saying which and why.
+    const total = srcOf(p, 'src/components/OrderSummary.tsx', '<SummaryRow label="Total"');
+    const bigger = quickEdit('make these bigger', [ref('pin 1', apply, 'Button', 'Apply'), ref('pin 2', total, 'SummaryRow', 'Total')], p);
+    expect(bigger).toMatchObject({ kind: 'message', text: expect.stringMatching(/^Not done for any of them: “Total” SummaryRow: /) });
+  });
+
   it('maps colour words through design-system synonyms', () => {
     const p = tempShop();
     const apply = srcOf(p, 'src/components/CouponField.tsx', '<Button variant="secondary"');

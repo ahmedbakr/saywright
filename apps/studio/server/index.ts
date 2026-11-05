@@ -22,7 +22,7 @@ import { EventHub, HttpError, Router, asString } from './http.ts';
 import { browserSpeechReady, ensureBrowserSpeech, modelsDir } from './assets.ts';
 import { aiHttpError, autopilotRoutes } from './autopilot.ts';
 import { inspect } from './inspect.ts';
-import { sanitizeRefs } from './refs.ts';
+import { componentWrittenAt, sanitizeRefs } from './refs.ts';
 import type { Project } from './project.ts';
 import { Metrics } from './metrics.ts';
 import { describeOptions, propEdit, quickEdit } from './quick/index.ts';
@@ -153,7 +153,7 @@ export async function createStudioApi(layout: StudioLayout) {
     studio: () => studioOrigin,
     proxyPort: Number(process.env.SAYWRIGHT_PROXY_PORT) || undefined,
     build: (project) => ({
-      changes: new ChangeStore(project),
+      changes: new ChangeStore(project, undefined, () => hub.emit('changes', {})),
       metrics: new Metrics(project),
       mapper: new SourceMapper(project),
       sessions: new Sessions({
@@ -258,8 +258,16 @@ export async function createStudioApi(layout: StudioLayout) {
     const t = tracer();
     const traced = await Promise.all(list.map((r) => (t && r && typeof r === 'object' ? t.trace(r as Traceable, pageUrl).catch(() => null) : null)));
     const refs = sanitizeRefs(list.map((r, i) => (r && typeof r === 'object' ? { ...(r as object), src: traced[i]?.src ?? null } : r)));
+    const project = apps.active()?.project;
     refs.forEach((r, i) => {
       if (r.src && traced[i]?.guessed) r.guessed = true;
+      // Where a component is used (its outermost element is what was pointed at), it is named by the component, as
+      // the Inspector does: “Badge”, not its “span”.
+      const named = r.src && project ? componentWrittenAt((file) => project.read(file), r.src) : null;
+      if (named && named !== r.name) {
+        if (r.label === r.name || r.label.startsWith(`${r.name} · `)) r.label = named + r.label.slice(r.name.length);
+        r.name = named;
+      }
     });
     return refs;
   };

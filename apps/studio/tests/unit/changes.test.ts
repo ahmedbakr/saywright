@@ -37,6 +37,21 @@ describe('ChangeStore', () => {
     expect(store.previews()).toHaveLength(0);
   });
 
+  it('says when a preview is made, kept or undone (every open studio tab catches up), and not when nothing changed', async () => {
+    const p = tempShop();
+    const told = vi.fn();
+    const store = new ChangeStore(p, async () => undefined, told);
+    await store.preview({ title: 'a', source: 'quick', edits: [edit(p, '$${n', 'USD ${n')] });
+    expect(told).toHaveBeenCalledTimes(1);
+    await store.preview({ title: 'b', source: 'quick', edits: [edit(p, '−$', '-$')] });
+    await store.undo();
+    store.keep();
+    expect(told).toHaveBeenCalledTimes(4);
+    await expect(store.preview({ title: 'none', source: 'quick', edits: [edit(p, 'nothing like this', '')] })).rejects.toThrow();
+    expect(() => store.keep()).toThrow();
+    expect(told).toHaveBeenCalledTimes(4);
+  });
+
   it('keeps previews across a restart of the studio, still undoable', async () => {
     const p = tempShop();
     const original = p.read('src/lib/money.ts');

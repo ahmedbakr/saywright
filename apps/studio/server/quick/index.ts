@@ -2,7 +2,7 @@ import { parseSrc } from '@saywright/vite/protocol';
 import type { NextStep, RefInfo } from '../../shared/api.ts';
 import type { FileEdit } from '../changes.ts';
 import type { ComponentProp, ComponentSpec, Project } from '../project.ts';
-import { CodemodError, componentAt, ComputedTextError, elementName, findByWords, findElement, moveElement, parseTsx, readProps, removeElementTidy, setProp, setProps, setText, showsText, type Loc } from './codemods.ts';
+import { CodemodError, componentAt, ComputedTextError, elementName, MixedTextError, findByWords, findElement, moveElement, parseTsx, readProps, removeElementTidy, setProp, setProps, setText, showsText, type Loc } from './codemods.ts';
 import { parseQuick, type QuickIntent } from '../../shared/grammar.ts';
 
 type QuickResult =
@@ -64,6 +64,9 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
   const intent: QuickIntent | null = parseQuick(text);
   if (!intent) return null;
   if (intent.kind === 'text' && intent.everywhere) return { kind: 'needs-ai', why: 'Changing words everywhere they appear needs an AI: a quick edit changes only what you point at.' };
+  // Several picked (“make these smaller”, “remove these”): the same edit on each, once per place in the code.
+  const each = refs.filter((r, i) => r.src && refs.findIndex((o) => o.src === r.src) === i);
+  if (each.length > 1 && (intent.kind === 'set' || intent.kind === 'step' || intent.kind === 'text' || intent.kind === 'remove')) return quickEditEach(text, each, project);
 
   // Without a pointed-at element there is nothing precise to edit; Claude may still find it by name. “This” with
   // nothing pointed at names nothing: said, rather than an AI asked (and paid) to guess.
@@ -192,10 +195,11 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
           const textProp = spec?.text ?? 'children';
           let after: string;
           try {
-            after = setText(code, where.loc, intent.value, textProp, ast);
+            after = setText(code, where.loc, intent.value, textProp, ast, a.text);
           } catch (err) {
             if (!(err instanceof ComputedTextError)) throw err;
-            return { kind: 'needs-ai', why: `${what}’s text is built from code (“${childrenCode(code, el)}”), so changing it needs an AI.`, src: a.src ?? undefined };
+            const how = err instanceof MixedTextError ? 'is written among other elements' : 'is built from code';
+            return { kind: 'needs-ai', why: `${what}’s text ${how} (“${childrenCode(code, el)}”), so changing it needs an AI.`, src: a.src ?? undefined };
           }
           return edit(`Rename ${what} to “${intent.value}”`, `Changed the text of ${name} in ${where.file}.`, where.file, code, after);
         }
@@ -225,6 +229,36 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
     }
     return null;
   }
+}
+
+/**
+ * The same quick edit on several elements, together as one change. Each is made on the code as the ones before left
+ * it, from the bottom of each file up so the places of the others don't move. One that can't be done stops them all,
+ * with why: half of “make these smaller” would be a surprise.
+ */
+function quickEditEach(text: string, refs: RefInfo[], project: Project): QuickResult | null {
+  const overlay = new Map<string, string>();
+  const view = Object.create(project) as Project;
+  view.read = (rel: string) => overlay.get(rel) ?? project.read(rel);
+  const place = (r: RefInfo) => parseSrc(r.src ?? '') ?? { file: '', line: 0, col: 0 };
+  const ordered = [...refs].sort((a, b) => {
+    const pa = place(a);
+    const pb = place(b);
+    return pa.file === pb.file ? pb.line - pa.line || pb.col - pa.col : pa.file < pb.file ? -1 : 1;
+  });
+  const titles: string[] = [];
+  const summaries: string[] = [];
+  for (const r of ordered) {
+    const one = quickEdit(text, [r], view);
+    if (!one) return null;
+    if (one.kind !== 'edit') return one.kind === 'message' ? { ...one, text: `Not done for any of them: ${describeRef(r)}: ${one.text}` } : one;
+    for (const e of one.edits) overlay.set(e.path, e.after);
+    titles.unshift(one.title);
+    summaries.unshift(one.summary);
+  }
+  const edits = [...overlay].map(([path, after]) => ({ path, before: project.read(path), after }));
+  const title = titles.length <= 2 ? titles.join('; ') : `${titles[0]}; and ${titles.length - 1} more`;
+  return { kind: 'edit', title: `${title} (${refs.length} picked)`, summary: summaries.join(' '), edits };
 }
 
 /** “a, b and c”. */

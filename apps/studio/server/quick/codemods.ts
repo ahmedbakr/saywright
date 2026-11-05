@@ -15,6 +15,8 @@ import MagicString from 'magic-string';
 export class CodemodError extends Error {}
 /** The text is written as code ({money(total)}), not plain words: no quick edit can change it safely. */
 export class ComputedTextError extends CodemodError {}
+/** The words are written among other elements (“Hello <b>world</b>”): which part to change can't be told. */
+export class MixedTextError extends ComputedTextError {}
 
 // Babel's AST is loosely typed here on purpose: we only touch a handful of fields.
 type Node = any;
@@ -108,7 +110,12 @@ export function staticText(el: Node): string {
     else if (c.type === 'JSXExpressionContainer' && c.expression?.type === 'StringLiteral') out += ` ${c.expression.value}`;
     else if (c.type === 'JSXExpressionContainer' && c.expression?.type !== 'JSXEmptyExpression') return '';
   }
-  return out
+  return plain(out);
+}
+
+/** JSX text as it reads: entities decoded, spaces collapsed. */
+function plain(s: string): string {
+  return s
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -266,21 +273,38 @@ function escapeJsxText(text: string): string {
   return /[{}<>]/.test(text) ? `{${JSON.stringify(text)}}` : text;
 }
 
-/** Replace the element's visible text. `textProp` is "children" or a prop name such as "label". */
-export function setText(code: string, loc: Loc, text: string, textProp = 'children', ast?: Node): string {
+/** Writes no words of its own: an input, an icon, a picture (or an element holding only such). */
+function wordless(n: Node): boolean {
+  if (n.type === 'JSXText') return !n.value.trim();
+  if (n.type === 'JSXExpressionContainer') return n.expression?.type === 'JSXEmptyExpression';
+  return n.type === 'JSXElement' && n.children.every(wordless);
+}
+
+/**
+ * Replace the element's visible text. `textProp` is "children" or a prop name such as "label". `shown`, the words the
+ * page showed for it, when known: words written beside an input or an icon are changed only when they are all it shows.
+ */
+export function setText(code: string, loc: Loc, text: string, textProp = 'children', ast?: Node, shown?: string): string {
   if (textProp !== 'children') return setProp(code, loc, textProp, text, ast);
   const f = findElement(code, loc, ast);
   if (!f) throw new CodemodError('Element not found at that location');
   const kids = f.el.children.filter((c: Node) => !(c.type === 'JSXText' && !c.value.trim()));
+  let node: Node = kids[0];
   if (kids.length !== 1 || kids[0].type !== 'JSXText') {
     if (kids.length === 1 && kids[0].type === 'JSXExpressionContainer' && kids[0].expression.type === 'StringLiteral') {
       const s = new MagicString(code);
       s.overwrite(kids[0].start, kids[0].end, `{${JSON.stringify(text)}}`);
       return validate(s, f.el.start, f.el.end);
     }
-    throw new ComputedTextError('The text is built from code, not a plain string');
+    // Words beside an input, an icon or a picture (“<label>Email <input /></label>”): the words are what changes.
+    const own = kids.filter((c: Node) => c.type === 'JSXText');
+    const beside = own.length === 1 && kids.every((c: Node) => c === own[0] || (c.type === 'JSXElement' && wordless(c)));
+    if (!beside || (shown?.trim() && plain(shown).toLowerCase() !== plain(own[0].value).toLowerCase())) {
+      if (kids.every((c: Node) => c.type === 'JSXText' || c.type === 'JSXElement')) throw new MixedTextError('The words are written among other elements');
+      throw new ComputedTextError('The text is built from code, not a plain string');
+    }
+    node = own[0];
   }
-  const node = kids[0];
   const raw = code.slice(node.start, node.end);
   const lead = /^\s*/.exec(raw)![0].length;
   const trail = /\s*$/.exec(raw)![0].length;

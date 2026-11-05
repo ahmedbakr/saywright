@@ -277,6 +277,14 @@ export class BridgeClient {
     this.post({ type: 'goto', url });
   }
 
+  /** Load the page again where it is (`url`, as it last said), once it has answered (what is being typed sent first); false when it doesn't answer. */
+  async reload(url: string): Promise<boolean> {
+    const r = await this.request({ type: 'flush', reqId: 0 }, 1500);
+    if (!r.ok) return false;
+    this.goto(url);
+    return true;
+  }
+
   async resolve(src: string, index: number): Promise<ElementInfo | null> {
     const r = await this.request({ type: 'resolve', reqId: 0, src, index });
     return r.ok ? (r.info ?? null) : null;

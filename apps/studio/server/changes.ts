@@ -60,6 +60,8 @@ export class ChangeStore {
   constructor(
     private project: Project,
     private holdUpdates: HoldUpdates = holdPageUpdates,
+    /** After a preview is written, kept or undone: every open studio tab catches up. */
+    private onUpdate: () => void = () => undefined,
   ) {
     this.journal = path.join(project.stateDir(), 'changes.json');
     this.restored = this.restore();
@@ -137,6 +139,7 @@ export class ChangeStore {
       this.save();
       throw err;
     }
+    this.onUpdate();
     return change;
   }
 
@@ -153,6 +156,7 @@ export class ChangeStore {
       c.decidedAt = now;
     }
     this.save();
+    this.onUpdate();
     return { kept };
   }
 
@@ -204,6 +208,7 @@ export class ChangeStore {
       c.decidedAt = now;
     }
     this.save();
+    this.onUpdate();
     return stack;
   }
 

@@ -24,6 +24,29 @@ export function cleanSrc(v: unknown): string | null {
   return v;
 }
 
+/**
+ * The component written at a place in the code (“Badge” for `<Badge tone="vip">`), or null when a tag is (`<span>`)
+ * or the place can't be read. Where a component is used is where its outermost element is set up: that element is
+ * named by it, as the Inspector names it.
+ */
+export function componentWrittenAt(read: (file: string) => string, src: string): string | null {
+  const at = parseSrc(src);
+  if (!at || !/\.[cm]?[jt]sx$/.test(at.file)) return null;
+  let code: string;
+  try {
+    code = read(at.file);
+  } catch {
+    return null;
+  }
+  let offset = 0;
+  for (let line = 1; line < at.line; line++) {
+    offset = code.indexOf('\n', offset) + 1;
+    if (!offset) return null;
+  }
+  const m = /^<([A-Z][\w$]*(?:\.[A-Za-z_$][\w$]*)*)[\s/>]/.exec(code.slice(offset + at.col - 1, offset + at.col + 120));
+  return m?.[1] ?? null;
+}
+
 /** A location already in the project's source (rather than in a bundle that source maps lead back from). */
 export function sanitizeRefs(raw: unknown): RefInfo[] {
   if (!Array.isArray(raw)) return [];

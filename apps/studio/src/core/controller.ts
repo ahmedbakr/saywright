@@ -134,6 +134,8 @@ class Controller {
   }
   /** Times the app's bridge has said it is ready (each page load). */
   private appLoads = 0;
+  /** Times the change list was asked for: only the latest answer is shown. */
+  private changesAsked = 0;
 
   readonly ripples: { x: number; y: number; t: number; kind: 'replay' }[] = [];
   /** While set (the setup tour, the voice test in Settings), speech is shown but not acted on. */
@@ -224,6 +226,13 @@ class Controller {
           const st = get().status;
           if (st) set({ status: { ...st, ai: { ...st.ai, usage: d as UsagePill } } });
         },
+        // A preview made, kept or undone (in another studio tab, say): this one shows it too, and its boxes go with it.
+        changes: () =>
+          void this.refreshChanges().then(() => {
+            const decided = new Set(get().changes.filter((c) => c.status !== 'preview').map((c) => c.id));
+            const targets = get().previewTargets.filter((p) => !decided.has(p.changeId));
+            if (targets.length !== get().previewTargets.length) set({ previewTargets: targets });
+          }),
         // A change another AI app proposed over MCP: shown like any other, to keep or undo.
         change: (d) => {
           const { change, via } = d as { change: Change; via: string };
@@ -881,8 +890,12 @@ class Controller {
     set({ recorder: { ...r, expectations: r.expectations.filter((_, j) => j !== i) } });
   }
 
-  reloadApp(): void {
-    set({ app: { ...get().app, connected: false, reloadKey: get().app.reloadKey + 1 }, hover: null });
+  /** Reload the app on the page it is on (its route and #hash); a page that doesn't answer (stuck, or gone) loads afresh from the start. */
+  async reloadApp(): Promise<void> {
+    set({ hover: null });
+    const { connected, url } = get().app;
+    if (connected && url && (await this.bridge.reload(url))) return set({ app: { ...get().app, connected: false } });
+    set({ app: { ...get().app, connected: false, reloadKey: get().app.reloadKey + 1 } });
   }
 
   // ───────────────────────────── voice ─────────────────────────────
@@ -1932,9 +1945,11 @@ class Controller {
   }
 
   async refreshChanges(): Promise<void> {
+    // Several at once (this tab's own change, and the event every tab gets for it): the last asked is the one shown.
+    const asked = ++this.changesAsked;
     try {
       const { changes } = await api.get<{ changes: Change[] }>('/changes');
-      set({ changes });
+      if (asked === this.changesAsked) set({ changes });
     } catch {
       /* keep what we have */
     }

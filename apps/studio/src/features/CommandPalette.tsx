@@ -96,6 +96,8 @@ export function CommandPalette() {
   const recording = useSessions((s) => s.live.status === 'recording');
   const linked = useApps((s) => s.apps);
   const theme = useSettings((s) => s.theme);
+  // What the studio shows now (“system” follows the computer's setting): the entry offers the other one.
+  const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   const ai = useAiName();
   const [q, setQ] = useState('');
   const close = () => {
@@ -113,6 +115,8 @@ export function CommandPalette() {
     <Dialog open={open} onOpenChange={(o) => (o ? set({ overlay: 'palette' }) : close())} title="Command palette" position="top" focusFirst className="w-[min(600px,calc(100vw-32px))]">
       <Command
         loop
+        // Ctrl K is the studio's (it opens and closes the palette), not a move up the list; arrows move.
+        vimBindings={false}
         filter={match}
         className="flex min-h-0 flex-col"
         onKeyDown={(e) => {
@@ -251,8 +255,8 @@ export function CommandPalette() {
             <Item icon={<PanelRight />} kbd="\" onSelect={run(() => useSettings.getState().setUi({ panelOpen: !useSettings.getState().ui.panelOpen }))}>
               Toggle panel
             </Item>
-            <Item icon={theme === 'light' ? <Moon /> : <Sun />} onSelect={run(() => useSettings.getState().set({ theme: theme === 'light' ? 'dark' : 'light' }))}>
-              {theme === 'light' ? 'Dark theme' : 'Light theme'}
+            <Item icon={dark ? <Sun /> : <Moon />} onSelect={run(() => useSettings.getState().set({ theme: dark ? 'light' : 'dark' }))} keywords={['theme', 'dark', 'light', 'mode', 'appearance', 'colors']}>
+              {dark ? 'Switch to light theme' : 'Switch to dark theme'}
             </Item>
             <Item icon={<Settings2 />} onSelect={run(() => set({ overlay: 'settings', settingsTab: 'general' }))} keywords={['preferences', 'options']}>
               Settings

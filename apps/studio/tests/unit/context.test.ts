@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { cleanSrc, sanitizeRefs } from '../../server/refs';
+import { cleanSrc, componentWrittenAt, sanitizeRefs } from '../../server/refs';
 import { createStudioApi, studioRoutes, type Studio } from '../../server/index';
 import { repoLayout } from '../../server/layout';
 import { dispatch } from '../../server/standalone';
@@ -37,6 +37,17 @@ describe('a source location from the page', () => {
     }
     expect(cleanSrc('../../packages/ui/Button.tsx:3:5')).toBe('../../packages/ui/Button.tsx:3:5');
   });
+
+  it('names an element by the component written where it is used (its outermost element), as the Inspector does', () => {
+    const code = 'export const Row = () => (\n  <li>\n    <Badge tone="vip">VIP</Badge> <UI.Chip /> <span>x</span>\n  </li>\n);\n';
+    const read = (file: string) => (file === 'src/Row.tsx' ? code : '');
+    expect(componentWrittenAt(read, 'src/Row.tsx:3:5')).toBe('Badge');
+    expect(componentWrittenAt(read, 'src/Row.tsx:3:35')).toBe('UI.Chip');
+    expect(componentWrittenAt(read, 'src/Row.tsx:3:47')).toBeNull();
+    expect(componentWrittenAt(read, 'src/Row.tsx:2:3')).toBeNull();
+    expect(componentWrittenAt(read, 'src/Row.tsx:40:3')).toBeNull();
+    expect(componentWrittenAt(() => { throw new Error('gone'); }, 'src/Row.tsx:3:5')).toBeNull();
+  });
 });
 
 describe('a Next.js page, pointed at in the studio', () => {
@@ -49,6 +60,10 @@ describe('a Next.js page, pointed at in the studio', () => {
   };
   write('package.json', '{"name":"next-admin","dependencies":{"next":"16.0.0"}}');
   write(PAGE, 'export default function Page() {\n  return (\n    <main>\n      <h1>Hello again</h1>\n    </main>\n  );\n}\n');
+  // A component whose outermost element is its <span>: pointed at, it is where the component is used.
+  const TAGS = 'src/app/tags/page.tsx';
+  write(TAGS, 'import { Badge } from "../../Badge";\nexport default function Tags() {\n  return (\n    <p>\n      <Badge tone="vip">VIP</Badge>\n    </p>\n  );\n}\n');
+  write('src/Badge.tsx', 'export function Badge({ tone, children }) {\n  return <span className={tone}>{children}</span>;\n}\n');
   // The bundle the page runs from, with its source map: column 5 of line 1 is the <h1> at line 4, column 7.
   const chunk = '.next/server/chunks/ssr/[root-of-the-server]__0abc._.js';
   write(chunk, 'var x=jsx("h1",{children:"Hello again"});\n//# sourceMappingURL=[root-of-the-server]__0abc._.js.map\n');
@@ -110,6 +125,14 @@ describe('a Next.js page, pointed at in the studio', () => {
     expect(text).toContain('1. selected: h1');
     expect(text).not.toContain('2. pinned');
     expect(text).toMatch(/Last said in the studio \(\d+ s ago\): “make this bigger”/);
+  });
+
+  it('names an element pointed at where its component is used by the component, as the Inspector does', async () => {
+    const r = await json('POST', '/intent', { text: 'remove this', refs: [{ role: 'this', src: `${TAGS}:5:7`, name: 'span', label: 'span · VIP', text: 'VIP', tag: 'span' }] });
+    expect(r.kind).toBe('change');
+    expect(r.change.title).toMatch(/^Remove “VIP” Badge/);
+    expect(r.change.refs[0]).toMatchObject({ name: 'Badge', label: 'Badge · VIP' });
+    await json('POST', '/changes/undo', { id: r.change.id });
   });
 
   it('takes a quick edit at that place', async () => {

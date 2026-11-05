@@ -219,6 +219,13 @@ export function Dock() {
                 e.preventDefault();
                 submit();
               } else if (e.key === 'Escape') {
+                // Nothing typed and a request running (one just sent): Escape stops it, as the island says, rather
+                // than only leaving the bar while it goes on (and is paid for).
+                if (!text.trim() && useStudio.getState().request) {
+                  e.preventDefault();
+                  void controller.cancelRequest();
+                  return;
+                }
                 discard();
                 input.current?.blur();
               } else if (e.key === 'ArrowUp' && (!text || hIndex >= 0) && history.length) {

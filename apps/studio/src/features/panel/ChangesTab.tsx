@@ -37,7 +37,7 @@ export function ChangesTab() {
       <AnimatePresence initial={false}>
         {changes.map((c) => (
           <motion.div key={c.id} layout initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
-            <ChangeCard change={c} defaultOpen={c.status === 'preview' && c.id === pending[0]?.id} />
+            <ChangeCard change={c} defaultOpen={c.status === 'preview' && c.id === pending[0]?.id} newer={c.status === 'preview' ? pending.filter((p) => p.createdAt > c.createdAt) : []} />
           </motion.div>
         ))}
       </AnimatePresence>
@@ -45,8 +45,10 @@ export function ChangesTab() {
   );
 }
 
-function ChangeCard({ change: c, defaultOpen }: { change: Change; defaultOpen: boolean }) {
+/** `newer`: previews made after this one. Undoing it undoes them too (they may build on it), so that is asked first. */
+function ChangeCard({ change: c, defaultOpen, newer }: { change: Change; defaultOpen: boolean; newer: Change[] }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [confirming, setConfirming] = useState(false);
   const added = c.files.reduce((n, f) => n + f.added, 0);
   const removed = c.files.reduce((n, f) => n + f.removed, 0);
   return (
@@ -93,10 +95,23 @@ function ChangeCard({ change: c, defaultOpen }: { change: Change; defaultOpen: b
                   <DiffView file={f} />
                 </div>
               ))}
-              {c.status === 'preview' && (
+              {c.status === 'preview' && confirming && (
+                <div className="rounded-[8px] bg-warn-soft px-2.5 py-2 text-[12px] leading-relaxed text-fg-2 ring-1 ring-inset ring-warn/25" data-undo-newer>
+                  Undoing this also undoes {newer.length === 1 ? 'the preview' : `the ${newer.length} previews`} made after it, which may build on it: {newer.map((n) => `“${n.title}”`).join(', ')}.
+                  <div className="mt-1.5 flex justify-end gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" variant="primary" icon={<Undo2 />} onClick={() => (setConfirming(false), void controller.undoChange(c.id))}>
+                      Undo all {newer.length + 1}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {c.status === 'preview' && !confirming && (
                 <div className="flex justify-end gap-1 pt-1">
-                  <Button size="sm" variant="ghost" icon={<Undo2 />} onClick={() => void controller.undoChange(c.id)}>
-                    Undo
+                  <Button size="sm" variant="ghost" icon={<Undo2 />} onClick={() => (newer.length ? setConfirming(true) : void controller.undoChange(c.id))} title={newer.length ? `Also undoes ${newer.length === 1 ? 'the preview' : `the ${newer.length} previews`} made after it` : undefined}>
+                    {newer.length ? `Undo (and ${newer.length} newer)` : 'Undo'}
                   </Button>
                   <Button size="sm" variant="primary" icon={<Check />} onClick={() => void controller.keepChange(c.id)}>
                     Keep

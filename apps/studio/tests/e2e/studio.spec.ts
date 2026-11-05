@@ -246,6 +246,96 @@ test('the Changes tab keeps and undoes like the rest of the studio: a file edite
   expect(await store<string>(page, 's.changes[0].status')).toBe('kept');
 });
 
+test('undoing an older preview in the Changes tab says which newer ones go with it, and asks first', async ({ page }) => {
+  await openStudio(page, { onboarded: true, theme: 'dark', ui: { panelOpen: true, panelTab: 'changes', device: 'fill', commitOnKeep: false } });
+  const before = shopFile('src/components/CouponField.tsx');
+  const apply = await appPoint(page, 'coupon-apply');
+  await page.mouse.click(apply.x, apply.y);
+  const bar = page.getByRole('textbox', { name: 'Describe a change' });
+  await bar.fill('rename to Use code');
+  await bar.press('Enter');
+  await expectIsland(page, /Rename/);
+  await bar.fill('make it bigger');
+  await bar.press('Enter');
+  await expectIsland(page, /size sm → md/);
+  // The newest is on top: the older one (open since it was made) says what its Undo also undoes.
+  const older = page.locator('[data-change]').nth(1);
+  await expect(older).toContainText('Rename');
+  if (!(await older.getByRole('button', { name: 'Undo (and 1 newer)' }).isVisible())) await older.getByRole('button', { name: /Rename/ }).click();
+  await older.getByRole('button', { name: 'Undo (and 1 newer)' }).click();
+  await expect(older.locator('[data-undo-newer]')).toContainText('size sm → md');
+  await older.getByRole('button', { name: 'Cancel' }).click();
+  expect(await store<number>(page, "s.changes.filter((c) => c.status === 'preview').length")).toBe(2);
+  await older.getByRole('button', { name: 'Undo (and 1 newer)' }).click();
+  await older.getByRole('button', { name: 'Undo all 2' }).click();
+  await expectIsland(page, /Undid 2 changes/);
+  expect(shopFile('src/components/CouponField.tsx')).toBe(before);
+});
+
+test('Escape in the empty command bar right after sending stops the request, rather than only leaving the bar', async ({ page }) => {
+  await openStudio(page);
+  const apply = await appPoint(page, 'coupon-apply');
+  await page.mouse.click(apply.x, apply.y);
+  const bar = page.getByRole('textbox', { name: 'Describe a change' });
+  // The request (to the AI stand-in) is held on its way, as a slow model would be: it never gets there.
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route('**/api/intent', async (route) => {
+    await held;
+    await route.abort().catch(() => undefined);
+  });
+  await bar.fill('fix the coupon discount');
+  await bar.press('Enter');
+  await expect.poll(() => store<boolean>(page, '!!s.request')).toBe(true);
+  const id = await store<string>(page, 's.request.id');
+  await expect(bar).toBeFocused();
+  const cancel = page.waitForRequest((r) => r.url().endsWith('/api/cancel') && r.method() === 'POST');
+  await bar.press('Escape');
+  // The studio's server is told to stop it, and the island says it is stopping.
+  expect(JSON.parse((await cancel).postData() ?? '{}')).toMatchObject({ requestId: id });
+  await expect.poll(() => store<string>(page, "s.request ? s.request.step : 'none'")).toMatch(/^(Stopping|none)$/);
+  release();
+  await expect.poll(() => store<boolean>(page, '!!s.request'), { timeout: 8000 }).toBe(false);
+  expect(await store<number>(page, "s.changes.filter((c) => c.status === 'preview').length")).toBe(0);
+});
+
+test('a preview made in another studio tab shows here at once, and is undone from here', async ({ page, context }) => {
+  await openStudio(page);
+  const other = await context.newPage();
+  await other.goto('/');
+  await other.waitForFunction(() => (window as any).__saywrightStore?.get().app.connected, null, { timeout: 30_000 });
+  const before = shopFile('src/components/CouponField.tsx');
+  const apply = await appPoint(page, 'coupon-apply');
+  await page.mouse.click(apply.x, apply.y);
+  await page.getByRole('textbox', { name: 'Describe a change' }).fill('rename to Use code');
+  await page.keyboard.press('Enter');
+  await expectIsland(page, /Rename/);
+  await expect.poll(() => store<number>(other, "s.changes.filter((c) => c.status === 'preview').length"), { timeout: 3000 }).toBe(1);
+  await other.bringToFront();
+  await other.locator('body').click({ position: { x: 4, y: 300 } });
+  await other.keyboard.press('Control+z');
+  await expectIsland(other, /Undone/);
+  expect(shopFile('src/components/CouponField.tsx')).toBe(before);
+  // …and the first tab is told it was undone.
+  await expect.poll(() => store<number>(page, "s.changes.filter((c) => c.status === 'preview').length"), { timeout: 3000 }).toBe(0);
+  await other.close();
+});
+
+test('Reload the app stays on the page the app is on', async ({ page }) => {
+  await openStudio(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => (location.hash = '#/account'));
+  await expect(app.getByRole('heading', { name: 'Your account' })).toBeVisible();
+  // When the app's page was loaded: a reload makes a new one.
+  const loaded = () => app.locator('body').evaluate(() => performance.timeOrigin, null, { timeout: 2000 }).catch(() => 0);
+  const first = await loaded();
+  await page.getByRole('button', { name: 'Reload the app' }).click();
+  await expect.poll(loaded, { timeout: 15_000 }).toBeGreaterThan(first);
+  await expect(app.getByRole('heading', { name: 'Your account' })).toBeVisible();
+  await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 15_000 }).toBe(true);
+  expect(await store<string>(page, 's.app.url')).toContain('#/account');
+});
+
 test('right after a typed request, Enter keeps and Ctrl Z undoes from the command bar', async ({ page }) => {
   await openStudio(page);
   const before = shopFile('src/components/CouponField.tsx');
@@ -402,13 +492,25 @@ test('the code in Changes takes the new theme’s colours when the theme changes
 });
 
 test('command palette, modes and theme', async ({ page }) => {
-  await openStudio(page);
+  await openStudio(page, { onboarded: true, theme: 'system' });
   await page.keyboard.press('ControlOrMeta+k');
   await page.getByPlaceholder('Search commands…').fill('use');
   await page.getByRole('option', { name: /Use: click through the app/ }).click();
   await expect.poll(() => store<string>(page, 's.mode')).toBe('use');
   await page.keyboard.press('e');
   await expect.poll(() => store<string>(page, 's.mode')).toBe('edit');
+  // Following a light system, the palette offers the dark theme, found by the word “dark”, and it changes what shows.
+  await expect(page.locator('html')).not.toHaveClass(/dark/);
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.getByPlaceholder('Search commands…').fill('dark');
+  await page.getByRole('option', { name: 'Switch to dark theme' }).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.getByPlaceholder('Search commands…').fill('theme');
+  await expect(page.getByRole('option', { name: 'Switch to light theme' })).toBeVisible();
+  // The key that opened it closes it, even with the focus in its search box.
+  await page.keyboard.press('Control+k');
+  await expect(page.getByPlaceholder('Search commands…')).toBeHidden();
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('radio', { name: 'Light' }).click();
   await expect(page.locator('html')).not.toHaveClass(/dark/);

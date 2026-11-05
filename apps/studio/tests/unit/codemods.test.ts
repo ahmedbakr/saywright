@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CodemodError, componentAt, moveElement, readProps, findElement, removeElement, removeElementTidy, setProp, setText } from '../../server/quick/codemods';
+import { CodemodError, componentAt, ComputedTextError, MixedTextError, moveElement, readProps, findElement, removeElement, removeElementTidy, setProp, setText } from '../../server/quick/codemods';
 import { locOf } from './helpers';
 
 const SRC = `import { Button } from './ds';
@@ -70,6 +70,30 @@ describe('setText', () => {
 
   it('refuses text built from expressions', () => {
     expect(() => setText(SRC, locOf(SRC, '<Button\n'), 'Pay now')).toThrow(CodemodError);
+  });
+
+  it('changes the words beside an input or an icon, and only when they are all it shows', () => {
+    const form = `export function F() {
+  return (
+    <form>
+      <label className="row">
+        Email <input type="email" name="email" />
+      </label>
+      <label><input type="checkbox" /> Remember me</label>
+      <button><svg viewBox="0 0 8 8"><path d="M0 0h8v8H0z" /></svg> Save</button>
+      <p>Total: <Price value={total} /></p>
+      <p>Hello <b>world</b></p>
+    </form>
+  );
+}
+`;
+    expect(setText(form, locOf(form, '<label className'), 'Work email', 'children', undefined, 'Email')).toContain('        Work email <input type="email" name="email" />');
+    expect(setText(form, locOf(form, '<label><input'), 'Keep me signed in', 'children', undefined, 'Remember me')).toContain('<label><input type="checkbox" /> Keep me signed in</label>');
+    expect(setText(form, locOf(form, '<button>'), 'Save draft')).toContain('</svg> Save draft</button>');
+    // The page shows more than the words written here (the price): which part was meant can't be told.
+    expect(() => setText(form, locOf(form, '<p>Total'), 'Sum:', 'children', undefined, 'Total: $5.00')).toThrow(ComputedTextError);
+    // Words split around other words.
+    expect(() => setText(form, locOf(form, '<p>Hello'), 'Hi there', 'children', undefined, 'Hello world')).toThrow(MixedTextError);
   });
 });
 
