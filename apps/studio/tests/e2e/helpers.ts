@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page } from '@playwright/test';
+import { keepUndoHint } from '../../src/core/keys';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const SHOP = path.resolve(here, '../../../shop');
@@ -142,6 +143,18 @@ export const selectedLabels = (page: Page): Promise<string[]> => store<string[]>
 async function islandText(page: Page): Promise<string> {
   return (await page.locator('[data-island]').innerText()).replace(/\s+/g, ' ');
 }
+
+/**
+ * The keys as the studio names them on the computer its browser runs on: Return and ⌘Z on a Mac, Enter and Ctrl Z
+ * elsewhere. A test of what the studio says reads them here, so it holds on every computer.
+ */
+export async function keyNames(page: Page): Promise<{ enter: string; undo: string; palette: string; keepUndo: string }> {
+  const mac = await page.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent));
+  return { enter: mac ? 'Return' : 'Enter', undo: mac ? '⌘Z' : 'Ctrl Z', palette: mac ? '⌘K' : 'Ctrl K', keepUndo: keepUndoHint(mac) };
+}
+
+/** Text as a pattern that matches it exactly. */
+export const literally = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export async function expectIsland(page: Page, re: RegExp): Promise<void> {
   await expect.poll(() => islandText(page), { timeout: 15_000 }).toMatch(re);

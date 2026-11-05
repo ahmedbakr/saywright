@@ -5,7 +5,7 @@
  * computer; Help and the command palette bring it back. Its words follow the AI and the microphone.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { appPoint, expectIsland, forgetTour, openStudio, resetAll, shopFile, store, STUDIO, waitForApp } from './helpers';
+import { appPoint, expectIsland, forgetTour, keyNames, openStudio, resetAll, shopFile, store, STUDIO, waitForApp } from './helpers';
 
 const call = async <T = Record<string, unknown>,>(method: string, route: string, body?: unknown): Promise<T> => {
   const res = await fetch(`${STUDIO}/api${route}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -56,11 +56,12 @@ test('first run: the welcome, the sample shop, then a tour whose steps move on a
   // Point: clicking something in the app selects it, and the tour moves on.
   const pay = await appPoint(page, 'pay-button');
   await page.mouse.click(pay.x, pay.y);
-  await expect(step(page, 'Say what to change')).toContainText('Hold Space and say it, or type it here and press Enter');
+  const { enter, undo } = await keyNames(page);
+  await expect(step(page, 'Say what to change')).toContainText(`Hold Space and say it, or type it here and press ${enter}`);
   // Say: a typed request makes a live preview.
   await page.getByRole('textbox', { name: 'Describe a change' }).fill('make it smaller');
   await page.keyboard.press('Enter');
-  await expect(step(page, 'Keep it or undo it')).toContainText('This is a live preview: your file and your app have already changed. Enter keeps it, Ctrl Z puts both back.');
+  await expect(step(page, 'Keep it or undo it')).toContainText(`This is a live preview: your file and your app have already changed. ${enter} keeps it, ${undo} puts both back.`);
   expect(shopFile('src/components/OrderSummary.tsx')).not.toContain(PAY_LG);
   // Keep: Enter keeps it.
   await page.keyboard.press('Enter');
@@ -78,7 +79,7 @@ test('first run: the welcome, the sample shop, then a tour whose steps move on a
   await expect(step(page, 'Test and review')).toContainText('Record session: use your app and talk, then get a report with evidence.');
   await page.locator('[data-tour-next]').click();
   const done = step(page, 'You’re set');
-  await expect(done).toContainText('Press ? for phrases and shortcuts, and Ctrl K to find any action by name.');
+  await expect(done).toContainText(`Press ? for phrases and shortcuts, and ${(await keyNames(page)).palette} to find any action by name.`);
   await expect(done.getByRole('button', { name: 'Skip tour' })).toHaveCount(0);
   await done.getByRole('button', { name: 'Done' }).click();
   await expect(page.locator('[data-tour-card]')).toHaveCount(0);
@@ -163,7 +164,7 @@ test('its words follow the AI and the microphone: with no AI, quick edits are fr
   });
   await card.locator('[data-tour-next]').click();
   const say = step(page, 'Say what to change');
-  await expect(say).toContainText('Type it here and press Enter: “make it smaller”, “rename to Place order”.');
+  await expect(say).toContainText(`Type it here and press ${(await keyNames(page)).enter}: “make it smaller”, “rename to Place order”.`);
   await expect(say).not.toContainText('Space');
   await expect(say.getByRole('button', { name: 'Check your mic' })).toHaveCount(0);
   await card.locator('[data-tour-next]').click();

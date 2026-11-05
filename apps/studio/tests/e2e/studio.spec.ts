@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { appPoint, E2E_SHOP, expectIsland, forgetTour, openStudio, resetAll, SHOP_URL, shopFile, store, STUDIO } from './helpers';
+import { appPoint, E2E_SHOP, expectIsland, forgetTour, keyNames, literally, openStudio, resetAll, SHOP_URL, shopFile, store, STUDIO } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -346,7 +346,7 @@ test('right after a typed request, Enter keeps and Ctrl Z undoes from the comman
   await bar.fill('rename to Use code');
   await bar.press('Enter');
   // The island says which keys decide, and they work with focus still in the empty command bar.
-  await expectIsland(page, /Rename.*Enter keeps · Ctrl Z undoes/);
+  await expectIsland(page, new RegExp(`Rename.*${literally((await keyNames(page)).keepUndo)}`));
   await expect(bar).toBeFocused();
   await bar.press('Control+z');
   await expectIsland(page, /Undone/);
