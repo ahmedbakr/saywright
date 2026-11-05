@@ -4,13 +4,13 @@ All notable changes to Saywright. The format follows [Keep a Changelog](https://
 
 ## [0.2.3] - 2026-11-05
 
-What a second audit, of 0.2.2, found, each fixed with a test: what is private stays private everywhere, a focused test is never verified, and a budget counts all it pays for.
+What an audit of 0.2.2 and a review of its fixes found, each fixed with a test: what is private stays private everywhere and from the first frame, a test is verified only when each of its tests ran its own checks, and a budget counts all it pays for.
 
 ### Fixed
 
 - **A private rich text editor stays private.** A rich text editor (`contenteditable`) marked private, itself or through a part of the page it is in (`data-private`, `data-saywright-secret`…), had its text recorded in Write test's step and in the test. It is recorded by name, as a secret field is (`secret('PRIVATE_NOTES')`). What it holds, or what a part marked private says, is left out of a session's targets, headings and screen text and of what Autopilot reads, also when it is inside the element described.
-- **Screen masking reaches into shadow roots.** While a session recorded, a secret field inside a web component's open shadow root showed in its pictures and video. Every open shadow root is masked now, nested ones and ones added later too, and nothing of the mask is left when the session ends.
-- **A focused test is never verified.** A file with `test.only` (or `describe.only`) ran only that test, so a passing one before a failing one was verified. The studio refuses to run it and says to remove `.only`. A mark written twice (`[check 1]` in two tests) must run twice.
+- **Screen masking reaches into shadow roots, and masks from the first frame.** While a session recorded, a secret field inside a web component's open shadow root showed in its pictures and video. Every open shadow root is masked now, nested ones too; a root made while recording is masked as it is made, before anything is drawn in it (a closed one too), where before a field filled in as it was drawn could show for up to a second. A privacy mark added during the session (`data-private`, a class such as `fs-mask`) masks what it covers from the next frame; it went unnoticed. Nothing of the mask is left when the session ends.
+- **A focused test is never verified.** A file with `test.only` (or `describe.only`) ran only that test, so a passing one before a failing one was verified. The studio refuses to run it and says to remove `.only`. Each test must run its own steps and checks, as often as it has them: a test whose `[check 1]` never ran was covered by another test that ran its own `[check 1]` twice.
 - **Every attempt is counted, at its own model's price.** When Claude declines a request and runs it again on another model (its server-side fallback), both attempts are billed, but only the last was counted, at the price of the model asked for. Each is counted now at the price of the model that ran it, as is a request another model answered; one answered under its provider's own name for the model asked for (OpenAI's dated snapshots, Gemini's versions, OpenRouter's maker prefix) is counted as that model, so its use isn't split across names. Under a budget set to Stop, a declined request isn't run again on another model, since that second run's cost can't be set aside first, and the message says so.
 - **A budget's estimate is no longer short.** What a request sends was estimated below Claude's own count (it counts a fifth to a half more for code, CSS and JSON, and three times more for a large screenshot), so a request under Stop could pass a limit. It is estimated now from each kind of text and each picture's size, at rates measured against Claude's count, and a model seen to send more than estimated has its later requests counted that much bigger.
 - **A refusal tells close amounts apart.** “This could cost up to $0.01, and $0.01 … is left” now reads “up to $0.0110, and $0.0105”, and token amounts the same way.
@@ -18,7 +18,8 @@ What a second audit, of 0.2.2, found, each fixed with a test: what is private st
 ### Tests and benchmarks
 
 - `npm run eval:usage` without `EVAL_AI=real` turns off every AI the studio would find on the computer (a plan's app, a key in `.env.local`, a local server), and stops if one is still usable: an installed Codex was used for its reports.
-- The keyboard test waits for the new preview before pressing Enter, and the session test records with the panel closed: where a headless browser on a Mac shares the screen, the app inside lays itself out as wide as the screen.
+- The keyboard test waits for the new preview before pressing Enter. The session test records with the panel closed, and says, with both widths, when the browser lays the app out wider than its frame while the tab is shared (seen with a headless browser on a Mac, where a click can't be aimed into it); everywhere else every check stands.
+- A browser test looks at the first frame drawn after a field appears or is marked private, not only at what is masked in the end.
 
 ### Documentation
 
