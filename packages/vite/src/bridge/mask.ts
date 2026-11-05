@@ -21,8 +21,13 @@ const SWEEP_MS = 1000;
 
 let observer: MutationObserver | null = null;
 let sweep: ReturnType<typeof setInterval> | null = null;
-/** The shadow roots masked, each with the style it was given. */
-const roots = new Map<ShadowRoot, HTMLStyleElement>();
+/**
+ * The shadow roots masked, each with the style it was given, held weakly: a component the app throws away while the
+ * session records (a long list's rows, as it scrolls) is freed with its root, not kept until the session ends.
+ */
+const roots = new WeakMap<ShadowRoot, HTMLStyleElement>();
+/** The same roots, to go through when the session ends (those still there). */
+let covered: WeakRef<ShadowRoot>[] = [];
 /**
  * The page's own attachShadow (what was there before ours): what ours calls, put back when a session ends. Kept once
  * known, so anything that wrapped ours meanwhile still reaches it, and ours never calls itself.
@@ -66,6 +71,7 @@ function cover(root: ShadowRoot): void {
   style.textContent = css();
   root.appendChild(style);
   roots.set(root, style);
+  covered.push(new WeakRef(root));
   observer.observe(root, OBSERVE);
   scan(root);
 }
@@ -129,11 +135,14 @@ export function maskScreen(on: boolean): void {
     removeEventListener('focusin', onUse, true);
     document.getElementById(STYLE_ID)?.remove();
     for (const el of Array.from(document.querySelectorAll(`[${ATTR}]`))) el.removeAttribute(ATTR);
-    for (const [root, style] of roots) {
-      style.remove();
+    for (const ref of covered) {
+      const root = ref.deref();
+      if (!root) continue;
+      roots.get(root)?.remove();
+      roots.delete(root);
       for (const el of Array.from(root.querySelectorAll(`[${ATTR}]`))) el.removeAttribute(ATTR);
     }
-    roots.clear();
+    covered = [];
     return;
   }
   if (observer) return;
@@ -159,7 +168,10 @@ export function maskScreen(on: boolean): void {
       else cover(open);
     }
   };
-  sweep = setInterval(() => look(document), SWEEP_MS);
+  sweep = setInterval(() => {
+    look(document);
+    covered = covered.filter((ref) => ref.deref());
+  }, SWEEP_MS);
   addEventListener('input', onUse, true);
   addEventListener('focusin', onUse, true);
 }
