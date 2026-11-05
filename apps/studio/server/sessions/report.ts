@@ -545,10 +545,13 @@ export function withTranslation(r: SessionReport, t: TranslatedText, lang: 'en' 
   };
 }
 
-/** Said of a problem the session didn't show: “not triggered in this session”, “never exercised during the recording”. */
+/**
+ * Said of a problem the session didn't show: “not triggered in this session”, “never exercised during the recording”.
+ * Only words for the problem itself happening: “the message was not seen during the session” is a problem seen.
+ */
 const UNSEEN = [
-  /\b(?:not|never|wasn['’]t|was not|weren['’]t|didn['’]t|did not)\s+(?:been\s+|get\s+|got\s+)?(?:triggered|observed|reproduced|exercised|encountered|seen|hit|happen(?:ed)?|occur(?:red)?|tested)\b[^.]{0,60}?\b(?:in|during|by)\s+(?:this|the)\s+(?:session|recording|run|replay|test)\b/i,
-  /لم\s+(?:يحدث|تحدث|يظهر|تظهر|يُلاحظ|تُلاحظ|يلاحظ|تلاحظ|يُختبر|تُختبر|يتم)[^.]{0,60}?(?:هذه\s+الجلسة|الجلسة|التسجيل)/,
+  /\b(?:not|never|wasn['’]t|was not|weren['’]t|didn['’]t|did not)\s+(?:been\s+|get\s+|got\s+)?(?:triggered|reproduced|exercised|encountered|happen(?:ed)?|occur(?:red)?|tested)\b[^.]{0,60}?\b(?:in|during|by)\s+(?:this|the)\s+(?:session|recording|run|replay|test)\b/i,
+  /لم\s+(?:يحدث|تحدث|يُختبر|تُختبر|يختبر|تختبر)[^.]{0,60}?(?:هذه\s+الجلسة|الجلسة|التسجيل)/,
 ];
 
 /**

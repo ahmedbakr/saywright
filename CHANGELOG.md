@@ -2,6 +2,42 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-11-05
+
+The rest of what the five test users found: the smaller things, each fixed with a test.
+
+### Fixed
+
+- **Several picked, all changed.** With elements picked (⇧ click), “make these smaller”, “rename these” or “remove these” changed only the first. Each changes now, together as one change; one that can't be done stops them all, and says which and why.
+- **Undo on an older preview says what else goes.** Undoing a preview in the Changes tab also undoes the newer ones (they may build on it), with no hint: its button now says “Undo (and 2 newer)” and asks first, naming them.
+- **Escape stops a request just sent.** Right after sending, Escape in the empty command bar only left the bar, and the request went on and was paid for.
+- **A label with its field inside is renamed by a quick edit** (“Email” beside its input, “Save” beside an icon): it went to the AI. Words written among other words say so.
+- **Every studio tab shows the same changes.** A preview made, kept or undone in one tab showed in another only after a reload, and Ctrl Z there said “Nothing to undo”.
+- **A component is named as the Inspector names it**: “Remove “VIP” Badge”, not “… span”.
+- **The palette's theme entry** says “Switch to dark theme” (or light), for the theme not shown now, and “dark” finds it. Ctrl K closes the palette from its search box.
+- **Reload the app stays on the page it is on**, rather than going back to the start page.
+- **Start over** on another page asks whether the new test starts there or on the app's start page: a test opens the app signed out, so a page behind a sign-in is reached by signing in as part of the test.
+- **A check on a list** says which option is chosen, not every option it has; a test's file name ends at a word.
+- **A replay's or Autopilot's own clicks are not layout shifts.** What a scripted step moved (a menu opening, a row it added) was reported as the page shifting, in every replay and Autopilot run.
+- **Create test from a finding** stops at the moment the check is about, not at a payment made later in the session, and finds the element the finding's expected value is named after when its evidence names none.
+- **A session's video and first picture** start once the countdown has left the screen.
+- **What the session didn't show isn't a bug.** A report's finding that says it wasn't triggered in the session is a test worth adding, not a high bug, and the verdict follows what was seen. A finding without a place in the code gets where its evidence showed; amounts are worked out step by step.
+- **A small control with room around it** passes in session analysis, as in the Experts (WCAG 2.5.8's spacing exception): well-spaced navigation links were flagged.
+- **The AI experts see what is there**: links and buttons named as a screen reader names them (a picture link by its alt), and each field's `inputmode`, which they called missing.
+- **Linking the right app.** Picking an app inside a monorepo kept the first one's name, command and address; **Use this folder** took the folder listed, not the one typed; and the first listing, coming late, could replace a folder asked for since.
+- **“Link its folder…”** on an app linked by its address gives that app its code, keeping its addresses and moving its sessions along; it made a second app.
+- **PHP and Vue apps.** A PHP folder is recognised and started with PHP's own server (`php artisan serve` for Laravel); a Vue app is called Vue, and words from data lead to the component file Vue names. A folder of pages shows no package manager, a PHP app offers no `npm install`, and an app linked by its address isn't named “Sign in” from its page's title.
+- **In a monorepo, `search_code` and `list_files`** reach the workspace's other packages, as `read_file` does.
+- **The Claude Desktop entry** in Settings carries `SAYWRIGHT_HOME`, so a copied entry finds a studio that keeps its data elsewhere.
+- **The app's own address** is shown (the Test tab's “From …”) and told to AIs and MCP, not the studio proxy's.
+- **`connect`**: several apps connected before the studio starts are each linked (only the last was); a folder of plain HTML or a PHP app connects through the proxy, every page; `--dry-run` says what it would do and shows the lines; the import is written in the config's own style (no semicolon where it has none); a Next.js layout gets no line of spaces.
+- **`doctor`** says where a running studio listens, rather than calling its usual port free; the studio names the app it is opening rather than “No app open”.
+
+### Documentation
+
+- [Write test](docs/guide.md#write-test-narrate-a-bug-get-a-playwright-test): a `tests/saywright/setup.ts` example, and the same setup as `globalSetup` when your CI runs the tests; when a quick edit goes to the AI.
+- [Apps](docs/apps.md) and [MCP](docs/mcp.md): PHP, Vue, linking a folder to an app linked by its address, `connect` for several apps, and what MCP reaches in a monorepo.
+
 ## [0.2.0] - 2026-11-04
 
 The core loop, made safe and honest: observe → reproduce → fix → verify. A secret you type is never recorded, a choice in a list is chosen, a test is written in the order things happened and runs the same way every time, and a fix counts only when the evidence shows it.
@@ -188,6 +224,7 @@ The first release: `@saywright/studio` (the studio, and its command `saywright`)
 - [Getting started](docs/getting-started.md): every feature on the sample shop, one step at a time, with a picture of each and what you should see.
 - Screenshots of the real studio throughout the documentation, taken again by `npm run media:screenshots` when the interface changes.
 
+[0.2.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.0
 [0.1.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.1
 [0.1.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.1.0

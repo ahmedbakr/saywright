@@ -176,8 +176,9 @@ describe('the answer', () => {
       findings: [
         finding('Removing the third line crashes the cart', 'The handler throws for index 2. Not triggered in this session.', 'high', ['E99']),
         finding('Checkout may fail for some addresses', 'A 500 is possible for "Apt" addresses, though it never happened during the session.', 'high'),
-        // What is missing on screen is a finding: “not shown” alone says nothing about the session.
+        // What is missing on screen is a finding: “not shown”, or “not seen during the session”, is a problem seen.
         finding('The discount is not shown in the summary', 'After applying SAVE20 the discount row was not shown.', 'medium'),
+        finding('No confirmation after saving', 'The “Saved” message was not seen during the session after Save.', 'medium'),
       ],
       suggestions: [],
       positives: [],
@@ -185,7 +186,7 @@ describe('the answer', () => {
       nextSteps: [],
     };
     const report = await new ModelReportWriter((async (req: Parameters<AskJson>[0]) => ({ value: req.schema.parse(answer), model: 'm' })) as AskJson).write(input);
-    expect(report.findings.map((f) => f.title)).toEqual(['The discount is not shown in the summary']);
+    expect(report.findings.map((f) => f.title)).toEqual(['The discount is not shown in the summary', 'No confirmation after saving']);
     expect(report.findings[0].id).toBe('F1');
     expect(report.suggestions.map((x) => [x.kind, x.title])).toEqual([
       ['add', 'Removing the third line crashes the cart'],
