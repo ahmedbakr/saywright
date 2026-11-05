@@ -111,6 +111,25 @@ export interface ClientState {
 
 const PENDING_AUDIO = 'saywright.session.audio';
 /** How long starting waits for the browser's “share this tab” question to be answered. */
+/** How long the countdown takes to leave the screen once recording starts (its fade, and a frame or two). */
+export const COUNTDOWN_FADE_MS = 220;
+
+/** After `ms`, once the page has drawn again (a page not drawing, in the background, doesn't hold it up). */
+function painted(ms: number): Promise<void> {
+  return new Promise((resolve) =>
+    setTimeout(() => {
+      if (typeof requestAnimationFrame !== 'function') return resolve();
+      const done = setTimeout(resolve, 100);
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          clearTimeout(done);
+          resolve();
+        }),
+      );
+    }, ms),
+  );
+}
+
 export const SCREEN_WAIT_MS = 30_000;
 
 function toBase64(buf: ArrayBuffer): string {
@@ -568,9 +587,11 @@ export class SessionClient {
       return this.notStarted(null);
     }
     this.key = data.key ?? '';
-    // Recording starts now: narration from here on, and the screen's video.
+    // Recording starts now: narration from here on, and the screen's video once the countdown has left the screen
+    // (it fades out), so the video's first frame and the start's picture show the app, not the countdown.
     this.mic?.discard();
     this.set({ id, countdown: null });
+    if (this.screen && opts.countdown) await painted(COUNTDOWN_FADE_MS);
     this.screen?.record(opts.video);
     // "Recording" shows only once the app's recorder is on (it may confirm from a frame, in a few milliseconds).
     try {

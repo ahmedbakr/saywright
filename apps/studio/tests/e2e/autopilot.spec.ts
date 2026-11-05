@@ -3,10 +3,15 @@
  * SAVE20, sees the discount taken from shipping too, and the run ends in the session's report, with its steps in the
  * timeline and the problem among the findings, tied to the coupon's code.
  */
-import { expect, test } from '@playwright/test';
-import { openStudio, resetAll, store, STUDIO, waitForApp } from './helpers';
+import fs from 'node:fs';
+import path from 'node:path';
+import { expect, test, type Page } from '@playwright/test';
+import { E2E_SHOP, openStudio, resetAll, store, STUDIO, waitForApp } from './helpers';
 
 test.beforeEach(() => resetAll());
+
+const BANNER = path.join(E2E_SHOP, 'src/components/Banner.tsx');
+test.afterEach(() => fs.rmSync(BANNER, { force: true }));
 
 async function detail(id: string) {
   return (await (await fetch(`${STUDIO}/api/sessions/${id}`)).json()) as {
@@ -15,6 +20,45 @@ async function detail(id: string) {
     report: { findings: { title: string; location: string }[] } | null;
   };
 }
+
+/** Start Autopilot on the checkout with the SAVE20 goal, and wait for its report; the session's id. */
+async function runAutopilot(page: Page): Promise<string> {
+  await page.getByRole('tab', { name: 'Sessions' }).click();
+  const card = page.locator('[data-autopilot-card]');
+  await card.locator('[data-autopilot-goal]').fill('Apply the SAVE20 coupon at checkout');
+  await card.locator('[data-autopilot-start]').click();
+  await expect(page.locator('[data-autopilot]')).toHaveCount(0, { timeout: 60_000 });
+  await expect(page.getByRole('dialog', { name: 'Session report' }).getByText('SAVE20 takes 20% off shipping too').first()).toBeVisible({ timeout: 120_000 });
+  const { sessions } = (await (await fetch(`${STUDIO}/api/sessions`)).json()) as { sessions: { id: string; source: string }[] };
+  return sessions.find((s) => s.source === 'autopilot')!.id;
+}
+
+test('what Autopilot’s own clicks move is no layout shift of the app’s', async ({ page }) => {
+  // A banner that comes in above the whole app at the first click on it, pushing everything down.
+  fs.writeFileSync(
+    BANNER,
+    `import { useEffect, useState } from 'react';
+export function Banner() {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const on = () => setShown(true);
+    addEventListener('click', on, true);
+    return () => removeEventListener('click', on, true);
+  }, []);
+  return shown ? <div className="banner" style={{ height: 420, background: '#eee' }}>Thanks for shopping with us</div> : null;
+}
+`,
+  );
+  const app = path.join(E2E_SHOP, 'src/App.tsx');
+  const code = fs.readFileSync(app, 'utf8');
+  fs.writeFileSync(app, code.replace("import { Header } from './components/Header';", "import { Header } from './components/Header';\nimport { Banner } from './components/Banner';").replace('<Header route={route} />', '<Banner />\n      <Header route={route} />'));
+  await openStudio(page);
+  await waitForApp(page);
+  const d = await detail(await runAutopilot(page));
+  // The banner came in at its click, and moved the page: that was the click's doing.
+  await expect(page.frameLocator('iframe').getByText('Thanks for shopping with us')).toBeVisible();
+  expect(d.analysis.issues.filter((g) => g.kind === 'performance' && /jumps/.test(g.title))).toEqual([]);
+});
 
 test('Autopilot uses the app like a tester and ends in a report of what it found', async ({ page }) => {
   await openStudio(page);

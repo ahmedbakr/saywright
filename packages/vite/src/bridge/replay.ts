@@ -8,6 +8,7 @@
 import { NAME_ATTR, SRC_ATTR } from '../protocol';
 import { accessibleName, collapse, fieldValue, isField, isVisible, labelText, shapeOf, visibleText } from './dom';
 import { ROLE_SELECTORS, roleFor } from './locator';
+import { scriptedInput } from './own';
 
 /** What the recorded element was: to find it again when its place in the code has moved. */
 export interface Like {
@@ -333,6 +334,7 @@ const mouse = (type: string, x: number, y: number) => new MouseEvent(type, { bub
  */
 export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[] }): void {
   if (unusable(el)) throw new Error('disabled');
+  scriptedInput();
   const r = el.getBoundingClientRect();
   const x = r.left + r.width / 2;
   const y = r.top + r.height / 2;

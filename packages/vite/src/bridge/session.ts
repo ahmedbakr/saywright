@@ -20,7 +20,7 @@ import { maskScreen } from './mask';
 import { EnterSubmits, formLabel } from './forms';
 import { buildLocator, locatorFromInfo } from './locator';
 import { bodies, KEEPALIVE_BYTES, Outbox, slim, type Delivery } from './outbox';
-import { own, ownTime } from './own';
+import { own, ownTime, scriptedBefore } from './own';
 import { componentPath, fiberOf, hasFiber, reactSource, type Fiber } from './react';
 import { RequestTally, type NetBody } from './tally';
 
@@ -854,7 +854,8 @@ export class SessionRecorder {
     });
     observe('layout-shift', (es) => {
       for (const e of es as (PerformanceEntry & { value: number; hadRecentInput: boolean; sources?: { node?: Node | null }[] })[]) {
-        if (e.hadRecentInput || e.startTime < this.since) continue;
+        // Right after input, a person's or a replay's: what that input moved, not the page shifting under the reader.
+        if (e.hadRecentInput || scriptedBefore(e.startTime) || e.startTime < this.since) continue;
         this.cls += e.value;
         if (e.value < 0.02) continue;
         const node = e.sources?.find((s) => s.node instanceof Element)?.node as Element | undefined;

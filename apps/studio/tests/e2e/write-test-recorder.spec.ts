@@ -89,3 +89,25 @@ test('a reload keeps the test being written: its steps and checks are still ther
   await expect.poll(() => store<boolean>(page, '!!s.status?.app')).toBe(true);
   await expect.poll(async () => (await steps(page)).map((s) => s.description)).toEqual(before.map((s) => s.description));
 });
+
+test('Start over on another page asks where the new test starts: here, or the app’s start page (signed out)', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.getByLabel('Show password').check();
+  await expect.poll(async () => (await steps(page)).length).toBeGreaterThan(0);
+  const tab = page.locator('[role="tabpanel"]');
+  await tab.getByRole('button', { name: 'Start over' }).click();
+  await expect(tab.locator('[data-start-over]')).toContainText('this page (/#/account)');
+  // From the start page: the app goes back there, and the test starts from it.
+  await tab.getByRole('button', { name: 'From the start page' }).click();
+  await expect(app.getByRole('heading', { name: 'Your account' })).toBeHidden();
+  expect(await steps(page)).toEqual([]);
+  expect(new URL(await store<string>(page, 's.recorder.startUrl')).hash).toBe('');
+  // On the start page, Start over starts over there, without asking.
+  await expect.poll(() => store<boolean>(page, 's.app.connected'), { timeout: 15_000 }).toBe(true);
+  await app.getByTestId('coupon-input').fill('SAVE20');
+  await expect.poll(async () => (await steps(page)).length).toBeGreaterThan(0);
+  await tab.getByRole('button', { name: 'Start over' }).click();
+  await expect(tab.locator('[data-start-over]')).toHaveCount(0);
+  expect(await steps(page)).toEqual([]);
+});

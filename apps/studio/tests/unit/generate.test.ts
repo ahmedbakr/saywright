@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parse } from '@babel/parser';
 import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
-import { generateSpec, safeLocator, secretsOf, urlPattern, writeSpec } from '../../server/tests/generate';
+import { generateSpec, safeLocator, secretsOf, slug, urlPattern, writeSpec } from '../../server/tests/generate';
 import { focusOn, judge, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
@@ -242,6 +242,13 @@ describe('generateSpec', () => {
     expect(third.path).not.toBe(first.path);
     // Nothing outside the tests folder is ever written over.
     expect(writeSpec(p, input, { path: 'src/main.tsx', code: p.read('src/main.tsx') }).path).toMatch(/^tests\/saywright\//);
+  });
+
+  it('names its file from the title, ending at a word’s end', () => {
+    expect(slug('Summary total should show $80.80')).toBe('summary-total-should-show-80-80');
+    expect(slug('“You pay” row in the plan summary should show $25.00 every month')).toBe('you-pay-row-in-the-plan-summary-should-show-25');
+    expect(slug('x'.repeat(60))).toBe('x'.repeat(48));
+    expect(slug('!!!')).toBe('narrated-bug');
   });
 
   it('never overwrites an existing test file', () => {

@@ -117,6 +117,9 @@ test('a box said to be checked is checked, found from its label; an option said 
   expect(option).toMatchObject({ field: 'select', expected: 'Linen' });
   // The list, not the option: the test reads what is chosen in it.
   await expect(resolve(page, option.locator)).toHaveAttribute('id', 'interests');
+  // What a list shows is what is chosen in it, not every option it has.
+  const delivery = await say(page, app.locator('#delivery'), 'this should show Express');
+  expect(delivery).toMatchObject({ field: 'select', expected: 'Express', actual: 'Standard' });
 
   // The test written from them says so, in so many words.
   await page.evaluate(() => (window as unknown as { __saywright: { generateTest(): Promise<void> } }).__saywright.generateTest());

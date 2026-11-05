@@ -95,30 +95,53 @@ export function findingCheck(f: ReportFinding, a: SessionAnalysis): Check | null
     const check = saidCheck(seg, seg?.el);
     if (check) return check;
   }
-  const target = targetsOf(items, a).find((el) => el.locator);
-  const expected = target ? expectedOf(f, target) : null;
-  return target?.locator && expected ? { expected, locator: target.locator, like: likeOf(target), t: Math.max(...items.map((x) => x.t)), el: target } : null;
+  // Read when the problem showed on it: not at the finding's last evidence, which can be much later (a payment made).
+  for (const { el, t } of targetsOf(items, a)) {
+    const expected = el.locator ? expectedOf(f, el) : null;
+    if (el.locator && expected) return { expected, locator: el.locator, like: likeOf(el), t, el };
+  }
+  return null;
+}
+
+/**
+ * For a test of a finding whose evidence names no element with the value: an element of the session the finding's
+ * expected value is named after (“a total of $80.80” and the Total row pointed at), nearest the problem.
+ */
+export function namedCheck(f: ReportFinding, a: SessionAnalysis): Check | null {
+  const at = evidenceItems(f, a)[0]?.t ?? Infinity;
+  const all = [...a.transcript.map((s) => ({ el: s.el, t: s.start })), ...a.issues.map((g) => ({ el: g.el, t: g.t }))].filter((x): x is { el: SessionTarget; t: number } => !!x.el?.locator);
+  const near = all.sort((x, y) => Math.abs(x.t - at) - Math.abs(y.t - at));
+  for (const { el, t } of near) {
+    const expected = namedValue(f.expected ?? '', el);
+    if (expected) return { expected, locator: el.locator!, like: likeOf(el), t, el };
+  }
+  return null;
 }
 
 /** The value a finding expects: from the tester's words it quotes, else its only amount, or the one named like the element (“total $80.80” on the Total row). */
 function expectedOf(f: ReportFinding, target: SessionTarget): string | null {
   const said = saidValue(f.quote ?? '');
   if (said) return said.expected;
-  const expected = f.expected ?? '';
-  const amounts = amountsIn(expected);
+  const amounts = amountsIn(f.expected ?? '');
+  if (amounts.length === 1) return moneyText(amounts[0].value, amounts[0].currency);
+  return namedValue(f.expected ?? '', target);
+}
+
+/** The amount in `expected` named like the element, in the words just before it (“total $80.80” for the Total row). */
+function namedValue(expected: string, target: SessionTarget): string | null {
   const words = (target.label || target.text).toLowerCase().match(/\p{L}{3,}/gu) ?? [];
-  const named = amounts.length === 1 ? amounts[0] : amounts.find((m) => words.some((w) => expected.toLowerCase().slice(Math.max(0, m.index - 24), m.index).includes(w)));
+  const named = amountsIn(expected).find((m) => words.some((w) => expected.toLowerCase().slice(Math.max(0, m.index - 24), m.index).includes(w)));
   return named ? moneyText(named.value, named.currency) : null;
 }
 
-/** The elements a finding is about: what was pointed at while saying it, or what the problem happened on. */
-function targetsOf(items: { kind: string; t: number; issue?: string }[], a: SessionAnalysis): SessionTarget[] {
-  const out: SessionTarget[] = [];
+/** The elements a finding is about, with when: what was pointed at while saying it, or what the problem happened on. */
+function targetsOf(items: { kind: string; t: number; issue?: string }[], a: SessionAnalysis): { el: SessionTarget; t: number }[] {
+  const out: { el: SessionTarget; t: number }[] = [];
   for (const it of items) {
     const seg = it.kind === 'speech' ? a.transcript.find((s) => s.start === it.t) : null;
     const issue = it.issue ? a.issues.find((g) => g.id === it.issue) : null;
     const el = seg?.el ?? issue?.el;
-    if (el && !out.some((o) => o.src === el.src && o.label === el.label)) out.push(el);
+    if (el && !out.some((o) => o.el.src === el.src && o.el.label === el.label)) out.push({ el, t: it.t });
   }
   return out;
 }

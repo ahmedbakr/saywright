@@ -21,7 +21,7 @@ import { findingBrief } from './evidence';
 import { DEFAULT_FUSION, PointerTrack, implicitTargets, resolveDeictics } from './fusion';
 import { afterHold, afterTap, picked, replaced, selectedOf, type Picked } from './selection';
 import { Autopilot, type AutopilotOptions } from './autopilot';
-import { Replayer, findingCheck } from './replay';
+import { Replayer, findingCheck, namedCheck } from './replay';
 import { MAX_WAITING, RequestQueue, type RequestJob } from './requests';
 import { modalOpen } from './layers';
 import { sessions, useSessions, type SpeechStatus } from './sessions';
@@ -851,8 +851,34 @@ class Controller {
     }
   }
 
-  newRecording(): void {
+  /**
+   * A new test: from the page the app is on, or (`fromStart`) from the app's start page, which the app goes back to. A
+   * test opens the app in a fresh browser, signed out: from a page that needs signing in, it starts from the start page.
+   */
+  newRecording(fromStart = false): void {
+    const home = get().status?.target.frameUrl || get().status?.target.url || null;
+    if (fromStart && home) {
+      set({ recorder: { ...initialRecorder, startUrl: home } });
+      this.bridge.goto(home);
+      return;
+    }
     set({ recorder: { ...initialRecorder, startUrl: get().app.url || null } });
+  }
+
+  /** Whether the app is on another page than its start page (by path and #route). */
+  awayFromStart(): boolean {
+    const home = get().status?.target.frameUrl || get().status?.target.url;
+    const now = get().app.url;
+    if (!home || !now) return false;
+    const page = (u: string) => {
+      try {
+        const x = new URL(u);
+        return `${x.pathname.replace(/\/+$/, '')}${x.hash.replace(/^#\/?$/, '')}`;
+      } catch {
+        return u;
+      }
+    };
+    return page(home) !== page(now);
   }
 
   removeStep(i: number): void {
@@ -1678,11 +1704,14 @@ class Controller {
 
   /** "Create test" on a finding: the session's steps up to that moment, plus the expected value when one was said. */
   async testFromReport(f: ReportFinding, items: TimelineItem[], a: SessionAnalysis, appUrl: string): Promise<void> {
-    const steps = stepsOf(a, items.length ? items[items.length - 1].t + 1000 : Infinity);
+    // The value as the replay checks it: from the words said about an element, on that element; else on an element
+    // the finding's expected value is named after.
+    const check = findingCheck(f, a) ?? namedCheck(f, a);
+    // The steps up to the moment the check is about (not on to a payment made after it); without one, up to the last
+    // of the evidence.
+    const steps = stepsOf(a, check ? check.t + 1000 : items.length ? items[items.length - 1].t + 1000 : Infinity);
     const startUrl = a.steps.find((s) => s.kind === 'navigate')?.url ?? appUrl;
     const expectations: Expectation[] = [];
-    // The value as the replay checks it: from the words said about an element, on that element.
-    const check = findingCheck(f, a);
     if (check) expectations.push({ locator: check.locator, description: check.el.description ?? check.el.label, expected: check.expected, actual: check.el.text, after: steps.length, ...fieldOf(check.el) });
     set({ recorder: { ...initialRecorder, startUrl, steps, expectations } });
     settings().setUi({ panelOpen: true, panelTab: 'test' });

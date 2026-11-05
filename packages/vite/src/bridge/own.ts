@@ -25,3 +25,21 @@ export function ownTime(start: number, end: number): number {
   for (const [a, b] of spans) ms += Math.max(0, Math.min(b, end) - Math.max(a, start));
   return ms;
 }
+
+/** When a replay or Autopilot last acted on the page (a click, typing, a key): the times of the last few. */
+const acted: number[] = [];
+
+/** A step a replay or Autopilot did, now. */
+export function scriptedInput(): void {
+  acted.push(performance.now());
+  if (acted.length > 16) acted.shift();
+}
+
+/**
+ * Whether a replay or Autopilot acted in the half second before `at` (a performance.now() time): as the browser
+ * leaves out what moves right after a person's input (a menu opening where it was clicked), what moves right after a
+ * scripted step is that step's doing, not the page shifting under the reader.
+ */
+export function scriptedBefore(at: number, ms = 500): boolean {
+  return acted.some((t) => t <= at && at - t <= ms);
+}

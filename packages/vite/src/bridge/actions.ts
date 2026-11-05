@@ -1,4 +1,5 @@
 import { isField } from './dom';
+import { scriptedInput } from './own';
 
 const CLICKABLE = 'button, a[href], [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], input, select, textarea, label, summary, [tabindex]';
 
@@ -14,6 +15,7 @@ let lastField: HTMLInputElement | HTMLTextAreaElement | null = null;
 export function clickAt(x: number, y: number): Element | null {
   const el = clickTargetAt(x, y);
   if (!el) return null;
+  scriptedInput();
   if (el instanceof HTMLElement) {
     if (isField(el) && !(el instanceof HTMLSelectElement) && !['checkbox', 'radio', 'button', 'submit', 'reset'].includes((el as HTMLInputElement).type)) {
       el.focus();
@@ -37,6 +39,7 @@ function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: strin
 }
 
 export function typeText(text: string, submit: boolean): Element | null {
+  scriptedInput();
   const active = document.activeElement;
   const target =
     active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement

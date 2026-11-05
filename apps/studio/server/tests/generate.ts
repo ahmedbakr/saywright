@@ -89,14 +89,15 @@ function isLocator(code: string): boolean {
   return true;
 }
 
-function slug(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 48) || 'narrated-bug'
-  );
+/** A file name from a test's title: at most 48 characters, ending at a word's end (“…-should-show-80-80”, not “…-sho”). */
+export function slug(s: string): string {
+  const all = s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (all.length <= 48) return all || 'narrated-bug';
+  const end = all.slice(0, 49).lastIndexOf('-');
+  return end >= 16 ? all.slice(0, end) : all.slice(0, 48);
 }
 
 function testTitle(input: GenerateInput): string {

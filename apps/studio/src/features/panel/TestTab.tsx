@@ -21,6 +21,8 @@ export function TestTab() {
   const rec = useStudio((s) => s.recorder);
   const selection = useStudio((s) => s.selection);
   const [expected, setExpected] = useState('');
+  const [startingOver, setStartingOver] = useState(false);
+  const app = useStudio((s) => s.app);
   const recording = mode === 'record';
   const empty = !rec.steps.length && !rec.expectations.length;
   const numbers = checkNumbers(rec.expectations, rec.steps.length);
@@ -60,7 +62,7 @@ export function TestTab() {
           <SectionTitle
             action={
               !empty && (
-                <button className="flex items-center gap-1 text-[11.5px] text-fg-3 hover:text-fg" onClick={() => controller.newRecording()}>
+                <button className="flex items-center gap-1 text-[11.5px] text-fg-3 hover:text-fg" onClick={() => (controller.awayFromStart() ? setStartingOver(true) : controller.newRecording())}>
                   <RotateCcw className="size-3" /> Start over
                 </button>
               )
@@ -68,6 +70,22 @@ export function TestTab() {
           >
             Steps
           </SectionTitle>
+          {startingOver && (
+            <div className="mb-2 rounded-[8px] bg-raised px-2.5 py-2 text-[12px] leading-relaxed text-fg-2 ring-1 ring-inset ring-line" data-start-over>
+              Start the new test from this page ({pageOf(app.url)}), or from the app’s start page? A test opens your app in a fresh browser, signed out: if this page needs signing in, start from the start page and sign in as part of the test.
+              <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+                <Button size="sm" variant="ghost" onClick={() => setStartingOver(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={() => (setStartingOver(false), controller.newRecording())}>
+                  From this page
+                </Button>
+                <Button size="sm" variant="primary" onClick={() => (setStartingOver(false), controller.newRecording(true))}>
+                  From the start page
+                </Button>
+              </div>
+            </div>
+          )}
           {rec.steps.length ? (
             <ol className="space-y-1">
               {rec.steps.map((s, i) => (
@@ -123,7 +141,7 @@ export function TestTab() {
             })}
             {recording && !selection && (
               <p className="px-1 pt-1 text-[12px] leading-relaxed text-fg-3">
-                Point at a value in your app and say “this should show …”, or type it in the box below.
+                Point at a value in your app and say “this should show …”, or type that in the command bar at the bottom while the pointer rests on it.
               </p>
             )}
             {recording && selection && (
@@ -372,4 +390,14 @@ function RunResult() {
       <Badge tone="bad">Error</Badge> <span className="ml-1">{run.message}</span>
     </div>
   );
+}
+
+/** A page of the app as its path and #route (“/#/book”). */
+function pageOf(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return url;
+  }
 }

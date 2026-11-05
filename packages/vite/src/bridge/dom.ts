@@ -321,6 +321,8 @@ export function visibleText(el: Element): string {
     // A secret's value is never anyone's text: not the studio's, a locator's, a report's or an AI's.
     return collapse(isSecretField(el) ? el.placeholder : el.value || el.placeholder, 80);
   }
+  // A list shows what is chosen in it, not every option it has.
+  if (el instanceof HTMLSelectElement) return collapse(Array.from(el.selectedOptions, (o) => o.label || o.text).join(', '), 80);
   return collapse((el as HTMLElement).innerText ?? el.textContent, 80);
 }
 

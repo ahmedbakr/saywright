@@ -78,6 +78,8 @@ Requests run one at a time: one you make while another is running waits its turn
 4. Say “run test” (or **Run test**). It runs with your app's own Playwright (`@playwright/test` installed in the app) and a configuration of the studio's own: Chromium, no retries, a fresh browser, and the app the studio has open as its `baseURL`. Your app's Playwright configuration doesn't change the verdict.
 5. Say “fix it”: the AI fixes the code and the studio runs the same test again with the fix. When it passes, verified, keep the fix.
 
+A test starts on the page the app was on when you switched to **Write test**. **Start over** on another page asks whether the new test starts there or on the app's start page: a test opens your app signed out, so a page behind a sign-in is reached by signing in as part of the test.
+
 **What a run says.** A run is believed only when it shows something:
 
 | The Test tab says | It means |
@@ -97,14 +99,30 @@ A fix may not change the test it is checked against: if the AI's change edits th
 
 **The Test tab** shows each check's own result in the last run (passed, failed, or not reached), and keeps the test being written when you reload the studio.
 
-**Repeatable runs.** Each run starts from a fresh browser: no cookies, no storage. For data the test needs (an account, an empty cart), add `tests/saywright/setup.ts`: it runs before the test, as Playwright's global setup, to put that data in place.
+**Repeatable runs.** Each run starts from a fresh browser: no cookies, no storage, not signed in. For data the test needs (an account, an empty cart), add `tests/saywright/setup.ts`: it runs before the test, as Playwright's global setup, to put that data in place. It gets Playwright's configuration, with the app's address for the run:
 
-To run a generated test with your own Playwright configuration (in CI, say), give the configuration a `baseURL`; the studio sets `SAYWRIGHT_TARGET_URL` when it runs tests itself:
+```ts
+// tests/saywright/setup.ts
+import type { FullConfig } from '@playwright/test';
+
+export default async function setup(config: FullConfig) {
+  const baseURL = config.projects[0].use.baseURL!; // where the app runs, for this run
+  // Whatever your app needs: reset a test database, create the account the test signs in with…
+  await fetch(new URL('/api/test/reset', baseURL), { method: 'POST' });
+}
+```
+
+To run a generated test with your own Playwright configuration (in CI, say), give the configuration a `baseURL` (the studio sets `SAYWRIGHT_TARGET_URL` when it runs tests itself) and the same setup as its `globalSetup`:
 
 ```ts
 // playwright.config.ts
-use: { baseURL: process.env.SAYWRIGHT_TARGET_URL ?? 'http://localhost:5173' },
+export default defineConfig({
+  globalSetup: './tests/saywright/setup.ts',
+  use: { baseURL: process.env.SAYWRIGHT_TARGET_URL ?? 'http://localhost:5173' },
+});
 ```
+
+In CI, set the secrets the tests type as `SAYWRIGHT_SECRET_…` variables (see **Passwords and other secrets** above).
 
 If Playwright's browser isn't installed, the Test tab offers **Install test browser**.
 
