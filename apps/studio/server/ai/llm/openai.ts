@@ -6,7 +6,7 @@
  * about the same code on the same cache.
  */
 import { AgentError } from '../types.ts';
-import { count, jsonSchemaOf, lostWhileAnswering, parseArgs, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { count, jsonSchemaOf, lostWhileAnswering, said, parseArgs, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 interface OutputItem {
   type: string;
@@ -87,8 +87,8 @@ export class OpenAIModel implements ChatModel {
     });
     const res = (out.whole as ResponseBody | undefined) ?? final;
     if (failed || res?.status === 'failed' || res?.error) {
-      const said = (failed ?? res?.error?.message ?? '').replace(/\.+$/, '');
-      throw new AgentError(`OpenAI couldn’t answer${said ? `: ${said}` : ''}.`, 'other');
+      const words = said(failed ?? res?.error?.message ?? '');
+      throw new AgentError(`OpenAI couldn’t answer${words ? `: ${words}` : ''}.`, 'other');
     }
     if (!res) throw lostWhileAnswering('OpenAI');
 

@@ -5,7 +5,7 @@
  * that can't do that is asked for plain JSON, which the caller checks.
  */
 import { AgentError } from '../types.ts';
-import { amount, count, jsonSchemaOf, parseArgs, post, ProviderHttpError, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { amount, count, jsonSchemaOf, parseArgs, post, ProviderHttpError, said, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 type ContentPart = { type: string; text?: string; image_url?: { url: string } };
 
@@ -172,8 +172,8 @@ export class CompatibleModel implements ChatModel {
       }
     }
     if (res.error) {
-      const said = typeof res.error === 'string' ? res.error : res.error.message;
-      throw new AgentError(`${this.opts.label} couldn’t answer${said ? `: ${said.replace(/\.+$/, '')}` : ''}.`, 'other');
+      const words = typeof res.error === 'string' ? res.error : res.error.message;
+      throw new AgentError(`${this.opts.label} couldn’t answer${words ? `: ${said(words)}` : ''}.`, 'other');
     }
 
     const choice = res.choices?.[0];
@@ -181,6 +181,11 @@ export class CompatibleModel implements ChatModel {
     const msg = choice.message;
     const calls: ToolCall[] = (msg.tool_calls ?? []).map((c, i) => ({ id: c.id || `call_${i}`, name: c.function.name, args: parseArgs(c.function.arguments) }));
     const text = typeof msg.content === 'string' ? msg.content : (msg.content ?? []).map((c) => c.text ?? '').join('');
+    // A model without tool support writes its calls as text (`<tool_call>{…}</tool_call>`, or the call's JSON alone):
+    // shown as an answer, that would be gibberish, and nothing would be changed.
+    if (req.tools?.length && !calls.length && looksLikeToolCall(text, req.tools.map((t) => t.name))) {
+      throw new AgentError(`${this.model} wrote its tool calls as text instead of making them: it can’t call tools. Pick another model in Settings → AI.`, 'invalid');
+    }
     const u = res.usage ?? {};
     const cacheRead = count(u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens);
     const cacheWrite = count(u.prompt_tokens_details?.cache_write_tokens);
@@ -205,4 +210,11 @@ export class CompatibleModel implements ChatModel {
 /** A request turned down because it asked to stream (or for usage in the stream), not for what it asked. */
 function refusesStreaming(err: ProviderHttpError): boolean {
   return err.status === 501 || ([400, 404, 415, 422, 500].includes(err.status) && /stream/i.test(err.body));
+}
+
+/** Text that is a tool call written out rather than made. */
+function looksLikeToolCall(text: string, tools: string[]): boolean {
+  if (/<\/?(tool_call|function_call|tools?)>/i.test(text) || /^\s*\[TOOL_CALLS\]/.test(text)) return true;
+  const names = tools.map((n) => n.replace(/[^a-z_]/gi, '')).join('|');
+  return new RegExp(`^\\s*(\`\`\`(json)?\\s*)?\\{\\s*"(name|function)"\\s*:\\s*"(${names})"`).test(text);
 }

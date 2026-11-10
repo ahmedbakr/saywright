@@ -109,10 +109,11 @@ export function noFallback(chat: ChatModel, ticket: Ticket): string {
 
 /**
  * How long a provider may stay silent. A streamed answer may take as long as it likes, but no byte for `idleMs`
- * means the provider stopped answering; a request that can't be streamed gets `wholeMs` in all. Mutable for the
+ * means the provider stopped answering; a request that can't be streamed gets `wholeMs` in all. A rate limit or a
+ * server problem is retried once when the provider asks for a pause up to `retryMaxMs`. Mutable for the
  * tests, which can't wait minutes.
  */
-export const timing = { idleMs: 90_000, wholeMs: 5 * 60_000 };
+export const timing = { idleMs: 90_000, wholeMs: 5 * 60_000, retryMaxMs: 20_000 };
 
 const seconds = (ms: number) => (ms >= 60_000 && ms % 60_000 === 0 ? `${ms / 60_000} minute${ms === 60_000 ? '' : 's'}` : `${Math.round(ms / 1000)} seconds`);
 
@@ -128,30 +129,65 @@ export class ProviderHttpError extends AgentError {
   }
 }
 
+/** A provider's own words, ready to go inside a sentence: no trailing full stop (the sentence adds one). */
+export const said = (text: string) => text.trim().replace(/\s+/g, ' ').replace(/[.。]+$/, '');
+
+/** What a provider's error body says, in words: its message, FastAPI's `detail`, or nothing (never a web page or JSON). */
+function detailOf(body: string): string {
+  try {
+    const j = JSON.parse(body) as { error?: { message?: string; status?: string } | string; message?: string; detail?: string | { msg?: string }[] } | { error?: { message?: string } }[];
+    const o = Array.isArray(j) ? j[0] : j;
+    if (!o || typeof o !== 'object') return '';
+    const e = 'error' in o ? o.error : undefined;
+    const d = 'detail' in o ? o.detail : undefined;
+    const msg = (typeof e === 'string' ? e : e?.message) ?? ('message' in o ? o.message : undefined) ?? (typeof d === 'string' ? d : Array.isArray(d) ? d.map((x) => x?.msg).filter(Boolean).join('; ') : '');
+    return typeof msg === 'string' ? said(msg).slice(0, 300) : '';
+  } catch {
+    return /^\s*</.test(body) ? '' : said(body.slice(0, 200));
+  }
+}
+
 /** A provider's HTTP error, in plain words, with what the person can do about it. */
 function httpError(provider: string, status: number, body: string, where = 'Settings → AI'): ProviderHttpError {
-  let detail = '';
-  try {
-    const j = JSON.parse(body) as { error?: { message?: string } | string; message?: string };
-    detail = (typeof j.error === 'string' ? j.error : j.error?.message) ?? j.message ?? '';
-  } catch {
-    detail = body.slice(0, 200);
-  }
-  const code: AgentErrorCode = status === 401 || status === 403 ? 'auth' : status === 404 ? 'invalid' : status === 429 ? 'rate' : status === 400 || status === 422 ? 'invalid' : 'other';
-  const text =
-    status === 401
-      ? `${provider} rejected the API key. Update it in ${where}.`
-      : status === 403
-        ? `This ${provider} key can’t use that model. Pick another in ${where}.`
+  const html = /^\s*</.test(body);
+  const detail = detailOf(body);
+  // Gemini answers a wrong key with a 400 and API_KEY_INVALID.
+  const badKey = status === 401 || /API_KEY_INVALID|API key not valid|invalid api key|incorrect api key/i.test(body);
+  const code: AgentErrorCode = badKey || status === 403 ? 'auth' : status === 404 ? 'invalid' : status === 429 ? 'rate' : status === 400 || status === 422 || status === 413 ? 'invalid' : 'other';
+  const text = badKey
+    ? `${provider} rejected the API key. Update it in ${where}.`
+    : status === 403
+      ? `This ${provider} key can’t use that model. Pick another in ${where}.`
+      : html && status < 500 && status !== 413 && status !== 429
+        ? `${provider} answered with a web page (${status}), not as an API: check its address in ${where}. Does it end in /v1?`
         : status === 404
           ? `${provider} doesn’t know that model${detail ? ` (${detail})` : ''}. Pick another in ${where}.`
-          : status === 429
-            ? `${provider} is rate limited or out of credit right now${detail ? `: ${detail}` : ''}.`
-            : status >= 500
-              ? `${provider} had a server problem. Try again.`
-              : `${provider} couldn’t take that request${detail ? `: ${detail}` : ''}.`;
+          : status === 413
+            ? `The request was too large for ${provider}. Ask about a smaller part of the page, with fewer elements picked.`
+            : status === 429
+              ? `${provider} is rate limited or out of credit right now${detail ? `: ${detail}` : ''}. Try again in a moment.`
+              : status >= 500
+                ? `${provider} had a server problem. Try again.`
+                : `${provider} couldn’t take that request${detail ? `: ${detail}` : ''}.`;
   return new ProviderHttpError(text, code, status, body);
 }
+
+/** Answers worth one more try after a pause: rate limits and server trouble. */
+const RETRY = new Set([429, 500, 502, 503, 504, 529]);
+/** How long a provider asks to be left alone (`retry-after`, in seconds or as a date); 2 s when it doesn't say. */
+function retryAfter(h: Headers): number {
+  const v = h.get('retry-after');
+  if (!v) return 2000;
+  const n = Number(v);
+  if (Number.isFinite(n)) return Math.max(0, n * 1000);
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? Math.max(0, t - Date.now()) : 2000;
+}
+const pause = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => (clearTimeout(t), reject(new Error('aborted'))), { once: true });
+  });
 
 /** Said when the connection broke after the provider had begun to answer (a Wi-Fi drop, a laptop waking up). */
 export const lostWhileAnswering = (provider: string) => new AgentError(`The connection to ${provider} was lost while it was answering. Try again.`, 'network');
@@ -183,19 +219,26 @@ async function send(provider: string, url: string, headers: Record<string, strin
   let began = false;
   try {
     let res: Response;
-    try {
-      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctl.signal });
-    } catch (err) {
-      const code = err instanceof Error && err.cause && typeof err.cause === 'object' && 'code' in err.cause ? String(err.cause.code) : '';
-      if (code === 'UND_ERR_HEADERS_TIMEOUT') why = 'whole';
-      throw err;
+    // A rate limit or a server problem is tried once more, after the pause the provider asks for (when that is short).
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctl.signal });
+      } catch (err) {
+        const code = err instanceof Error && err.cause && typeof err.cause === 'object' && 'code' in err.cause ? String(err.cause.code) : '';
+        if (code === 'UND_ERR_HEADERS_TIMEOUT') why = 'whole';
+        throw err;
+      }
+      if (res.ok) break;
+      const text = await res.text();
+      const wait = retryAfter(res.headers);
+      if (attempt === 0 && RETRY.has(res.status) && wait <= timing.retryMaxMs) {
+        await pause(wait, ctl.signal);
+        continue;
+      }
+      throw httpError(provider, res.status, text);
     }
     began = true;
     alive();
-    if (!res.ok) {
-      const text = await res.text();
-      throw httpError(provider, res.status, text);
-    }
     return await read(res, alive);
   } catch (err) {
     if (err instanceof AgentError) throw err;

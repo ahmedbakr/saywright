@@ -14,7 +14,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { Usage } from '../../../shared/ai.ts';
 import { AgentError } from '../types.ts';
-import { count, lostWhileAnswering, stoppedAnswering, timing, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { count, lostWhileAnswering, said, stoppedAnswering, timing, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 type Client = Pick<Anthropic, 'beta'>;
 
@@ -25,18 +25,36 @@ type Client = Pick<Anthropic, 'beta'>;
  */
 const FALLBACK = new Set(['claude-fable-5-1', 'claude-fable-5', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 
+/** What Anthropic's error body says (the SDK parses it): its type and its message. */
+function bodyOf(err: InstanceType<typeof Anthropic.APIError>): { type: string; message: string } {
+  const e = (err.error as { error?: { type?: unknown; message?: unknown }; type?: unknown; message?: unknown } | undefined) ?? {};
+  const inner = e.error && typeof e.error === 'object' ? e.error : e;
+  return { type: typeof inner.type === 'string' ? inner.type : '', message: typeof inner.message === 'string' ? said(inner.message) : '' };
+}
+
 function anthropicError(err: unknown): AgentError {
   if (err instanceof AgentError) return err;
   if (err instanceof Anthropic.APIUserAbortError) return new AgentError('Stopped.', 'aborted');
-  if (err instanceof Anthropic.AuthenticationError) return new AgentError('Anthropic rejected the API key. Update it in Settings → AI.', 'auth');
-  if (err instanceof Anthropic.PermissionDeniedError) return new AgentError('This Anthropic key can’t use that model. Pick another in Settings → AI.', 'auth');
-  if (err instanceof Anthropic.NotFoundError) return new AgentError('That model isn’t available to this Anthropic key. Pick another in Settings → AI.', 'invalid');
-  if (err instanceof Anthropic.RateLimitError) return new AgentError('Claude is rate limited right now. Try again in a moment.', 'rate');
-  if (err instanceof Anthropic.BadRequestError) return new AgentError(`Claude couldn’t take that request: ${err.message}`, 'invalid');
   if (err instanceof Anthropic.APIConnectionError) return new AgentError('Can’t reach Anthropic. Check your internet connection.', 'network');
-  if (err instanceof Anthropic.InternalServerError) return new AgentError('Anthropic had a server problem. Try again.', 'other');
-  if (err instanceof Anthropic.APIError) return new AgentError(`Claude request failed (${err.status ?? 'error'}): ${err.message}`, 'other');
+  if (err instanceof Anthropic.APIError) {
+    // Sentences for the commonest failures; never the body itself.
+    const { type, message } = bodyOf(err);
+    if (/credit balance/i.test(message)) return new AgentError('Your Anthropic account is out of credit. Add credit in the Anthropic Console (Plans & Billing), or route the work elsewhere in Settings → AI.', 'rate');
+    if (/prompt is too long|too many tokens|context (window|length)/i.test(message)) return new AgentError('This request is too long for the model. Ask about a smaller part of the page, with fewer elements picked.', 'invalid');
+    if (type === 'overloaded_error' || err.status === 529) return new AgentError('Anthropic is overloaded right now. Try again in a minute.', 'rate');
+    if (err.status === 402) return new AgentError('Anthropic needs a payment on this account before it takes requests. Check Plans & Billing in the Anthropic Console.', 'rate');
+    if (err.status === 413 || type === 'request_too_large') return new AgentError('The request was too large for Anthropic. Ask about a smaller part of the page, with fewer elements picked.', 'invalid');
+    if (err instanceof Anthropic.AuthenticationError) return new AgentError('Anthropic rejected the API key. Update it in Settings → AI.', 'auth');
+    if (err instanceof Anthropic.PermissionDeniedError) return new AgentError('This Anthropic key can’t use that model. Pick another in Settings → AI.', 'auth');
+    if (err instanceof Anthropic.NotFoundError) return new AgentError('That model isn’t available to this Anthropic key. Pick another in Settings → AI.', 'invalid');
+    if (err instanceof Anthropic.RateLimitError) return new AgentError('Claude is rate limited right now. Try again in a moment.', 'rate');
+    if (err instanceof Anthropic.BadRequestError) return new AgentError(`Claude couldn’t take that request${message ? `: ${message}` : ''}.`, 'invalid');
+    if (err instanceof Anthropic.InternalServerError || type === 'api_error') return new AgentError('Anthropic had a server problem. Try again.', 'other');
+    return new AgentError(`Claude request failed${message ? `: ${message}` : ''}.`, 'other');
+  }
   if (err instanceof Anthropic.AnthropicError && /auth|api key|credential/i.test(err.message)) return new AgentError('No Anthropic API key found. Add one in Settings → AI.', 'no-key');
+  // Anything else is an answer the SDK couldn't read: a proxy or captive portal answering in Anthropic's place.
+  if (err instanceof SyntaxError || /JSON|chunks|stream/i.test(err instanceof Error ? err.message : '')) return new AgentError('Anthropic’s answer couldn’t be read: something between this computer and Anthropic (a proxy, a captive portal, or ANTHROPIC_BASE_URL) answered instead. Check it and try again.', 'network');
   return new AgentError(err instanceof Error ? err.message : String(err), 'other');
 }
 
@@ -129,7 +147,7 @@ export class AnthropicModel implements ChatModel {
       if (idle) throw known(stoppedAnswering('Anthropic'));
       const e = anthropicError(err);
       // A stream that broke after it began (not an error Anthropic answered with) is a lost connection.
-      if (began && !(err instanceof Anthropic.APIError && err.status) && (e.code === 'other' || e.code === 'network')) throw known(lostWhileAnswering('Anthropic'));
+      if (began && !(err instanceof Anthropic.APIError && (err.status || err.error)) && (e.code === 'other' || e.code === 'network')) throw known(lostWhileAnswering('Anthropic'));
       throw began ? known(e) : e;
     } finally {
       clearTimeout(timer);

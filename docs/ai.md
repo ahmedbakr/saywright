@@ -122,6 +122,9 @@ Saywright is also an MCP server: Claude Code, Cursor, Codex, VS Code and Claude 
 | “… stopped answering: nothing came for 90 seconds” | Answers are streamed, so a long one (a local model writing a report) can take as long as it needs; a provider that sends nothing for 90 seconds is given up on. Try again; for a local model, check it is still running. |
 | “The connection to … was lost while it was answering” | Your network dropped (or the computer slept) in mid-answer. Try again. |
 | “… took longer than five minutes to answer” | A server that can't stream (some local servers can't with tools) gets five minutes per answer. Ask for something smaller, or use a faster model. |
+| “… answered with a web page, not as an API” | The provider's address is wrong: for an OpenAI-compatible server it usually ends in `/v1`. Fix it under that connection in **Settings → AI**. |
+| “… wrote its tool calls as text instead of making them” | That model (often a small local one) can't call tools, so it can't change code. Pick another model for changes. |
+| “Your Anthropic account is out of credit” | Add credit in the Anthropic Console, or route the work to another connection. A rate limit or a server problem is tried once more by itself before you see it. |
 | Requests are refused with a budget message | The budget is set to **Stop** and a limit is reached: raise it or reset the count in **Settings → Usage and budget**. |
 | “Claude declined this request” | Rephrase it. With the budget set to **Stop**, Claude doesn't try another model for it; with **Warn** it does. |
 | “… isn’t saved as UTF-8, and this change adds a character its encoding can’t hold” | Nothing was written. Save that file as UTF-8 in your editor (“Save with encoding”), then ask again. |

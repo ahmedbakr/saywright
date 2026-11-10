@@ -4,7 +4,7 @@
  * reasoning between steps). Long prompts are cached by Gemini automatically.
  */
 import { AgentError } from '../types.ts';
-import { count, jsonSchemaOf, lostWhileAnswering, stream, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { count, jsonSchemaOf, lostWhileAnswering, said, stream, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 interface GPart {
   text?: string;
@@ -98,7 +98,7 @@ export class GeminiModel implements ChatModel {
     const whole = out.whole as GResponse | GResponse[] | undefined;
     if (!whole && !chunks.length) throw lostWhileAnswering('Gemini');
     const res = assemble(whole ? (Array.isArray(whole) ? whole : [whole]) : chunks);
-    if (res.error) throw new AgentError(`Gemini couldn’t answer${res.error.message ? `: ${res.error.message.replace(/\.+$/, '')}` : ''}.`, 'other');
+    if (res.error) throw new AgentError(`Gemini couldn’t answer${res.error.message ? `: ${said(res.error.message)}` : ''}.`, 'other');
 
     const cand = res.candidates?.[0];
     const content: GContent = cand?.content ?? { role: 'model', parts: [] };
