@@ -198,3 +198,73 @@ test('a confirm and a prompt answered while recording are kept with their steps;
   await expect.poll(() => store<string>(page, 's.mode')).toBe('use');
   expect(await app.locator('body').evaluate(() => String(window.confirm))).toContain('[native code]');
 });
+
+test('what Playwright can do again is recorded as it does it, and what it can’t is said in the steps', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => {
+    const box = document.createElement('div');
+    box.innerHTML = `<style>.menu .sub { display: none } .menu:hover .sub { display: block } #js-sub { display: none }</style>
+      <button id="like">Super like</button> <button id="file-menu">Report.pdf</button>
+      <textarea aria-label="Message"></textarea>
+      <label>Invoice <input type="file" id="invoice"></label>
+      <ul id="order"><li draggable="true">Alpha</li><li draggable="true">Bravo</li><li draggable="true">Charlie</li></ul>
+      <div class="menu"><span>Products</span><div class="sub"><button>Laptops</button></div></div>
+      <div id="js-menu"><span>Account menu</span><div id="js-sub"><button>Sign out everywhere</button></div></div>
+      <iframe srcdoc="<button>Inside</button>" title="Pay" style="width:200px;height:60px"></iframe>
+      <p id="log">Nothing yet</p>`;
+    document.querySelector('main')!.prepend(box);
+    const log = box.querySelector('#log')!;
+    box.querySelector('#like')!.addEventListener('dblclick', () => (log.textContent = 'Super like'));
+    box.querySelector('#file-menu')!.addEventListener('contextmenu', (e) => e.preventDefault());
+    // A list ordered by drag and drop, as apps do it: the drop target takes the drag over it.
+    const order = box.querySelector('#order')!;
+    let dragged: Element | null = null;
+    order.addEventListener('dragstart', (e) => (dragged = e.target as Element));
+    order.addEventListener('dragover', (e) => e.preventDefault());
+    order.addEventListener('drop', (e) => {
+      e.preventDefault();
+      order.insertBefore(dragged!, (e.target as Element).closest('li'));
+    });
+    const menu = box.querySelector('#js-menu')!;
+    menu.addEventListener('mouseenter', () => ((box.querySelector('#js-sub') as HTMLElement).style.display = 'block'));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'n' && !(e.target instanceof HTMLTextAreaElement)) log.textContent = 'New note';
+    });
+  });
+  await app.getByRole('button', { name: 'Super like' }).dblclick();
+  await app.getByRole('button', { name: 'Report.pdf' }).click({ button: 'right' });
+  await app.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('n');
+  await page.keyboard.press('Control+k');
+  await app.getByRole('textbox', { name: 'Message' }).pressSequentially('Hello', { delay: 10 });
+  await page.keyboard.press('Shift+Enter');
+  await app.getByLabel('Invoice').setInputFiles({ name: 'march.pdf', mimeType: 'application/pdf', buffer: Buffer.from('x') });
+  await app.getByText('Charlie').dragTo(app.getByText('Alpha'));
+  await app.getByText('Products').hover();
+  await app.getByRole('button', { name: 'Laptops' }).click();
+  await app.getByText('Account menu').hover();
+  await app.getByRole('button', { name: 'Sign out everywhere' }).click();
+  await app.frameLocator('iframe[title="Pay"]').getByRole('button', { name: 'Inside' }).click();
+  await expect
+    .poll(async () => (await store<{ kind: string; key?: string; count?: number; button?: string; description: string }[]>(page, 's.recorder.steps')).map((s) => `${s.kind}${s.count ? ' ×2' : ''}${s.button ? ` ${s.button}` : ''}${s.key ? ` ${s.key}` : ''}: ${s.description}`))
+    .toEqual([
+      expect.stringMatching(/^click ×2: Double-click .*Super like/),
+      expect.stringMatching(/^click right: Right-click .*Report\.pdf/),
+      expect.stringMatching(/^click: Click /),
+      'press n: Press n',
+      'press Control+k: Press Control+k',
+      expect.stringMatching(/^fill: Type “Hello”/),
+      expect.stringMatching(/^press Shift\+Enter: Press Shift\+Enter in .*Message/),
+      // The new line it made: the field as it was left, before what is done next.
+      expect.stringMatching(/^fill: Type “Hello”/),
+      expect.stringMatching(/^upload: Choose “march\.pdf” in .*Invoice/),
+      expect.stringMatching(/^drag: Drag .*Charlie.* onto .*Alpha/),
+      expect.stringMatching(/^hover: Hover over .*Products/),
+      expect.stringMatching(/^click: Click .*Laptops/),
+      expect.stringMatching(/^hover: Hover over .*Account menu/),
+      expect.stringMatching(/^click: Click .*Sign out everywhere/),
+      'missed: Not recorded: something you did inside an embedded frame',
+    ]);
+  await expect(page.getByText('Not recorded: something you did inside an embedded frame')).toBeVisible();
+});

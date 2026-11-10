@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { RecordedStep } from '../../shared/api';
 import { generateSpec } from '../../server/tests/generate';
 import { validSteps } from '../../server/tests/validate';
+import { keyName } from '../../../../packages/vite/src/bridge/recorder';
 
 const expectations = [{ locator: "page.getByTestId('status')", description: 'the status', expected: 'Account: deleted', actual: 'Account: deleted' }];
 const spec = (steps: RecordedStep[]) => {
@@ -47,5 +48,54 @@ describe('dialogs', () => {
     expect(() => validSteps([{ ...click('Go'), dialogs: [{ type: 'print', accept: true }] }])).toThrow(/Step 1, dialog 1 is “print”/);
     expect(() => validSteps([{ ...click('Go'), dialogs: [{ type: 'confirm', accept: 'yes' }] }])).toThrow(/accept must be true or false/);
     expect(() => validSteps([{ ...click('Go'), dialogs: 'ok' }])).toThrow(/dialogs must be a list/);
+  });
+});
+
+describe('actions beyond a click, typing and Enter', () => {
+  it('writes each as Playwright does it: a double click, a right click, a key on the page, Shift+Enter, a hover, a drag, files chosen', () => {
+    const code = spec([
+      { kind: 'click', locator: "page.getByRole('button', { name: 'Like' })", count: 2, description: 'Double-click the “Like” button' },
+      { kind: 'click', locator: "page.getByText('Report.pdf', { exact: true })", button: 'right', description: 'Right-click “Report.pdf”' },
+      { kind: 'press', key: 'Control+k', description: 'Press Control+k' },
+      { kind: 'press', locator: "page.getByRole('textbox', { name: 'Message' })", key: 'Shift+Enter', description: 'Press Shift+Enter in the “Message” field' },
+      { kind: 'hover', locator: "page.getByRole('listitem').filter({ hasText: 'Products' })", description: 'Hover over “Products”' },
+      { kind: 'drag', locator: "page.getByText('Charlie', { exact: true })", to: "page.getByText('Alpha', { exact: true })", description: 'Drag “Charlie” onto “Alpha”' },
+      { kind: 'upload', locator: "page.getByLabel('Invoice')", files: [{ name: "march's invoice.pdf", mimeType: 'application/pdf' }], description: 'Choose “march’s invoice.pdf” in the “Invoice” field' },
+      { kind: 'missed', description: 'Not recorded: something you did inside an embedded frame' },
+    ]);
+    expect(code).toContain("await page.getByRole('button', { name: 'Like' }).dblclick();");
+    expect(code).toContain("await page.getByText('Report.pdf', { exact: true }).click({ button: 'right' });");
+    expect(code).toContain("await page.keyboard.press('Control+k');");
+    expect(code).toContain("await page.getByRole('textbox', { name: 'Message' }).press('Shift+Enter');");
+    expect(code).toContain("await page.getByRole('listitem').filter({ hasText: 'Products' }).hover();");
+    expect(code).toContain("await page.getByText('Charlie', { exact: true }).dragTo(page.getByText('Alpha', { exact: true }));");
+    expect(code).toContain("    // It uploads an empty file named as yours: put real content in its buffer if the app reads the file.\n    await page.getByLabel('Invoice').setInputFiles({ name: 'march\\'s invoice.pdf', mimeType: 'application/pdf', buffer: Buffer.from('') });");
+    expect(code).toContain("  // Not recorded: something you did inside an embedded frame: the test can't do this, so it may not get as far as you did.");
+  });
+
+  it('refuses what a test can’t do with them', () => {
+    expect(validSteps([{ kind: 'press', key: 'n', description: 'Press n' }])[0]).toEqual({ kind: 'press', key: 'n', description: 'Press n' });
+    expect(validSteps([{ kind: 'click', locator: "page.getByText('a')", count: 2, button: 'right', description: 'x' }])[0]).toMatchObject({ count: 2, button: 'right' });
+    expect(() => validSteps([{ kind: 'click', locator: "page.getByText('a')", count: 3, description: 'x' }])).toThrow(/count must be 1 or 2/);
+    expect(() => validSteps([{ kind: 'click', locator: "page.getByText('a')", button: 'middle', description: 'x' }])).toThrow(/button can only be “right”/);
+    expect(() => validSteps([{ kind: 'drag', locator: "page.getByText('a')", description: 'x' }])).toThrow(/names nothing to drop onto/);
+    expect(() => validSteps([{ kind: 'drag', locator: "page.getByText('a')", to: 'process.exit(1)', description: 'x' }])).toThrow(/isn’t a locator/);
+    expect(() => validSteps([{ kind: 'upload', locator: "page.getByLabel('a')", description: 'x' }])).toThrow(/must list the files/);
+    expect(() => validSteps([{ kind: 'upload', locator: "page.getByLabel('a')", files: [{ mimeType: 'a/b' }], description: 'x' }])).toThrow(/file 1 has no name/);
+    expect(validSteps([{ kind: 'missed', description: 'Not recorded: a shape drawn with the pointer on a canvas' }])).toHaveLength(1);
+  });
+});
+
+describe('keys as Playwright presses them', () => {
+  const k = (key: string, code: string, mods: Partial<Record<'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey', boolean>> = {}) => keyName({ key, code, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...mods });
+  it('names the modifiers, and never writes Shift+Enter as Enter', () => {
+    expect(k('Enter', 'Enter', { shiftKey: true })).toBe('Shift+Enter');
+    expect(k('k', 'KeyK', { ctrlKey: true })).toBe('Control+k');
+    expect(k('P', 'KeyP', { metaKey: true, shiftKey: true })).toBe('Meta+Shift+p');
+    // Alt+n on a Mac makes “˜”: the key is n.
+    expect(k('˜', 'KeyN', { altKey: true })).toBe('Alt+n');
+    expect(k('?', 'Slash', { shiftKey: true })).toBe('?');
+    expect(k('n', 'KeyN')).toBe('n');
+    expect(k('ArrowDown', 'ArrowDown', { shiftKey: true })).toBe('Shift+ArrowDown');
   });
 });

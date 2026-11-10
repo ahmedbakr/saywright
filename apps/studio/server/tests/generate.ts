@@ -184,7 +184,18 @@ function decodeURIComponentSafe(s: string): string {
 function stepCode(step: RecordedStep): string | null {
   switch (step.kind) {
     case 'click':
-      return `await ${safeLocator(step.locator)}.click();`;
+      if (step.count === 2) return `await ${safeLocator(step.locator)}.dblclick();`;
+      return `await ${safeLocator(step.locator)}.click(${step.button === 'right' ? "{ button: 'right' }" : ''});`;
+    case 'hover':
+      return `await ${safeLocator(step.locator)}.hover();`;
+    case 'drag':
+      return `await ${safeLocator(step.locator)}.dragTo(${safeLocator(step.to)});`;
+    case 'upload': {
+      const files = step.files ?? [];
+      // Only the files' names were recorded: the test uploads an empty file under each name.
+      const one = (f: { name: string; mimeType: string }) => `{ name: ${q(f.name)}, mimeType: ${q(f.mimeType)}, buffer: Buffer.from('') }`;
+      return `// It uploads an empty file named as yours: put real content in its buffer if the app reads the file.\n    await ${safeLocator(step.locator)}.setInputFiles(${files.length === 1 ? one(files[0]) : `[${files.map(one).join(', ')}]`});`;
+    }
     case 'fill': {
       const loc = safeLocator(step.locator);
       if (step.secret) return `await ${loc}.fill(secret(${q(secretKey(step.secret))}));`;
@@ -193,6 +204,8 @@ function stepCode(step: RecordedStep): string | null {
       return `await ${loc}.fill(${q(maskSecrets(step.value ?? ''))});`;
     }
     case 'press':
+      // A key on the page (an app's shortcut) goes to what has the focus, as it did.
+      if (!step.locator) return `await page.keyboard.press(${q(step.key ?? 'Enter')});`;
       return `await ${safeLocator(step.locator)}.press(${q(step.key ?? 'Enter')});`;
     case 'goto':
       return step.url ? `await page.goto(${q(pathOf(step.url))});` : null;
@@ -385,6 +398,11 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
     for (const e of checksAt.get(i) ?? []) check(e);
     if (s.kind === 'note') {
       lines.push(`  // ${jsComment(maskSecrets(s.description))}`);
+      return;
+    }
+    if (s.kind === 'missed') {
+      // Said where it happened, so whoever reads or runs the test knows it does less than the person did.
+      lines.push(`  // ${jsComment(maskSecrets(s.description))}: the test can't do this, so it may not get as far as you did.`);
       return;
     }
     const code = stepCode(s);

@@ -112,9 +112,19 @@ export interface LocatorInfo {
  * list says the same as one chosen, so the options are chosen by their values.
  */
 export type RecordedAction =
-  | { kind: 'click'; locator: string; description: string }
+  /** `count` 2: a double click; `button` 'right': a right click (what opens a context menu). */
+  | { kind: 'click'; locator: string; description: string; count?: 2; button?: 'right' }
   | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[]; byValue?: boolean; checked?: boolean }
-  | { kind: 'press'; locator: string; key: string; description: string }
+  /** A key in a field (`locator`), or on the page (no locator): an app's shortcut, Control+k, Shift+Enter. */
+  | { kind: 'press'; locator?: string; key: string; description: string }
+  /** The pointer rested on a part that showed what is clicked next (a menu that opens on hover). */
+  | { kind: 'hover'; locator: string; description: string }
+  /** An HTML drag and drop: `locator` dragged onto `to`. */
+  | { kind: 'drag'; locator: string; to: string; description: string }
+  /** Files chosen in a file input: their names and types only, never what is in them. */
+  | { kind: 'upload'; locator: string; files: { name: string; mimeType: string }[]; description: string }
+  /** Something done that a test can't do again (inside an embedded frame, a shape drawn on a canvas): said, not left out. */
+  | { kind: 'missed'; description: string }
   /**
    * A dialog of the browser (alert, confirm, prompt) the step just recorded opened, and how the person answered it:
    * OK (`accept`) or Cancel, and what they typed into a prompt. A test answers it the same way.

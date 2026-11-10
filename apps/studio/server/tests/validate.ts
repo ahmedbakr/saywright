@@ -14,7 +14,7 @@ export const MAX_CHECKS = 100;
 /** Options chosen in one list. */
 const MAX_OPTIONS = 1000;
 
-const KINDS: readonly RecordedStep['kind'][] = ['click', 'fill', 'press', 'goto', 'note', 'url'];
+const KINDS: readonly RecordedStep['kind'][] = ['click', 'fill', 'press', 'goto', 'note', 'url', 'hover', 'drag', 'upload', 'missed'];
 const DIALOGS: readonly StepDialog['type'][] = ['alert', 'confirm', 'prompt'];
 /** Dialogs one step opens, one after the other. */
 const MAX_DIALOGS = 20;
@@ -22,7 +22,9 @@ const FIELDS: readonly NonNullable<Expectation['field']>[] = ['value', 'select',
 /** The states a check can say an element is in. */
 const STATES = ['visible', 'hidden', 'enabled', 'disabled', 'selected', 'not selected'];
 /** Steps that act on an element, and so need one to act on. */
-const ON_ELEMENT = new Set<RecordedStep['kind']>(['click', 'fill', 'press']);
+const ON_ELEMENT = new Set<RecordedStep['kind']>(['click', 'fill', 'hover', 'drag', 'upload']);
+/** Files chosen at once in one file input. */
+const MAX_FILES = 100;
 /** Words and names: a locator, a description, a key. What was typed or should show can be as long as a request. */
 const SHORT = 2000;
 const URL_MAX = 8000;
@@ -76,7 +78,28 @@ function step(v: unknown, i: number): RecordedStep {
   const kind = o.kind as RecordedStep['kind'];
   if (!KINDS.includes(kind)) throw refuse(`${what} is “${shown(o.kind)}”, which a test can’t do: a step is one of ${KINDS.join(', ')}.`);
   const out: RecordedStep = { kind, description: text(o, 'description', what, { needed: 'says nothing about what it does (description)', max: SHORT })! };
-  if (ON_ELEMENT.has(kind)) out.locator = locator(o, what, `(${kind}) names no element to ${kind === 'fill' ? 'fill' : kind} (locator)`);
+  if (ON_ELEMENT.has(kind)) out.locator = locator(o, what, `(${kind}) names no element to ${kind === 'upload' ? 'choose files in' : kind} (locator)`);
+  // A key pressed in a field names it; one pressed on the page (an app's shortcut) doesn't.
+  if (kind === 'press' && o.locator !== undefined && o.locator !== null) out.locator = locator(o, what, '(press) names no element to press in (locator)');
+  if (kind === 'drag') out.to = locator({ locator: o.to }, what, '(drag) names nothing to drop onto (to)');
+  if (kind === 'click') {
+    if (o.count !== undefined && o.count !== null) {
+      if (o.count !== 1 && o.count !== 2) throw refuse(`${what}: count must be 1 or 2 (a double click), not ${shown(o.count)}.`);
+      if (o.count === 2) out.count = 2;
+    }
+    if (o.button !== undefined && o.button !== null) {
+      if (o.button !== 'right') throw refuse(`${what}: button can only be “right”, not ${shown(o.button)}.`);
+      out.button = 'right';
+    }
+  }
+  if (kind === 'upload') {
+    const files = o.files;
+    if (!Array.isArray(files) || files.length > MAX_FILES) throw refuse(`${what} (upload) must list the files chosen (files), at most ${MAX_FILES}.`);
+    out.files = files.map((f, j) => {
+      const r = record(f, `${what}, file ${j + 1}`, 'a file (an object with its name and type)');
+      return { name: text(r, 'name', `${what}, file ${j + 1}`, { needed: 'has no name', max: 1000 })!, mimeType: text(r, 'mimeType', `${what}, file ${j + 1}`, { max: 200 }) || 'application/octet-stream' };
+    });
+  }
   const url = text(o, 'url', what, { max: URL_MAX, ...(kind === 'goto' || kind === 'url' ? { needed: `(${kind}) names no address (url)` } : {}) });
   if (url !== undefined) out.url = url;
   const key = text(o, 'key', what, { max: 100 });

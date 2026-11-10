@@ -46,7 +46,7 @@ describe('a test’s steps', () => {
     const cases: [unknown, string][] = [
       [null, 'Step 2 isn’t a step'],
       [[click(9)], 'Step 2 isn’t a step'],
-      [{ kind: 'drag', description: 'Drag it' }, 'Step 2 is “drag”, which a test can’t do: a step is one of click, fill, press, goto, note, url.'],
+      [{ kind: 'scroll', description: 'Scroll down' }, 'Step 2 is “scroll”, which a test can’t do: a step is one of click, fill, press, goto, note, url, hover, drag, upload, missed.'],
       [{ kind: 'fill', value: 'x', description: 'Type x' }, 'Step 2 (fill) names no element to fill (locator).'],
       [{ kind: 'click', locator: "page.getByText('x')" }, 'Step 2 says nothing about what it does (description).'],
       [{ kind: 'fill', locator: "page.getByLabel('Name')", value: { text: 'Ann' }, description: 'Type' }, 'Step 2: value must be text, not {"text":"Ann"}.'],

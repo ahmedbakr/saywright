@@ -1,4 +1,4 @@
-import { CircleAlert, CircleCheck, CircleX, CornerDownLeft, Download, FlaskConical, Globe2, ListChecks, Lock, MousePointerClick, Play, Plus, RotateCcw, Sparkles, Trash2, Type, Wand2 } from 'lucide-react';
+import { CircleAlert, CircleCheck, CircleX, CornerDownLeft, Download, FlaskConical, Globe2, ListChecks, Lock, MousePointer2, MousePointerClick, Move, Paperclip, Play, Plus, RotateCcw, Sparkles, Trash2, TriangleAlert, Type, Wand2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/kbd';
@@ -13,7 +13,18 @@ import { useAiName } from '@/lib/ai-name';
 import { api } from '@/lib/api';
 import type { RecordedStep } from '@shared/api';
 
-const STEP_ICON = { click: <MousePointerClick />, fill: <Type />, press: <CornerDownLeft />, goto: <Play />, note: <Plus />, url: <Globe2 /> };
+const STEP_ICON = {
+  click: <MousePointerClick />,
+  fill: <Type />,
+  press: <CornerDownLeft />,
+  goto: <Play />,
+  note: <Plus />,
+  url: <Globe2 />,
+  hover: <MousePointer2 />,
+  drag: <Move />,
+  upload: <Paperclip />,
+  missed: <TriangleAlert />,
+};
 const iconOf = (s: RecordedStep) => (s.secret ? <Lock /> : s.select || s.values ? <ListChecks /> : STEP_ICON[s.kind]);
 
 export function TestTab() {
@@ -93,7 +104,7 @@ export function TestTab() {
                 <li key={i} className="group flex items-center gap-2 rounded-[8px] bg-raised px-2 py-1.5 text-[12.5px] ring-1 ring-inset ring-line">
                   <span className="w-4 text-right font-mono text-[11px] text-fg-3">{i + 1}</span>
                   <span className="text-fg-3 [&_svg]:size-[13px]">{iconOf(s)}</span>
-                  <span className="min-w-0 flex-1 truncate text-fg-2" title={s.description}>
+                  <span className={cn('min-w-0 flex-1 truncate', s.kind === 'missed' ? 'text-warn' : 'text-fg-2')} title={s.kind === 'missed' ? `${s.description}. The test can’t do this: it says so where it happened, and may not do what you did.` : s.description}>
                     {s.description}
                   </span>
                   {s.dialogs?.map((d, j) => (

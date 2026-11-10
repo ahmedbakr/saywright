@@ -121,7 +121,7 @@ export interface StatusResponse {
 
 export interface RecordedStep {
   /** `url`: the page the step before it led to, waited for (a click that navigates, whatever comes next). */
-  kind: 'click' | 'fill' | 'press' | 'goto' | 'note' | 'url';
+  kind: 'click' | 'fill' | 'press' | 'goto' | 'note' | 'url' | 'hover' | 'drag' | 'upload' | 'missed';
   locator?: string;
   value?: string;
   /** A secret typed into the field: the name its test reads it under (PASSWORD, from SAYWRIGHT_SECRET_PASSWORD). `value` is empty. */
@@ -136,6 +136,13 @@ export interface RecordedStep {
   checked?: boolean;
   key?: string;
   url?: string;
+  /** A click: 2 for a double click; 'right' for a right click. */
+  count?: number;
+  button?: 'right';
+  /** A drag: where it was dropped (a locator). */
+  to?: string;
+  /** Files chosen in a file input, by name and type (a test uploads an empty file of each name). */
+  files?: { name: string; mimeType: string }[];
   /** The browser's dialogs (confirm, prompt, alert) this step opened, in order, answered as the person did. */
   dialogs?: StepDialog[];
   description: string;

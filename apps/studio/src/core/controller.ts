@@ -427,17 +427,30 @@ class Controller {
       }
       const step: RecordedStep = {
         kind: action.kind,
-        locator: action.locator,
+        locator: 'locator' in action ? action.locator : undefined,
         description: action.description,
         value: 'value' in action ? action.value : undefined,
         key: 'key' in action ? action.key : undefined,
         ...(action.kind === 'fill' && action.secret ? { secret: action.secret } : {}),
         ...(action.kind === 'fill' && action.select ? { select: action.select, values: action.values, ...(action.byValue ? { byValue: true } : {}) } : {}),
         ...(action.kind === 'fill' && action.checked !== undefined ? { checked: action.checked } : {}),
+        ...(action.kind === 'click' && action.count === 2 ? { count: 2 } : {}),
+        ...(action.kind === 'click' && action.button === 'right' ? { button: 'right' as const } : {}),
+        ...(action.kind === 'drag' ? { to: action.to } : {}),
+        ...(action.kind === 'upload' ? { files: action.files } : {}),
       };
+      let before = r.steps;
+      if (step.kind === 'click' && step.count === 2) {
+        // A double click came as two clicks first: it takes their place (two clicks never make a dblclick).
+        let n = 0;
+        while (n < 2 && before.length && before.at(-1)!.kind === 'click' && before.at(-1)!.locator === step.locator && !before.at(-1)!.count && !before.at(-1)!.button && !before.at(-1)!.dialogs) {
+          before = before.slice(0, -1);
+          n++;
+        }
+      }
       // An older plugin may still send a password in clear: it is a secret by name before it is shown or kept.
       const [clean] = sanitizeSteps([step]);
-      set({ recorder: { ...r, steps: [...r.steps, clean] } });
+      set({ recorder: { ...r, steps: [...before, clean] } });
       this.stepAt = performance.now();
     };
     b.onKey = (key, down) => {
