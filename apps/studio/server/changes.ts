@@ -172,6 +172,7 @@ export class ChangeStore {
   }
 
   private async write(input: NewChange): Promise<Change> {
+    this.project.checkRoot();
     const texts = input.edits.filter((e) => e.before !== e.after);
     if (!texts.length) throw new HttpError(422, 'That change would not modify any file');
     const edits = this.encode(texts);
@@ -188,10 +189,17 @@ export class ChangeStore {
       createdAt: Date.now(),
       latencyMs: input.latencyMs,
     };
-    // Journal first: if the studio stops halfway, the next start still knows what was being written.
+    // Journal first: if the studio stops halfway, the next start still knows what was being written. A journal that
+    // can't be written stops it here, with nothing written and nothing listed.
     this.changes.push(change);
     this.edits.set(change.id, edits);
-    this.save();
+    try {
+      this.save('nothing was written');
+    } catch (err) {
+      this.changes.pop();
+      this.edits.delete(change.id);
+      throw err;
+    }
     let writing = false;
     try {
       // Checked again once the page's updates are held: a file saved meanwhile is never written over.
@@ -211,8 +219,8 @@ export class ChangeStore {
       }
       this.changes.pop();
       this.edits.delete(change.id);
-      this.save();
-      throw err;
+      this.saveIfCan();
+      throw writeError(err, change.files.map((f) => f.path));
     }
     this.onUpdate();
     return change;
@@ -220,6 +228,7 @@ export class ChangeStore {
 
   /** Keep a preview and every preview made before it (later ones were built on top of them). */
   keep(id?: string): { kept: Change[] } {
+    this.project.checkRoot();
     const previews = this.previews();
     if (!previews.length) throw new HttpError(409, 'Nothing is waiting to be kept');
     const upto = id ? previews.findIndex((c) => c.id === id) : previews.length - 1;
@@ -230,7 +239,16 @@ export class ChangeStore {
       c.status = 'kept';
       c.decidedAt = now;
     }
-    this.save();
+    try {
+      this.save('nothing was kept');
+    } catch (err) {
+      // Not recorded, so not kept: still previews, as the journal says.
+      for (const c of kept) {
+        c.status = 'preview';
+        c.decidedAt = undefined;
+      }
+      throw err;
+    }
     this.onUpdate();
     return { kept };
   }
@@ -261,6 +279,7 @@ export class ChangeStore {
   }
 
   private async putBack(id: string | undefined, opts: { force?: boolean }): Promise<Change[]> {
+    this.project.checkRoot();
     const target = id ? this.get(id) : this.previews().at(-1);
     if (!target) throw new HttpError(409, 'Nothing to undo');
     if (target.status === 'undone') throw new HttpError(409, 'That change was already undone');
@@ -298,13 +317,34 @@ export class ChangeStore {
       c.status = 'undone';
       c.decidedAt = now;
     }
-    this.save();
+    // The files are back. A journal that can't say so yet is no harm: the next start finds them as they were before
+    // these changes and counts them undone.
+    this.saveIfCan();
     this.onUpdate();
     return stack;
   }
 
+  /** Write the journal; when it can't be (a full disk, a folder that can't be written), why, and `then`, in words. */
+  private save(then = 'nothing was changed'): void {
+    try {
+      this.saveJournal();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const why = code === 'ENOSPC' ? 'the disk is full' : code === 'EACCES' || code === 'EPERM' || code === 'EROFS' ? 'that folder can’t be written' : (err as Error).message;
+      throw new HttpError(507, `The studio couldn’t save its list of changes in ${path.dirname(this.journal)} (${why}), so ${then}. Free some space or fix the folder’s permissions, then try again.`, 'journal');
+    }
+  }
+
+  private saveIfCan(): void {
+    try {
+      this.saveJournal();
+    } catch (err) {
+      console.warn(`[saywright] couldn’t save the list of changes: ${(err as Error).message}`);
+    }
+  }
+
   /** Write the journal, never half-written. Only previews keep their file contents: kept and undone changes are history. */
-  private save(): void {
+  private saveJournal(): void {
     const previews = new Set(this.previews().map((c) => c.id));
     const changes = this.changes.filter((c, i) => previews.has(c.id) || i >= this.changes.length - HISTORY);
     const edits: Journal['edits'] = {};
@@ -352,9 +392,17 @@ export class ChangeStore {
       this.changes.push(c);
     }
     const waiting = this.previews().length;
-    this.save();
+    this.saveIfCan();
     return waiting;
   }
+}
+
+/** A file that couldn't be written (a full disk, a folder that can't be written), in words; other errors as they are. */
+function writeError(err: unknown, files: string[]): unknown {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  if (code !== 'ENOSPC' && code !== 'EACCES' && code !== 'EPERM' && code !== 'EROFS') return err;
+  const why = code === 'ENOSPC' ? 'the disk is full' : 'the folder can’t be written';
+  return new HttpError(507, `Couldn’t write ${files.join(', ')} (${why}), so the change wasn’t made and nothing was written.`, 'write');
 }
 
 /** Asks the dev server at `url` to hold the page's updates while these files (absolute paths) are written; resolves once it has, or can't. */

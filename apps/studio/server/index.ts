@@ -344,6 +344,8 @@ export async function createStudioApi(layout: StudioLayout) {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const text = asString(body.text, 'text', 2000).trim();
     if (!text) throw new HttpError(400, 'Say or type something first');
+    // The app's folder moved away or deleted: said before anything (an AI included) is asked to work in it.
+    apps.active()?.project.checkRoot();
     const requestId = typeof body.requestId === 'string' ? body.requestId.slice(0, 40) : String(Date.now());
     const pageUrl = typeof body.pageUrl === 'string' ? body.pageUrl.slice(0, 500) : undefined;
     const refs = await mapRefs(body.refs, pageUrl);

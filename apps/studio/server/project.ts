@@ -229,8 +229,17 @@ export class Project {
   }
 
   /** Resolve a project-relative path ("../packages/ui/Button.tsx" for a workspace's package), refusing anything outside or in ignored folders. */
+  /**
+   * The app's folder is where it was. Renamed or deleted while the studio runs, it is never made again by a write
+   * (an empty folder in its place would stop it being moved back or cloned there): every request says so instead.
+   */
+  checkRoot(): void {
+    if (this.hasCode && !fs.existsSync(this.root)) throw new HttpError(409, `The app’s folder isn’t there any more (${this.root}): put it back, or link the app again.`, 'app-gone');
+  }
+
   resolve(rel: string): string {
     if (!this.hasCode) throw new HttpError(409, 'This app has no code on this computer. Link its folder to make changes.', 'no-code');
+    this.checkRoot();
     if (typeof rel !== 'string' || !rel.trim()) throw new HttpError(400, 'Empty path');
     const clean = rel.replace(/\\/g, '/').replace(/^\.\//, '');
     const abs = path.resolve(this.root, clean);
@@ -568,6 +577,7 @@ export class Project {
       fs.mkdirSync(this.dataDir, { recursive: true });
       return this.dataDir;
     }
+    this.checkRoot();
     const dir = path.join(this.root, '.saywright');
     fs.mkdirSync(dir, { recursive: true });
     const ignore = path.join(dir, '.gitignore');

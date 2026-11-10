@@ -244,6 +244,46 @@ describe.skipIf(process.platform === 'win32')('a file’s link and mode', () => 
   });
 });
 
+describe('when the journal can’t be written, or the app’s folder is gone', () => {
+  it('a preview fails whole, Keep keeps nothing, and Undo of a real preview still works', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    await store.preview({ title: 'A', source: 'quick', edits: [edit(p, 'toFixed(2)', 'toFixed(3)')] });
+    await store.preview({ title: 'A2', source: 'quick', edits: [edit(p, 'toFixed(3)', 'toFixed(4)')] });
+    const afterA2 = p.read('src/lib/money.ts');
+    // The data folder can't take the journal any more (a full disk, say): its place is taken by a folder.
+    const journal = path.join(p.root, '.saywright', 'changes.json');
+    fs.rmSync(journal);
+    fs.mkdirSync(path.join(journal, 'x'), { recursive: true });
+    await expect(store.preview({ title: 'B', source: 'quick', edits: [edit(p, 'toFixed(4)', 'toFixed(5)')] })).rejects.toThrow(/couldn’t save its list of changes in .*\.saywright.*nothing was written/);
+    expect(p.read('src/lib/money.ts')).toBe(afterA2);
+    expect(store.list().map((c) => `${c.title}:${c.status}`)).toEqual(['A2:preview', 'A:preview']);
+    expect(() => store.keep()).toThrow(/couldn’t save its list of changes .*nothing was kept/);
+    expect(store.list().map((c) => `${c.title}:${c.status}`)).toEqual(['A2:preview', 'A:preview']);
+    const undone = await store.undo();
+    expect(undone.map((c) => c.title)).toEqual(['A2']);
+    expect(p.read('src/lib/money.ts')).toContain('toFixed(3)');
+    expect(store.list().map((c) => `${c.title}:${c.status}`)).toEqual(['A2:undone', 'A:preview']);
+  });
+
+  it('nothing recreates the app’s folder when it is moved away: every request says it is gone', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    await store.preview({ title: 'A', source: 'quick', edits: [edit(p, 'toFixed(2)', 'toFixed(3)')] });
+    const moved = `${p.root}-moved`;
+    fs.renameSync(p.root, moved);
+    const gone = `The app’s folder isn’t there any more (${p.root}): put it back, or link the app again.`;
+    await expect(store.undo()).rejects.toThrow(gone);
+    expect(() => store.keep()).toThrow(gone);
+    await expect(store.preview({ title: 'B', source: 'quick', edits: [{ path: 'src/new.ts', before: null, after: 'x' }] })).rejects.toThrow(gone);
+    expect(() => p.read('src/lib/money.ts')).toThrow(gone);
+    expect(() => p.stateDir()).toThrow(gone);
+    expect(fs.existsSync(p.root)).toBe(false);
+    fs.renameSync(moved, p.root);
+    expect((await store.undo()).map((c) => c.title)).toEqual(['A']);
+  });
+});
+
 describe('committing kept changes', () => {
   it('commits alongside the studio, and says what git said when a hook refuses', async () => {
     const p = tempShop();
