@@ -461,6 +461,7 @@ Write the report the team will act on:
 - A click that "did nothing" only means the screen didn't change: it may already have shown the result (the same message again). Check what the tester or Autopilot said the page showed before calling a feature broken.
 - Pauses are normal. The tester may wait, read, think, rest the pointer on something or stay silent before and between sentences: never report that as a finding, and never report the page being busy while nobody was using it. Slowness is a finding only when something the tester did was slow to respond (a slow response or slow request in the evidence) or they said so.
 - A finding is what happened in this session. A risk the session never triggered (code that could fail, a path nobody took) is not a finding, however serious: suggest a test for it instead ("add").
+- You don't know the app's own rules (what a coupon applies to, how tax is rounded). When a value changed and nobody said what it should be, say what changed and the arithmetic the screen shows ("the total went from $98.00 to $78.40: 20% off the items and the shipping together"), and never call it correct, right, accurate or as expected: only the tester's words, or a rule the screen itself states, make a value right or wrong.
 - Work out amounts step by step from the numbers on screen (items, discount, shipping, tax), and put the calculation in "expected": "20% of the $98.00 items is $19.60, so the total is $98.00 − $19.60 + $5.00 = $83.40". Check the arithmetic before writing it.
 - Merge duplicates. Order findings by impact on the user. Severity: critical (data loss, money, blocks the main task), high (main task is wrong or broken), medium (friction, confusing, workaround exists), low (polish).
 - Suggestions: "fix" for defects, "improve" for UX or performance improvements, "add" for missing features or tests worth adding.
@@ -554,6 +555,29 @@ const UNSEEN = [
   /لم\s+(?:يحدث|تحدث|يُختبر|تُختبر|يختبر|تختبر)[^.]{0,60}?(?:هذه\s+الجلسة|الجلسة|التسجيل)/,
 ];
 
+const A_VALUE = /[$€£¥]|\d|\b(?:totals?|subtotals?|amounts?|prices?|discounts?|tax(?:es)?|sums?|counts?|quantit(?:y|ies)|balances?|values?)\b/i;
+const RIGHTLY = /,?\s+(?:correctly|accurately|properly|as expected|as intended|as it should)\b/gi;
+const IS_RIGHT = /\b(is|was|are|were)\s+(?:correct|accurate|right|as expected)\b/gi;
+const SEEMS_RIGHT = /\b(?:looks?|looked|seems?|seemed|appears?|appeared)\s+(?:correct|accurate|right|as expected)\b/gi;
+const RIGHTLY_AR = /\s+بشكل\s+صحيح/g;
+
+/**
+ * A sentence about a value, without the claim that the value is right: “the total updated correctly from $98.00 to
+ * $78.40” says “the total updated from $98.00 to $78.40”. The studio can't know an app's rules, so in a session where
+ * the tester said nothing, a value is only ever described. Sentences that aren't about a value are left as they are.
+ */
+export function describedOnly(text: string): string {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => (A_VALUE.test(sentence) ? sentence.replace(RIGHTLY, '').replace(RIGHTLY_AR, '').replace(IS_RIGHT, '$1 shown').replace(SEEMS_RIGHT, 'was shown') : sentence))
+    .join(' ');
+}
+
+/** Whether the tester said anything in the session (aloud, or as a note on a mark): their words can make a value right or wrong. */
+function testerSpoke(a: SessionAnalysis): boolean {
+  return a.transcript.length > 0 || a.issues.some((g) => g.kind === 'said' || (g.kind === 'mark' && g.title !== 'Marked moment'));
+}
+
 /**
  * The model's findings, kept to what the session showed: evidence ids it doesn't have are dropped; a finding that says
  * the session didn't show it is a test worth adding, not a bug seen; and one without a place in the code gets where its
@@ -608,17 +632,19 @@ export class ModelReportWriter implements ReportWriter {
     let verdict = worst === 'critical' ? 'blocked' : worst === 'high' && out.verdict === 'ship' ? 'fix-first' : out.verdict;
     // With what the session didn't show set aside, nothing seen that holds it back: the verdict follows what was seen.
     if (unseen.length && worst !== 'critical' && worst !== 'high') verdict = 'ship';
+    // With no word from the tester, nothing in the session says what a value should be: it is described, never called right.
+    const plain = testerSpoke(input.analysis) ? (text: string) => text : describedOnly;
     return {
       lang,
-      title: out.title,
-      summary: out.summary,
+      title: plain(out.title),
+      summary: plain(out.summary),
       verdict,
       scoreNotes: out.scoreNotes,
       findings,
-      suggestions: [...out.suggestions, ...unseen],
-      positives: out.positives,
-      journey: out.journey,
-      nextSteps: out.nextSteps,
+      suggestions: [...out.suggestions.map((x) => ({ ...x, title: plain(x.title), why: plain(x.why) })), ...unseen],
+      positives: out.positives.map(plain),
+      journey: out.journey.map(plain),
+      nextSteps: out.nextSteps.map(plain),
       source: 'ai',
       model,
       at: Date.now(),

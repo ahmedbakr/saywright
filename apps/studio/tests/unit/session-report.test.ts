@@ -9,7 +9,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { describe, expect, it } from 'vitest';
 import { EMPTY_COUNTS, type SessionMeta } from '../../shared/session';
 import { analyze } from '../../server/sessions/analyze';
-import { Finding, ModelReportWriter, ReportSchema, evidencePack, relatedCode, type AskJson } from '../../server/sessions/report';
+import { Finding, ModelReportWriter, ReportSchema, describedOnly, evidencePack, relatedCode, type AskJson } from '../../server/sessions/report';
 import { Project } from '../../server/project';
 import type { StoredEvent } from '../../server/sessions/store';
 import { tempShop } from './helpers';
@@ -232,6 +232,48 @@ describe('the answer', () => {
     expect(out.title).toBe('ت');
     // Written by one model, translated by another: both are named.
     expect(out).toMatchObject({ model: 'claude-sonnet-5-5', translatedBy: 'claude-haiku-5-5' });
+  });
+});
+
+describe('a value nobody spoke about', () => {
+  it('is described, never called right: the studio doesn’t know an app’s rules', () => {
+    // As a model wrote them of the sample shop's coupon bug, in a session where nothing was said.
+    expect(describedOnly('I reviewed the checkout flow from loading the page through applying coupon SAVE20 and paying. The totals updated correctly from $98.00 to $78.40, and payment completed with a success message.')).toBe(
+      'I reviewed the checkout flow from loading the page through applying coupon SAVE20 and paying. The totals updated from $98.00 to $78.40, and payment completed with a success message.',
+    );
+    expect(describedOnly('The total recalculated correctly from $98.00 to $78.40.')).toBe('The total recalculated from $98.00 to $78.40.');
+    expect(describedOnly('The session exercised the coupon flow and confirmed the totals changed as expected; a test would help protect this pricing path.')).toBe(
+      'The session exercised the coupon flow and confirmed the totals changed; a test would help protect this pricing path.',
+    );
+    expect(describedOnly('The discount is correct at $19.60. The total looks right.')).toBe('The discount is shown at $19.60. The total was shown.');
+    expect(describedOnly('تم تحديث الإجمالي بشكل صحيح من $98.00 إلى $78.40.')).toBe('تم تحديث الإجمالي من $98.00 إلى $78.40.');
+  });
+
+  it('leaves what isn’t about a value as it is written', () => {
+    for (const text of ['Coupon SAVE20 applied successfully and updated the order summary.', 'The page loaded quickly and responded immediately to input.', 'Navigation worked as expected.', 'The form validates correctly.']) expect(describedOnly(text)).toBe(text);
+  });
+
+  it('is applied to what a model wrote only when the tester said nothing', async () => {
+    const answer = {
+      title: 'Checkout completed',
+      summary: 'The totals updated correctly from $98.00 to $78.40.',
+      verdict: 'ship',
+      scoreNotes: { stability: 'a', usability: 'b', performance: 'c', accessibility: 'd' },
+      findings: [],
+      suggestions: [{ kind: 'add', title: 'A pricing test', why: 'The totals changed as expected.', effort: 'small' }],
+      positives: ['The total recalculated correctly from $98.00 to $78.40.'],
+      journey: ['Applied SAVE20; the total updated correctly to $78.40.'],
+      nextSteps: [],
+    };
+    const ask = (async (req: Parameters<AskJson>[0]) => ({ value: req.schema.parse(answer), model: 'm' })) as AskJson;
+    const silent = { ...input, analysis: { ...input.analysis, transcript: [], issues: input.analysis.issues.filter((g) => g.kind !== 'said' && g.kind !== 'mark') } };
+    const quiet = await new ModelReportWriter(ask, 'medium').write(silent);
+    expect(quiet.summary).toBe('The totals updated from $98.00 to $78.40.');
+    expect(quiet.positives).toEqual(['The total recalculated from $98.00 to $78.40.']);
+    expect(quiet.journey).toEqual(['Applied SAVE20; the total updated to $78.40.']);
+    expect(quiet.suggestions[0].why).toBe('The totals changed.');
+    // The tester's own words can make a value right: then what the model wrote of it stands.
+    expect((await new ModelReportWriter(ask, 'medium').write(input)).summary).toBe(answer.summary);
   });
 });
 
