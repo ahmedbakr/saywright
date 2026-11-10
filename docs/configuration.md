@@ -60,7 +60,7 @@ What it downloads, once:
 | Cohere Transcribe (optional) | 1.6 GB | sherpa-onnx releases on GitHub | The most accurate Arabic ([measured](speech-accuracy.md)). Asked in a terminal; skipped without one. |
 | Test browser (in a checkout only) | | Playwright | Running the sample shop's generated tests. |
 
-You can also install speech models later in **Settings → Voice**, and the voice model from the same place.
+You can also install speech models later in **Settings → Voice**, and the voice model from the same place. A dropped or stalled download (nothing for a minute) is continued where it stopped; what a stopped one leaves is removed the next time `setup` or the studio starts, and when you stop `setup` with Ctrl+C. Speech models are unpacked with `tar` and `bzip2`: without them, `setup` says so before downloading. Where the speech engine can't run (Windows on ARM, Alpine Linux), `setup` and `doctor` say so and download no speech model. `setup` exits with 1 when anything failed, so a script can tell.
 
 #### `saywright doctor`
 

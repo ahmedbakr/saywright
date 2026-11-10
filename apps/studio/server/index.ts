@@ -14,6 +14,7 @@ import { probeFolder } from './apps/detect.ts';
 import { connectedTargets } from './apps/connected.ts';
 import { keepStartedIn, stopLeftovers } from './apps/started.ts';
 import { checkDataFiles } from './data-check.ts';
+import { removePartials } from './download.ts';
 import { FakeProvider, fakeAutopilotAsk, fakeExpertAsk } from './ai/fake.ts';
 import { AiService } from './ai/service.ts';
 import { AgentError, type AgentProvider } from './ai/types.ts';
@@ -43,7 +44,7 @@ import { ReviewStore, aiReview, installSkills, reviewPage } from './experts/inde
 import { EXPERTS, skillFile } from './experts/instructions.ts';
 import { STUDIO_PORT, STUDIO_URL, type ExpertId, type PageReview } from '@saywright/vite/protocol';
 import type { SpeechLang } from './speech/catalog.ts';
-import { SpeechService } from './speech/service.ts';
+import { SPEECH_DOWNLOADS, SpeechService } from './speech/service.ts';
 import { sanitizeSteps, writeSpec } from './tests/generate.ts';
 import { installBrowser, runSpec } from './tests/run.ts';
 import { validChecks, validSteps } from './tests/validate.ts';
@@ -166,6 +167,8 @@ export async function createStudioApi(layout: StudioLayout) {
   /** An app linked by its address alone: the studio can test and review it, but has no code to change. */
   const addressOnly = (name: string): IntentResult => ({ kind: 'message', text: `${name} is linked by its address only, so the studio can’t see its code. Link its code folder to make changes.`, tone: 'info', next: [{ kind: 'link-folder' }] });
 
+  // What a download stopped with the last studio or setup left (up to 1.6 GB) goes.
+  removePartials(speechDir(layout), SPEECH_DOWNLOADS);
   const speech = new SpeechService(
     speechDir(layout),
     layout.speechWorker,

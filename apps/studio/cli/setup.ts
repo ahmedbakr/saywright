@@ -8,10 +8,11 @@
 import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { browserSpeechReady, ensureBrowserSpeech } from '../server/assets.ts';
+import { removePartials } from '../server/download.ts';
 import { spawnProgramSync } from '../server/program.ts';
 import { speechDir } from '../server/layout.ts';
 import { MODELS } from '../server/speech/catalog.ts';
-import { SpeechService } from '../server/speech/service.ts';
+import { SPEECH_DOWNLOADS, SpeechService } from '../server/speech/service.ts';
 import type { SpeechStatus } from '../shared/api.ts';
 import type { CliContext } from './index.ts';
 import { c, ok, warn } from './term.ts';
@@ -30,7 +31,13 @@ function progress(label: string) {
   return {
     show(fraction: number) {
       const pct = Math.round(fraction * 100);
-      if (!process.stdout.isTTY || pct === shown) return;
+      if (pct === shown) return;
+      // Not in a terminal (a log, CI): one line as it starts, rather than nothing until it ends.
+      if (!process.stdout.isTTY) {
+        if (shown < 0) console.log(`… ${label}`);
+        shown = pct;
+        return;
+      }
       shown = pct;
       process.stdout.write(`\r${c.dim(`… ${label} ${pct}%`)}`);
     },
@@ -51,6 +58,13 @@ export async function setup(argv: string[], ctx: CliContext): Promise<number> {
     return 0;
   }
   const { dataDir } = ctx.layout;
+  // What a stopped download left (up to 1.6 GB) goes now, and when this one is stopped.
+  removePartials(speechDir(ctx.layout), SPEECH_DOWNLOADS);
+  const stopped = () => {
+    removePartials(speechDir(ctx.layout), SPEECH_DOWNLOADS);
+    process.exit(130);
+  };
+  process.once('SIGINT', stopped);
   let problems = 0;
   const attempt = async (what: string, run: () => Promise<void>, otherwise: string) => {
     try {
@@ -86,10 +100,15 @@ export async function setup(argv: string[], ctx: CliContext): Promise<number> {
         const line = progress(`${model.label} (${model.sizeMb} MB)`);
         const tick = setInterval(() => line.show((speech.status().models.find((m) => m.id === model.id)?.installing ?? 0) / 100), 500);
         const install = () =>
-          speech.install(model.id).finally(() => {
-            clearInterval(tick);
-            line.done();
-          });
+          speech
+            .install(model.id, (why) => {
+              line.done();
+              console.log(c.dim(`… ${model.label}: ${why}; continuing where it stopped`));
+            })
+            .finally(() => {
+              clearInterval(tick);
+              line.done();
+            });
         await attempt(`Speech model: ${model.label}`, install, 'Install it later from Settings → Voice in the studio.');
       }
     }
@@ -110,6 +129,7 @@ export async function setup(argv: string[], ctx: CliContext): Promise<number> {
 
   console.log(problems ? c.yellow(`\nDone, with ${problems} thing(s) to retry later.`) : c.green('\nAll set.'));
   console.log(`Next: ${c.cyan(ctx.startCommand)}\n`);
+  process.off('SIGINT', stopped);
   // A script can tell: something that failed is a failure, however much else worked.
   return problems ? 1 : 0;
 }

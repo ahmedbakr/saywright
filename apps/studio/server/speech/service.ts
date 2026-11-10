@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { SpeechStatus } from '../../shared/api.ts';
-import { download, extractTarBz2 } from '../download.ts';
+import { download, extractTarBz2, missingUnpackers } from '../download.ts';
+import { programExists } from '../program.ts';
 import { MODELS, RELEASE, VAD_SHA256, VAD_URL, isInstalled, modelById, modelDir, narrationPlan, pickModel, type SpeechLang, type SpeechModel } from './catalog.ts';
 
 const RATE = 16000;
@@ -38,6 +39,9 @@ interface StreamHandlers {
 
 /** The engine and its models (a few GB for the larger ones) are let go after this long unused; the next request starts them again. */
 const IDLE_MS = 10 * 60_000;
+
+/** What installing speech models downloads into their folder (for removePartials). */
+export const SPEECH_DOWNLOADS = [...MODELS.map((m) => `${m.archive}.tar.bz2`), 'silero_vad.onnx'];
 
 let engineLoads: boolean | undefined;
 
@@ -385,10 +389,14 @@ export class SpeechService {
 
   // ---- installing models -----------------------------------------------------
 
-  async install(id: string): Promise<void> {
+  /** Download and unpack a model. `onRetry` hears when a download is continued after a dropped or stalled connection. */
+  async install(id: string, onRetry?: (why: string) => void): Promise<void> {
     const model = modelById(id);
     if (!model) throw new Error('Unknown model');
     if (isInstalled(this.root, model) || this.installing.has(id)) return;
+    // Checked before a download of hundreds of megabytes, not after it.
+    const missing = missingUnpackers((cmd) => programExists(cmd));
+    if (missing.length) throw new Error(`Speech models are unpacked with tar and bzip2, and this computer hasn’t got ${missing.join(' or ')}. Install it, then try again.`);
     this.installing.set(id, 0);
     this.installErrors.delete(id);
     this.emit('speech', this.status());
@@ -403,7 +411,7 @@ export class SpeechService {
           this.emit('speech', this.status());
         }
       };
-      await download(`${RELEASE}/${model.archive}.tar.bz2`, archive, progress, model.sha256);
+      await download(`${RELEASE}/${model.archive}.tar.bz2`, archive, progress, model.sha256, onRetry);
       this.installing.set(id, 96);
       this.emit('speech', this.status());
       await extractTarBz2(archive, this.root);
