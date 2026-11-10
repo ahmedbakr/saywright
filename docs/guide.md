@@ -106,7 +106,7 @@ A fix may not change the test it is checked against: if the AI's change edits th
 
 **Checks that hold once the fix is in.** A check reads what an element shows, so it is never found by the words it checks, which the fix changes: the value in a table row by the row's heading (`getByRole('row').filter({ hasText: 'You pay' }).locator('td')`), a name with a price or a count by a pattern with the numbers left open (`getByRole('button', { name: /^Like this portfolio \(\d[\d.,]*\)$/ })`), else by its place among the same. Steps find a name with numbers the same way, so a fix that changes a total doesn't lose the Pay button. A box checks `toBeChecked()`, and a list the options chosen in it.
 
-**The Test tab** shows each check's own result in the last run (passed, failed, or not reached), and keeps the test being written when you reload the studio.
+**The Test tab** shows each check's own result in the last run (passed, failed, or not reached). The test being written is kept for each app, in this browser tab: it comes back, with Write test on if it was, when you reload the studio, when the studio restarts, and when you switch to another app and back. If the app opens again on another page than the one its steps end on, the Test tab says so and offers **Start over**; the steps stay until you choose.
 
 **Repeatable runs.** Each run starts from a fresh browser: no cookies, no storage, not signed in. For data the test needs (an account, an empty cart), add `tests/saywright/setup.ts`: it runs before the test, as Playwright's global setup, to put that data in place. It gets Playwright's configuration, with the app's address for the run:
 

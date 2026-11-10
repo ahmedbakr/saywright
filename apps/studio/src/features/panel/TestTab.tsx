@@ -82,6 +82,19 @@ export function TestTab() {
           >
             Steps
           </SectionTitle>
+          {rec.elsewhere && !startingOver && (
+            <div className="mb-2 rounded-[8px] bg-warn-soft px-2.5 py-2 text-[12px] leading-relaxed text-fg-2 ring-1 ring-inset ring-line" data-kept-elsewhere>
+              The app opened again on {pageOf(app.url)}, and these steps end on {pageOf(rec.elsewhere)}: steps added from here would make a test that can’t replay what you did.
+              <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+                <Button size="sm" variant="ghost" onClick={() => controller.keepKeptSteps()}>
+                  Carry on anyway
+                </Button>
+                <Button size="sm" onClick={() => (controller.awayFromStart() ? setStartingOver(true) : controller.newRecording())}>
+                  Start over
+                </Button>
+              </div>
+            </div>
+          )}
           {startingOver && (
             <div className="mb-2 rounded-[8px] bg-raised px-2.5 py-2 text-[12px] leading-relaxed text-fg-2 ring-1 ring-inset ring-line" data-start-over>
               Start the new test from this page ({pageOf(app.url)}), or from the app’s start page? A test opens your app in a fresh browser, signed out: if this page needs signing in, start from the start page and sign in as part of the test.

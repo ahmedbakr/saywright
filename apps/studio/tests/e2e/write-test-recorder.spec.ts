@@ -4,9 +4,11 @@
  * choose from a combobox's list.
  */
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { E2E_SHOP, openStudio, resetAll, store } from './helpers';
+import { E2E_SHOP, openStudio, resetAll, store, STUDIO } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -326,4 +328,69 @@ test('while writing a test, pointing reaches a value inside a web component, and
   await expect.poll(() => store<{ tag: string; text: string } | null>(page, 's.hover && { tag: s.hover.tag, text: s.hover.text }')).toEqual({ tag: 'span', text: 'Hello, Ada (VIP)' });
   await hoverOn(app.locator('iframe[title="Pay"]'));
   await expect.poll(() => store<string | null>(page, 's.hover && s.hover.tag')).toBe('iframe');
+});
+
+test('after a reload the kept steps come back in Write test, and the Test tab says when the app is no longer where they end', async ({ page }) => {
+  await writeTestOnAccount(page);
+  await page.frameLocator('iframe').getByLabel('Email').fill('me@example.com');
+  await page.frameLocator('iframe').getByText('Show password').click();
+  await expect.poll(async () => (await steps(page)).length).toBe(2);
+  await page.waitForTimeout(500);
+  await page.reload();
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('record');
+  await expect.poll(async () => (await steps(page)).length).toBe(2);
+  // The app came back on its start page; the steps end on the account page.
+  const notice = page.locator('[data-kept-elsewhere]');
+  await expect(notice).toContainText(/opened again on .*these steps end on .*#\/account/);
+  // The steps stay until the person decides.
+  await notice.getByRole('button', { name: 'Carry on anyway' }).click();
+  await expect(notice).toBeHidden();
+  expect((await steps(page)).length).toBe(2);
+});
+
+test('each app keeps its own test being written: switching away and back, and opening it again after a reload', async ({ page }) => {
+  const site = http.createServer((_req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end('<!doctype html><title>Other</title><h1>Other app</h1><button>Go</button>');
+  });
+  await new Promise<void>((r) => site.listen(0, '127.0.0.1', r));
+  const origin = `http://localhost:${(site.address() as AddressInfo).port}`;
+  const call = async <T>(method: string, route: string, body?: unknown): Promise<T> =>
+    (await fetch(`${STUDIO}/api${route}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })).json() as Promise<T>;
+  const { probe } = await call<{ probe: unknown }>('POST', '/apps/probe', { url: `${origin}/` });
+  const other = (await call<{ app: { id: string } }>('POST', '/apps', { probe, url: `${origin}/` })).app.id;
+  const shop = (await call<{ apps: { id: string; root: string | null }[] }>('GET', '/apps')).apps.find((a) => a.root?.endsWith('.e2e-shop'))!.id;
+  try {
+    // Linking it opened it: the shop first.
+    await call('POST', `/apps/${shop}/open`, { decide: 'undo' });
+    await writeTestOnAccount(page);
+    await page.frameLocator('iframe').getByLabel('Email').fill('me@example.com');
+    await page.frameLocator('iframe').getByText('Show password').click();
+    await expect.poll(async () => (await steps(page)).length).toBe(2);
+    // Another app: its own (empty) test; the shop's is kept.
+    await call('POST', `/apps/${other}/open`, { decide: 'undo' });
+    await expect.poll(() => store<string>(page, 's.app.title')).toBe('Other');
+    expect((await steps(page)).length).toBe(0);
+    expect(await store<string>(page, 's.mode')).not.toBe('record');
+    await page.evaluate(() => (window as any).__saywright.setMode('record'));
+    await page.frameLocator('iframe').getByRole('button', { name: 'Go' }).click();
+    await expect.poll(async () => (await steps(page)).length).toBe(1);
+    // Back: the shop's test, and Write test as it was.
+    await call('POST', `/apps/${shop}/open`, { decide: 'undo' });
+    await expect.poll(async () => (await steps(page)).length).toBe(2);
+    expect(await store<string>(page, 's.mode')).toBe('record');
+    // The other app open, the tab reloaded, then the shop opened from the list: its test is back.
+    await call('POST', `/apps/${other}/open`, { decide: 'undo' });
+    await expect.poll(async () => (await steps(page)).length).toBe(1);
+    await page.waitForTimeout(500);
+    await page.reload();
+    await expect.poll(() => store<string>(page, 's.app.title')).toBe('Other');
+    await call('POST', `/apps/${shop}/open`, { decide: 'undo' });
+    await expect.poll(async () => (await steps(page)).length).toBe(2);
+    expect((await steps(page)).map((s) => s.kind)).toEqual(['fill', 'fill']);
+  } finally {
+    await call('POST', `/apps/${shop}/open`, { decide: 'undo' }).catch(() => undefined);
+    await call('DELETE', `/apps/${other}`).catch(() => undefined);
+    site.close();
+  }
 });

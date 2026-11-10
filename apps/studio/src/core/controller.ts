@@ -160,6 +160,8 @@ class Controller {
   private frames = 0;
   private clearedProbe = false;
   private lastProbe: { x: number; y: number; t: number; deep: boolean } | null = null;
+  /** Whether the open app has shown a page since the studio opened it (the first one is checked against kept steps). */
+  private pageSeen = false;
   /** When the boxes of what is selected, pinned or changed were last asked for. */
   private trackedAt = 0;
   /** The cursor canvas has something on it (else it is hidden). */
@@ -301,10 +303,10 @@ class Controller {
       window.removeEventListener('blur', blur);
     });
 
-    void apps.init((changed) => this.appSwitched(changed)).then(() => this.restoreRecorder());
+    void apps.init((changed) => this.appSwitched(changed)).then(() => this.restoreRecorder(useApps.getState().active));
     this.cleanups.push(
       useStudio.subscribe((st, prev) => {
-        if (st.recorder !== prev.recorder) this.keepRecorder();
+        if (st.recorder !== prev.recorder || st.mode !== prev.mode) this.keepRecorder();
       }),
     );
     void this.refreshStatus();
@@ -386,8 +388,14 @@ class Controller {
       b.record(mode === 'record');
       b.forwardKeys(true);
       void this.reresolveAll();
-      // A full page load (a link, a form sent, location.href) moved the app: the test waits for the new page too.
-      this.recordedPage(url);
+      if (this.pageSeen) {
+        // A full page load (a link, a form sent, location.href) moved the app: the test waits for the new page too.
+        this.recordedPage(url);
+      } else {
+        // The first page since the studio (or this app) opened: kept steps that end elsewhere don't fit it.
+        this.pageSeen = true;
+        this.checkKeptSteps(url);
+      }
     };
     b.onHere = () => set({ app: { ...get().app, connected: false } });
     b.onOutdated = (outdated) => set({ app: { ...get().app, connected: false, outdated } });
@@ -2049,36 +2057,86 @@ class Controller {
 
   /** Another app (or address) is open now: nothing shown for the last one still applies. */
   /** Write test's steps and checks so far, kept in this tab: a reload, or a studio that restarts, doesn't lose them. */
-  private keepTimer: ReturnType<typeof setTimeout> | null = null;
+  private keeping: { app: string; save: () => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
+  /**
+   * The test being written is kept for each app (in this tab, by the app's id), with whether Write test was on: it
+   * comes back whenever that app is opened again, after a reload, a restart of the studio, or another app.
+   */
   private keepRecorder(): void {
-    if (this.keepTimer) clearTimeout(this.keepTimer);
-    this.keepTimer = setTimeout(() => {
-      const app = useApps.getState().active;
-      if (!app) return;
-      const { startUrl, steps, expectations, spec, run, baseline, written } = get().recorder;
+    const app = useApps.getState().active;
+    // Another app's test still waiting to be kept is kept now, before this one's.
+    if (this.keeping && this.keeping.app !== app) this.keeping.save();
+    if (this.keeping) clearTimeout(this.keeping.timer);
+    this.keeping = null;
+    if (!app) return;
+    // Read now: by the time it is written, another app may be open.
+    const { startUrl, steps, expectations, spec, run, baseline, written, elsewhere } = get().recorder;
+    const recording = get().mode === 'record';
+    const save = () => {
       try {
-        sessionStorage.setItem(RECORDER_KEY, JSON.stringify({ app, recorder: { startUrl, steps, expectations, spec, run, baseline, written } }));
+        if (!steps.length && !expectations.length && !spec) sessionStorage.removeItem(recorderKey(app));
+        else sessionStorage.setItem(recorderKey(app), JSON.stringify({ recorder: { startUrl, steps, expectations, spec, run, baseline, written, elsewhere }, recording }));
       } catch {
         /* storage full or off: only this convenience is lost */
       }
-    }, 300);
+    };
+    this.keeping = {
+      app,
+      save,
+      timer: setTimeout(() => {
+        this.keeping = null;
+        save();
+      }, 300),
+    };
   }
 
-  private restoreRecorder(): void {
+  /** The test kept for this app, back (unless one is being written already), and Write test on again if it was. */
+  private restoreRecorder(app: string | null): void {
+    if (!app) return;
     try {
-      const saved = JSON.parse(sessionStorage.getItem(RECORDER_KEY) ?? 'null') as { app?: string; recorder?: Partial<RecorderState> } | null;
+      let saved = JSON.parse(sessionStorage.getItem(recorderKey(app)) ?? 'null') as { recorder?: Partial<RecorderState>; recording?: boolean } | null;
+      // What an earlier studio kept, for the one app it was open on.
+      const older = JSON.parse(sessionStorage.getItem(RECORDER_KEY) ?? 'null') as { app?: string; recorder?: Partial<RecorderState> } | null;
+      if (!saved && older?.app === app) saved = { recorder: older.recorder };
+      if (older?.app === app) sessionStorage.removeItem(RECORDER_KEY);
       const r = get().recorder;
-      if (!saved?.recorder || saved.app !== useApps.getState().active || r.steps.length || r.expectations.length) return;
+      if (!saved?.recorder || r.steps.length || r.expectations.length) return;
       set({ recorder: { ...initialRecorder, ...saved.recorder, running: false, installing: false, installLog: [], verifying: false } });
+      if (saved.recording) this.setMode('record');
+      // The app's first page tells whether the steps still fit (checkKeptSteps); if it is already showing, now.
+      if (this.pageSeen && get().app.connected) this.checkKeptSteps(get().app.url);
     } catch {
       /* nothing kept */
     }
   }
 
+  /**
+   * Kept steps that end on another page than the one the app is on now (it came back on its start page after a reload):
+   * the Test tab says so, and keeps them until the person starts over or carries on regardless.
+   */
+  private checkKeptSteps(url: string): void {
+    const r = get().recorder;
+    if (!r.steps.length || !url) return;
+    const end = [...r.steps].reverse().find((s) => s.kind === 'url' || s.kind === 'goto')?.url ?? r.startUrl;
+    if (!end || pathOf(end) === pathOf(url)) {
+      if (r.elsewhere) set({ recorder: { ...r, elsewhere: undefined } });
+      return;
+    }
+    set({ recorder: { ...r, elsewhere: end } });
+  }
+
+  /** Carry on writing the kept test from where the app is now, though its steps end elsewhere. */
+  keepKeptSteps(): void {
+    const r = get().recorder;
+    if (r.elsewhere) set({ recorder: { ...r, elsewhere: undefined } });
+  }
+
   private appSwitched(changed = true): void {
     // The same app, opened again by a studio that restarted: what this page had of it stays.
     if (!changed) {
+      // Opened again (a studio that restarted): its first page is checked against the kept steps.
+      this.pageSeen = false;
       void this.refreshStatus();
       void this.refreshChanges();
       void sessions.refreshList();
@@ -2087,7 +2145,11 @@ class Controller {
     // Requests made for the last app: the running one stops, the waiting ones aren't sent.
     this.appEpoch++;
     this.requests.stop();
+    // The last app's test stays kept for it (keepRecorder); this app's own comes back.
+    this.pageSeen = false;
     set({ selection: null, pins: [], hover: null, previewTargets: [], inspect: null, recorder: initialRecorder, changes: [], replay: null });
+    if (get().mode === 'record') this.setMode('use');
+    this.restoreRecorder(useApps.getState().active);
     void this.refreshStatus();
     void this.refreshChanges().then(() => this.announceWaiting());
     void sessions.refreshList();
@@ -2152,6 +2214,18 @@ class Controller {
 /** A check on a field reads its value, and on a list the option chosen. */
 /** Where this tab keeps what Write test has so far (sessionStorage: this tab only, gone when it closes). */
 const RECORDER_KEY = 'saywright.recorder';
+/** Where the test being written for an app is kept, in this tab. */
+const recorderKey = (app: string) => `${RECORDER_KEY}:${app}`;
+
+/** A page by its path and #route, as steps that wait for one compare them. */
+function pathOf(u: string): string {
+  try {
+    const x = new URL(u);
+    return x.hash.startsWith('#/') ? x.hash.split('?')[0] : x.pathname;
+  } catch {
+    return u;
+  }
+}
 
 /** An element as a request names it to the studio's server. */
 function refOf(el: ElementInfo, role: string): RefInfo {

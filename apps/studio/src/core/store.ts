@@ -94,6 +94,11 @@ export interface RecorderState {
   baseline?: string;
   /** The file last written for this test (kept when a change to it asks for a new one): written again, it is replaced. */
   written?: { path: string; code: string };
+  /**
+   * Kept steps that end on another page than the one the app came back on (the studio or the app was reloaded): the
+   * page they end on. Carrying on from here would make a test that can't replay, so the Test tab says so.
+   */
+  elsewhere?: string;
 }
 
 interface RequestState {
