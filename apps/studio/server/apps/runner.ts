@@ -166,6 +166,25 @@ const MIME: Record<string, string> = {
   '.map': 'application/json; charset=utf-8',
 };
 
+/** Whether a page says its encoding itself, where the browser looks for it: a byte order mark, or <meta> in its first 1024 bytes. */
+function ownCharset(file: string): boolean {
+  const head = Buffer.alloc(1024);
+  let n = 0;
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      n = fs.readSync(fd, head, 0, 1024, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+  const bytes = head.subarray(0, n);
+  if ((bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) || (bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) return true;
+  return /<meta\b[^>]*charset\s*=/i.test(bytes.toString('latin1'));
+}
+
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 /**
@@ -203,7 +222,10 @@ function staticServer(root: string): http.Server {
       return deny(404, 'Not found');
     }
     if (!inside(real) || !fs.statSync(real).isFile()) return deny(404, 'Not found');
-    res.setHeader('Content-Type', MIME[path.extname(real).toLowerCase()] ?? 'application/octet-stream');
+    const ext = path.extname(real).toLowerCase();
+    // A page that names its own encoding (<meta charset>, a byte order mark) keeps it: the header would override it.
+    const own = (ext === '.html' || ext === '.htm') && ownCharset(real);
+    res.setHeader('Content-Type', own ? 'text/html' : (MIME[ext] ?? 'application/octet-stream'));
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (req.method === 'HEAD') return res.end();
@@ -249,6 +271,11 @@ export class AppRunner {
       this.runs.set(id, r);
     }
     return r;
+  }
+
+  /** A line of the studio's own in the app's notes (its log in the app list). */
+  note(id: string, text: string): void {
+    this.append(this.run(id), `${text}\n`);
   }
 
   private set(r: Run, status: RunStatus): void {

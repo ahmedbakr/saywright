@@ -252,3 +252,21 @@ describe('a dev server that moves itself to the background (astro dev --backgrou
     expect(await until(() => !alive(pid))).toBe(true);
   });
 });
+
+describe('a folder of HTML the studio serves', () => {
+  it('keeps the encoding a page names itself, and serves the others as UTF-8', async () => {
+    const site = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-static-'));
+    fs.writeFileSync(path.join(site, 'index.html'), Buffer.from('<html><head><meta charset="iso-8859-1"></head><body>Caf\xe9</body></html>', 'latin1'));
+    fs.writeFileSync(path.join(site, 'plain.html'), '<p>Café</p>');
+    const served: LinkedApp = { ...app('static', ''), root: site, start: null, framework: 'static' };
+    const run = await runner.start(served);
+    try {
+      const own = await fetch(`${run.url}/`);
+      expect(own.headers.get('content-type')).toBe('text/html');
+      expect(Buffer.from(await own.arrayBuffer()).toString('latin1')).toContain('Caf\xe9');
+      expect((await fetch(`${run.url}/plain.html`)).headers.get('content-type')).toBe('text/html; charset=utf-8');
+    } finally {
+      await runner.stop('static');
+    }
+  });
+});

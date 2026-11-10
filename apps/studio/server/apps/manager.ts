@@ -101,7 +101,7 @@ export class AppManager {
       (run) => deps.emit('apps', { kind: 'run', run }),
       (id, url) => void this.moved(id, url),
     );
-    this.proxy = new AppProxy({ studio: deps.studio, port: deps.proxyPort, stateFile: `${deps.dataDir}/proxy-ports.json` });
+    this.proxy = new AppProxy({ studio: deps.studio, port: deps.proxyPort, stateFile: `${deps.dataDir}/proxy-ports.json`, note: (key, text) => this.runner.note(key.split('/')[0], text) });
     this.launcher = this.registry.launcher;
   }
 

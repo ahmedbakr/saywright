@@ -23,7 +23,10 @@ import { certificateProblem, tlsFor } from '../../server/apps/local-tls';
 let upstream: http.Server;
 let upstreamUrl = '';
 const stateFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-proxy-')), 'ports.json');
-const proxy = new AppProxy({ studio: () => 'http://localhost:5173', port: 5480, stateFile });
+/** What the proxy noted in the apps' logs. */
+const notes: string[] = [];
+const proxy = new AppProxy({ studio: () => 'http://localhost:5173', port: 5480, stateFile, note: (_key, text) => notes.push(text) });
+const UTF16_PAGE = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('<html><head></head><body>wide</body></html>', 'utf16le')]);
 let frame = '';
 
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'"><title>Shop</title>
@@ -52,6 +55,15 @@ beforeAll(async () => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=windows-1256' });
       // "سلام" in Windows-1256.
       return res.end(Buffer.from([0x3c, 0x70, 0x3e, 0xd3, 0xe1, 0xc7, 0xe3, 0x3c, 0x2f, 0x70, 0x3e]));
+    }
+    if (req.url === '/latin-meta') {
+      // Declared in <meta> only, as older PHP and static sites do.
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      return res.end(Buffer.from('<html><head><meta charset="iso-8859-1"><title>Caf\xe9</title></head><body>Caf\xe9 cr\xe8me <form action="/echo"></form></body></html>', 'latin1'));
+    }
+    if (req.url === '/utf16') {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      return res.end(UTF16_PAGE);
     }
     if (req.url === '/login') {
       res.writeHead(302, { Location: `${upstreamUrl}/account?x=1` });
@@ -163,12 +175,21 @@ describe('the app proxy', () => {
     expect(rewriteLocation('/next', new URL(upstreamUrl), origin)).toBe(`${origin}/next`);
   });
 
-  it('decodes brotli and other character sets, rewrites the site’s address in styles, and leaves other files alone', async () => {
+  it('decodes brotli, keeps every other character set as the site sent it, rewrites the site’s address in styles, and leaves other files alone', async () => {
     const page = { 'sec-fetch-dest': 'iframe', 'sec-fetch-mode': 'navigate' };
     expect((await get('/br', page)).body.toString()).toMatch(/<head><script>.*saywright\.js"><\/script><\/head><body>brotli/);
     const latin = await get('/latin', page);
-    expect(latin.headers['content-type']).toBe('text/html; charset=utf-8');
-    expect(latin.body.toString('utf8')).toContain('<p>سلام</p>');
+    // The bridge is spliced into the page's bytes: nothing else is re-encoded, and its charset stays true.
+    expect(latin.headers['content-type']).toBe('text/html; charset=windows-1256');
+    expect(new TextDecoder('windows-1256').decode(latin.body)).toMatch(/saywright\.js"><\/script><p>سلام<\/p>$/);
+    const meta = await get('/latin-meta', page);
+    expect(meta.headers['content-type']).toBe('text/html');
+    expect(meta.body.subarray(meta.body.indexOf('<body>'))).toEqual(Buffer.from('<body>Caf\xe9 cr\xe8me <form action="/echo"></form></body></html>', 'latin1'));
+    expect(meta.body.toString('latin1')).toContain(`<script src="http://localhost:5173/saywright.js"></script><meta charset="iso-8859-1">`);
+    // UTF-16 isn't ASCII-compatible: passed through untouched, and the app's notes say why it can't be pointed at.
+    const wide = await get('/utf16', page);
+    expect(wide.body).toEqual(UTF16_PAGE);
+    expect(notes.at(-1)).toMatch(/UTF-16/);
     expect((await get('/app.css')).body.toString()).toBe(`@font-face{src:url(${new URL(frame).origin}/f.woff2)}`);
     const blob = await get('/blob');
     expect(blob.headers['content-encoding']).toBe('gzip');

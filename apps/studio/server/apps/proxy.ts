@@ -43,6 +43,8 @@ interface ProxyOptions {
   stateFile?: string;
   /** How long a request waits for the app to start answering (5 minutes). */
   answerMs?: number;
+  /** A line for the app's notes (its log in the app list), for `key` (`<app id>/<env id>`). */
+  note?: (key: string, text: string) => void;
 }
 
 /**
@@ -52,6 +54,9 @@ interface ProxyOptions {
 const ANSWER_MS = 5 * 60_000;
 
 interface Target {
+  key: string;
+  /** Notes already written for it, once each. */
+  noted: Set<string>;
   upstream: URL;
   port: number;
   server: http.Server | null;
@@ -262,7 +267,13 @@ function decoders(encoding: string | undefined): Transform[] | null {
   }
 }
 
-const charsetOf = (type: string) => /charset\s*=\s*["']?([\w-]+)/i.exec(type)?.[1]?.toLowerCase() ?? 'utf-8';
+/**
+ * Whether a page's bytes are UTF-16 (its header says so, or it starts with a UTF-16 byte order mark): the one encoding
+ * a page is found in whose tags aren't ASCII bytes, so the studio's script can't be spliced in.
+ */
+function utf16(type: string, first: Buffer): boolean {
+  return /charset\s*=\s*["']?utf-16/i.test(type) || (first.length >= 2 && ((first[0] === 0xff && first[1] === 0xfe) || (first[0] === 0xfe && first[1] === 0xff)));
+}
 
 /** A page being loaded (as opposed to HTML fetched by a script, which must stay as the site sent it). */
 function isNavigation(req: IncomingMessage): boolean {
@@ -438,7 +449,7 @@ export class AppProxy {
       while (taken.has(from) || Object.values(this.ports).includes(from)) from++;
       port = await freePort(from);
     }
-    const target: Target = { upstream: new URL(origin), port, server: null, server6: null };
+    const target: Target = { key, noted: new Set(), upstream: new URL(origin), port, server: null, server6: null };
     const handler = (req: IncomingMessage, res: ServerResponse) => void this.handle(target, req, res);
     const server = http.createServer(handler);
     server.on('upgrade', (req, socket, head) => this.upgrade(target, req, socket as net.Socket, head));
@@ -696,27 +707,35 @@ export class AppProxy {
     }
     // Pages and styles are rewritten as they arrive: streamed server rendering shows as it comes.
     const rewrite = html ? new PageRewriter({ upstream: target.upstream, proxyOrigin, studio: this.opts.studio(), port: target.port }) : new TextReplacer(target.upstream.origin, proxyOrigin);
-    let chars: TextDecoder;
-    try {
-      chars = new TextDecoder(charsetOf(type));
-    } catch {
-      chars = new TextDecoder();
-    }
-    const text = new Transform({
-      transform(chunk: Buffer, _encoding, done) {
-        const out = rewrite.push(chars.decode(chunk, { stream: true }));
-        done(null, out ? Buffer.from(out) : undefined);
-      },
-      flush(done) {
-        const out = rewrite.push(chars.decode()) + rewrite.end();
-        done(null, out ? Buffer.from(out) : undefined);
-      },
-    });
     for (const h of ['content-encoding', 'content-length', 'etag', 'last-modified']) delete headers[h];
-    headers['content-type'] = type.replace(/charset\s*=\s*["']?[\w-]+["']?/i, 'charset=utf-8');
     if (html) headers['cache-control'] = 'no-store';
     res.writeHead(up.statusCode ?? 200, headers);
-    relay(up, res, ...decode, text);
+    const note = () => this.note(target, 'utf-16', 'A page of it is in UTF-16, which the studio can’t add its script to: it is shown as it is, and can’t be pointed at or recorded.');
+    // Rewritten as bytes: each byte is read as one character (latin1), so the ASCII tags and addresses the rewrite looks
+    // for are found in any ASCII-compatible encoding (UTF-8, Windows-125x, Shift_JIS…) and every other byte goes out
+    // exactly as it came. The page keeps its own encoding, and its charset (header, <meta>, BOM) stays true. A UTF-16
+    // page (decided on its first bytes) passes through untouched.
+    let wide: boolean | null = null;
+    const bytes = new Transform({
+      transform(chunk: Buffer, _encoding, done) {
+        if (wide === null && (wide = utf16(type, chunk)) && html) note();
+        if (wide) return done(null, chunk);
+        const out = rewrite.push(chunk.toString('latin1'));
+        done(null, out ? Buffer.from(out, 'latin1') : undefined);
+      },
+      flush(done) {
+        const out = wide ? '' : rewrite.end();
+        done(null, out ? Buffer.from(out, 'latin1') : undefined);
+      },
+    });
+    relay(up, res, ...decode, bytes);
+  }
+
+  /** A line in the app's notes, once for each reason. */
+  private note(target: Target, reason: string, text: string): void {
+    if (target.noted.has(reason)) return;
+    target.noted.add(reason);
+    this.opts.note?.(target.key, text);
   }
 
   /**
