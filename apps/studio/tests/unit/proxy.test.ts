@@ -540,6 +540,57 @@ describe('an app on this computer served over https with its own development cer
   });
 });
 
+describe('an app that is slow to answer, or streams', () => {
+  let slow: http.Server;
+  let slowUrl = '';
+  // A short limit stands for the five minutes a request waits for the app to start answering.
+  const patient = new AppProxy({ studio: () => 'http://localhost:5173', port: 5570, answerMs: 2000 });
+  beforeAll(async () => {
+    slow = http.createServer((req, res) => {
+      if (req.url === '/never') return; // takes the request, never answers
+      if (req.url === '/slow') return void setTimeout(() => res.end('done'), 1000);
+      // An event stream: one event, then nothing for longer than the limit, then another.
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: first\n\n');
+      setTimeout(() => res.end('data: second\n\n'), 3000);
+    });
+    await new Promise<void>((r) => slow.listen(0, '127.0.0.1', () => r()));
+    slowUrl = `http://127.0.0.1:${(slow.address() as net.AddressInfo).port}`;
+  });
+  afterAll(() => {
+    patient.close();
+    slow.closeAllConnections();
+    slow.close();
+  });
+  const fetchVia = async (route: string, headers: Record<string, string> = {}) => {
+    const at = new URL(await patient.open(`${slowUrl}/`, 'slow/local'));
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+      http
+        .get({ host: '127.0.0.1', port: at.port, path: route, headers: { host: at.host, ...headers } }, (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+          res.on('error', reject);
+        })
+        .on('error', reject);
+    });
+  };
+
+  it('waits for a slow answer, and never cuts a stream that is quiet for longer than the wait for an answer', async () => {
+    expect(await fetchVia('/slow')).toEqual({ status: 200, body: 'done' });
+    const stream = await fetchVia('/events');
+    expect(stream.status).toBe(200);
+    expect(stream.body).toBe('data: first\n\ndata: second\n\n');
+  });
+
+  it('shows its error page when the app never starts answering', async () => {
+    const r = await fetchVia('/never', { 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' });
+    expect(r.status).toBe(502);
+    expect(r.body).toContain('didn’t answer');
+    expect(r.body).toContain('It didn’t start answering within 2 seconds.');
+  });
+});
+
 describe('an app’s proxy', () => {
   it('stays on the same port when the app moves to another one, so its cookies and storage stay', async () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-proxy-')), 'ports.json');

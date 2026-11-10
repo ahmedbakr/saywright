@@ -41,7 +41,15 @@ interface ProxyOptions {
   port?: number;
   /** Where the app → port map is kept, so each app keeps its port (and its storage) across runs. */
   stateFile?: string;
+  /** How long a request waits for the app to start answering (5 minutes). */
+  answerMs?: number;
 }
+
+/**
+ * How long the proxy waits for an app to start answering a request: as long as a browser waits (minutes), so a slow
+ * export or AI answer arrives. Once it answers, the answer is never cut for being quiet (an event stream, a long poll).
+ */
+const ANSWER_MS = 5 * 60_000;
 
 interface Target {
   upstream: URL;
@@ -514,11 +522,11 @@ export class AppProxy {
     const upstreamReq = lib.request(
       url,
       // A dev server on this computer is accepted with its own certificate, as the developer accepted it in their browser.
-      { method: req.method, headers: this.requestHeaders(req, target, proxyOrigin), servername: url.hostname, timeout: 30_000, ...tlsFor(url) },
+      { method: req.method, headers: this.requestHeaders(req, target, proxyOrigin), servername: url.hostname, ...tlsFor(url) },
       (up) => this.answer(up, res, () => this.respond(target, req, up, res, proxyOrigin)),
     );
     untilGone(res, upstreamReq);
-    upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('timed out')));
+    this.answerWithin(upstreamReq);
     upstreamReq.on('error', (err) => {
       // The browser went first (it cancelled, or reloaded): no one to tell.
       if (res.destroyed) return;
@@ -590,7 +598,7 @@ export class AppProxy {
     };
     const send = () => {
       if (res.destroyed) return;
-      const upstreamReq = lib.request(url, { method: req.method, headers, timeout: 30_000, ...tlsOptions }, (up) =>
+      const upstreamReq = lib.request(url, { method: req.method, headers, ...tlsOptions }, (up) =>
         this.answer(up, res, () => {
           if (!corsAllows(up.headers, origin, credentials)) {
             up.resume();
@@ -608,7 +616,7 @@ export class AppProxy {
         }),
       );
       untilGone(res, upstreamReq);
-      upstreamReq.on('timeout', () => upstreamReq.destroy(new Error('timed out')));
+      this.answerWithin(upstreamReq);
       upstreamReq.on('error', () => res.destroy());
       req.pipe(upstreamReq);
     };
@@ -618,7 +626,7 @@ export class AppProxy {
     const ask: IncomingHttpHeaders = { host: url.host, origin, 'access-control-request-method': want.method, 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site' };
     if (want.headers.length) ask['access-control-request-headers'] = want.headers.join(',');
     if (req.headers['user-agent']) ask['user-agent'] = req.headers['user-agent'];
-    const pre = lib.request(url, { method: 'OPTIONS', headers: ask, timeout: 30_000, ...tlsOptions }, (up) =>
+    const pre = lib.request(url, { method: 'OPTIONS', headers: ask, ...tlsOptions }, (up) =>
       this.answer(up, res, () => {
         up.resume();
         if (preflightAllows(up.statusCode ?? 0, up.headers, want, origin, credentials)) send();
@@ -626,9 +634,19 @@ export class AppProxy {
       }),
     );
     untilGone(res, pre);
-    pre.on('timeout', () => pre.destroy(new Error('timed out')));
+    this.answerWithin(pre);
     pre.on('error', () => res.destroy());
     pre.end();
+  }
+
+  /** A request to the app ends when the app hasn't started answering it in time (see ANSWER_MS); never after. */
+  private answerWithin(upstreamReq: http.ClientRequest): void {
+    const ms = this.opts.answerMs ?? ANSWER_MS;
+    const limit = ms % 60_000 ? `${Math.round(ms / 1000)} seconds` : `${ms / 60_000} minutes`;
+    const timer = setTimeout(() => upstreamReq.destroy(new Error(`It didn’t start answering within ${limit}.`)), ms);
+    timer.unref();
+    upstreamReq.once('response', () => clearTimeout(timer));
+    upstreamReq.once('close', () => clearTimeout(timer));
   }
 
   /** A redirect from the API: to itself, it stays on its path in the proxy; to the site, in the proxy; elsewhere, as sent. */
