@@ -57,11 +57,14 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 - **A page answered with an error, and a request that never answered, are findings.** A form sent to a page that answered 500 scored 100. A session with nothing in it says “Nothing to judge yet” where it showed a score, and a page opened by a full load has its title.
 - **Fewer false alarms.** An HTML answer is a finding only when the app asked for data; quick clicks that each do something aren't rage clicks; drawing on a canvas or downloading a file isn't a dead click.
 - **A report never calls a value right that nobody spoke about.** When the tester said nothing, a report described “the correct total”; it describes what was on the screen.
-- **The studio's own dialogs work with a keyboard.** The Record session dialog is named and takes the focus, every dialog, the report and the command palette give the focus back to what opened them, Settings' lists and slider have names, the help dialog's list can be scrolled, and the island's messages are announced.
+- **A frame inside the app is part of its page.** A same-origin frame (a payment widget, a preview) carried a recording on as a page of its own after a reload, and the report gained a page nobody opened. In Write test, a check said of an embedded frame is refused with why: a test can only check what the page shows itself.
+- **The SEO review finds more:** a canonical that names another site than the page's own addresses, more than one title, more than one main heading. **Add to this app** no longer replaces a skill of your own with the same name: it updates only the files the studio wrote, and says which it left alone.
+- **The studio's own dialogs work with a keyboard.** The Record session dialog is named and takes the focus, every dialog, the report and the command palette give the focus back to what opened them, Settings' lists and slider have names, the help dialog's list can be scrolled, and the island's messages are announced. A click made as a dialog closes is no longer lost to its fading backdrop.
 
 #### Edit mode and the AI
 
 - **Several picked elements: the right ones are changed.** “Remove these” with several picked could remove another element than the one picked. Each is found in the code before any is changed, and the imports and props only they used are tidied once. Removing the fallback of `a || <El/>` leaves `a`, and removing one branch of a condition leaves the other.
+- **A ninth element isn't picked by letting the first one go.** At most eight can be picked together, and the studio says so.
 - **A component is given only its own variants.** AlertTitle or SheetTitle were offered the variants of the only cva in their file. A boolean variant is written as `fullWidth` or `fullWidth={false}` and a number as `{2}`, so the build's type check passes.
 - **A change keeps a file as it was:** its encoding and line ends (a CRLF file came back with LF, and a file that isn't UTF-8 lost its accented letters), its permissions, and the link it is reached through. Undo puts back the very bytes.
 - **A change cut off at the length limit is never applied.** An answer that stopped mid-change wrote the half it had. After Claude's server switches models mid-answer, only what came after is acted on.
@@ -76,7 +79,6 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 - **The proxy waits as long as a browser does.** An answer that took more than 30 seconds was cut, and so was an event stream that went quiet. A request waits up to five minutes for the app to start answering, and a stream is never cut for being quiet.
 - **Pages that aren't UTF-8 show correctly** (Latin-1, Shift_JIS): the studio's script is added without re-encoding the page. A form the page's script builds with the app's full address keeps its method and fields, and a server that uses zstd or Brotli is asked only for what the browser accepts.
 - **An app whose script tag points at a studio on another port** is shown through the proxy, and its notes say how to fix the tag, where it said “Connecting…” for ever. An element written in a Next.js 16 server layout is traced, or found in the layout as a guess.
-- **The studio says “connected” when the app's page is there,** not before it has drawn anything.
 
 #### The command line
 
@@ -84,11 +86,12 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 - **`connect` links the app at once in a studio that is running**, and a stopped studio no longer leaves its address behind for `connect` and `doctor` to trust.
 - **A damaged data file is set aside.** The app list (two studios on one data folder keep each other's apps), `ai.json` or a usage line of the wrong shape: the studio starts with its defaults and says so. Every command checks the data folder first.
 - **The app list's switch saves again.** “Show at start” answered 404 since 0.2.0: its address was taken for an app's.
-- The Node.js message says the versions as they are (22.18 or newer, or 24.11 or newer), `--port` takes digits only, and where the speech engine can't run `doctor` and `setup` say so and download nothing.
+- **`--target` is checked before the studio starts.** One that isn't an address, and `--root` without `--target`, are refused with a sentence; an address that never answers isn't kept in your apps.
+- The Node.js message says the versions as they are (22.18 or newer, or 24.11 or newer), `--port` takes digits only, GitHub clones go to `saywright-apps` in the home folder the operating system names, and where the speech engine can't run `doctor` and `setup` say so and download nothing.
 
 ### Tests
 
-- 1,220 unit tests (926 in 0.2.3) and 147 browser tests (130). The first run is tested with the real install, not a stand-in: its bug shipped behind one.
+- 1,224 unit tests (907 in 0.2.3) and 155 browser tests (129). The first run is tested with the real install, not a stand-in: its bug shipped behind one.
 - The package's smoke test opens the packaged sample shop with the plugin from the tarball.
 
 ### Documentation

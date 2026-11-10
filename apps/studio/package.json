@@ -1,6 +1,6 @@
 {
   "name": "@saywright/studio",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Point at your running web app and say what to change. A studio on your computer for any web app: edits traced to the exact source line, Playwright tests from plain words, session reports, AI testing and accessibility reviews, with the AI you already have.",
   "keywords": [
     "developer-tools",
