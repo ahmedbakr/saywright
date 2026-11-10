@@ -47,47 +47,134 @@ const optionName = (o: HTMLOptionElement) => collapse(o.label || o.text, 80);
 /** The element an event happened on, also inside an open shadow root (where the page sees only the root's host). */
 const targetOf = eventTarget;
 
-/** Selectors of the page's style rules that show something while another part is hovered (`.menu:hover .submenu`). */
-function hoverRules(): { whole: string; hovered: string }[] {
-  const out: { whole: string; hovered: string }[] = [];
-  const walk = (rules: CSSRuleList) => {
+/** The selectors of a list (`a, b:is(c, d)`), split at its own commas. */
+function selectorsOf(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let from = 0;
+  let quote = '';
+  for (let i = 0; i < list.length; i++) {
+    const ch = list[i];
+    if (ch === '\\') i++;
+    else if (quote) quote = ch === quote ? '' : quote;
+    else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      out.push(list.slice(from, i));
+      from = i + 1;
+    }
+  }
+  out.push(list.slice(from));
+  return out.map((one) => one.trim()).filter(Boolean);
+}
+
+/** Whether a selector with `:hover` in it is about another element than the hovered one: something comes after it. */
+function showsAnother(selector: string): boolean {
+  const at = selector.lastIndexOf(':hover');
+  if (at < 0) return false;
+  let depth = 0;
+  for (let i = at + 6; i < selector.length; i++) {
+    const ch = selector[i];
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (depth <= 0 && /[\s>+~]/.test(ch)) return true;
+  }
+  return false;
+}
+
+/** A style rule that shows something while another part is hovered: one selector of it, and what it declares. */
+interface HoverRule {
+  /** With its nesting written out (`&` is the rule it is in). */
+  selector: string;
+  display: string;
+  visibility: string;
+  opacity: string;
+  /** It declares a size, a transform or a clip: nothing to compare with what the element has now. */
+  other: boolean;
+}
+
+let hoverRulesRead: { at: number; rules: HoverRule[] } = { at: -Infinity, rules: [] };
+
+/**
+ * The page's style rules that show something while another part is hovered: `.menu:hover .submenu`, the same
+ * written with nesting (`.menu { &:hover .submenu { … } }`), and Tailwind's `group-hover:block`, which it writes
+ * `:is(:where(.group):hover .group-hover\:block)` under `@media (hover: hover)`. Read again at most once a second.
+ */
+function hoverRules(): HoverRule[] {
+  const now = performance.now();
+  if (now - hoverRulesRead.at < 1000) return hoverRulesRead.rules;
+  const out: HoverRule[] = [];
+  type Declared = Omit<HoverRule, 'selector'>;
+  // What a rule declares itself, and under a condition nested in it (`@media (hover: hover) { display: block }`).
+  const declared = (rule: CSSRule, into: Declared = { display: '', visibility: '', opacity: '', other: false }): Declared => {
+    const st = (rule as Partial<CSSStyleRule>).style;
+    if (st) {
+      into.display ||= st.display;
+      into.visibility ||= st.visibility;
+      into.opacity ||= st.opacity;
+      into.other ||= !!(st.maxHeight || st.height || st.transform || st.clip || st.clipPath);
+    }
+    for (const inner of Array.from((rule as Partial<CSSGroupingRule>).cssRules ?? [])) if (!(inner instanceof CSSStyleRule)) declared(inner, into);
+    return into;
+  };
+  const walk = (rules: CSSRuleList, parent: string | null) => {
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
-        if (!rule.selectorText.includes(':hover')) continue;
-        const st = rule.style;
-        if (!st.display && !st.visibility && !st.opacity && !st.maxHeight && !st.transform && !st.height && !st.clip && !st.clipPath) continue;
-        for (const sel of rule.selectorText.split(',')) {
-          const at = sel.lastIndexOf(':hover');
-          if (at < 0) continue;
-          // The hovered part: the selector up to the end of the compound that has :hover.
-          const end = sel.slice(at).search(/[\s>+~]/);
-          if (end < 0) continue;
-          out.push({ whole: sel.trim(), hovered: sel.slice(0, at + end).trim() });
+        // A nested rule's selector is its parent's with its own: `&` stands for the parent, and without one it is inside it.
+        const full = parent === null ? rule.selectorText : selectorsOf(rule.selectorText).map((one) => (one.includes('&') ? one.replace(/&/g, `:is(${parent})`) : `:is(${parent}) ${one}`)).join(', ');
+        if (full.includes(':hover')) {
+          const says = declared(rule);
+          if (says.display || says.visibility || says.opacity || says.other) {
+            for (const selector of selectorsOf(full)) {
+              if (!showsAnother(selector)) continue;
+              try {
+                document.documentElement.matches(selector);
+                out.push({ selector, ...says });
+              } catch {
+                /* a selector this browser doesn't take */
+              }
+            }
+          }
         }
-      } else if ('cssRules' in rule) walk((rule as CSSGroupingRule).cssRules);
+        if (rule.cssRules?.length) walk(rule.cssRules, full);
+      } else if (rule instanceof CSSImportRule) {
+        try {
+          if (rule.styleSheet) walk(rule.styleSheet.cssRules, parent);
+        } catch {
+          /* another site's style sheet: its rules can't be read */
+        }
+      } else if ('cssRules' in rule) walk((rule as CSSGroupingRule).cssRules, parent);
     }
   };
   for (const sheet of Array.from(document.styleSheets)) {
     try {
-      walk(sheet.cssRules);
+      walk(sheet.cssRules, null);
     } catch {
       /* another site's style sheet: its rules can't be read */
     }
   }
+  hoverRulesRead = { at: now, rules: out };
   return out;
 }
 
-/** The part whose hover, by the page's styles, shows `el` (or the part of it that is shown): null when none does. */
-function hoverRuleShowing(el: Element): Element | null {
-  for (const { whole, hovered } of hoverRules()) {
-    try {
-      for (let s: Element | null = el; s; s = s.parentElement) {
-        if (!s.matches(whole)) continue;
-        const h = s.parentElement?.closest(hovered);
-        if (h && h.contains(el) && h !== el) return h;
-      }
-    } catch {
-      /* a selector this browser doesn't take */
+/** Whether a declared value is the one the element has (a keyword or a variable can't be compared: taken as it). */
+const declaredIs = (declared: string, has: string) => !!declared && (/^(?:inherit|initial|unset|revert|revert-layer)$|var\(/.test(declared) || declared === has || (/^[\d.]+%?$/.test(declared) && Math.abs(parseFloat(declared) / (declared.endsWith('%') ? 100 : 1) - parseFloat(has)) < 0.01));
+
+/**
+ * The innermost part of the page that holds `el` (or is it) and that a style shows only while something else is
+ * hovered: a rule's selector matches it now, and what the rule declares is what it has (a rule that only dims the
+ * other links of a bar is not what shows the one under the pointer). Null when none does.
+ */
+function shownByHover(el: Element): Element | null {
+  const rules = hoverRules();
+  if (!rules.length) return null;
+  for (let s: Element | null = el; s && s !== document.body; s = s.parentElement) {
+    let has: CSSStyleDeclaration | null = null;
+    for (const rule of rules) {
+      if (!s.matches(rule.selector)) continue;
+      has ??= getComputedStyle(s);
+      if (rule.other || declaredIs(rule.display, has.display) || declaredIs(rule.visibility, has.visibility) || declaredIs(rule.opacity, has.opacity)) return s;
     }
   }
   return null;
@@ -130,6 +217,7 @@ export class Recorder {
     document.addEventListener('dragstart', this.onDragStart, true);
     document.addEventListener('drop', this.onDrop, true);
     document.addEventListener('dragend', () => (this.dragged = null), true);
+    document.addEventListener('pointerover', this.onOver, true);
     document.addEventListener('pointerenter', this.onEnter, true);
     document.addEventListener('pointermove', this.onPointerMove, true);
     document.addEventListener('pointerup', this.onPointerUp, true);
@@ -238,8 +326,8 @@ export class Recorder {
     if (el instanceof HTMLLabelElement && el.control && (isTextField(el.control) || el.control instanceof HTMLSelectElement || isPicked(el.control) || isToggle(el.control) || isFile(el.control))) return;
     // The end of a shape drawn on a canvas, not a click (it is noted as not recorded).
     if (performance.now() - this.drewAt < 400) return;
-    for (const part of this.revealing(el)) {
-      const at = buildLocator(part);
+    for (const over of this.hovers(el)) {
+      const at = buildLocator(over);
       this.emit({ kind: 'hover', locator: at.code, description: `Hover over ${at.description}` });
     }
     const loc = buildLocator(el);
@@ -287,6 +375,16 @@ export class Recorder {
     this.emit({ kind: 'drag', locator: src.code, to: to.code, description: `Drag ${src.description} onto ${to.description}` });
   };
 
+  /** Where the pointer has been, lately (kept whether recording or not: a page's first moments come before it is told). */
+  private path: { on: Element; at: number }[] = [];
+
+  private onOver = (e: Event) => {
+    const on = targetOf(e);
+    if (!on) return;
+    this.path.push({ on, at: performance.now() });
+    if (this.path.length > 80) this.path.splice(0, 40);
+  };
+
   /** The pointer entered part of the page: note which controls in it showed, to tell later what hovering it revealed. */
   private onEnter = (e: Event) => {
     if (!this.on) return;
@@ -302,30 +400,68 @@ export class Recorder {
   private enteredAt = new WeakMap<Element, number>();
 
   /**
-   * The parts the pointer rested on that showed `el` (a menu that opens on hover): a test hovers over them first,
-   * outermost first. A part counts when it was entered since the last step, and `el` did not show when it was, or
-   * when the page's styles show it only while that part is hovered (`.menu:hover .submenu`).
+   * What a test hovers over before it clicks `el`, outermost first, when `el` shows only while something is hovered
+   * (a menu): what the pointer was last on outside what opened, since the last step. That is the menu's own word
+   * (“Products”), there before anything opened and found again whatever the menu holds; and what showed that in
+   * turn (a menu in a menu).
    */
-  private revealing(el: Element): Element[] {
+  private hovers(el: Element): Element[] {
     const out: Element[] = [];
-    let cur: Element | null = el;
-    while (cur && out.length < 4) {
-      const by = this.revealedBy(cur);
-      if (!by) break;
-      out.unshift(by);
-      cur = by;
+    for (let cur = el; out.length < 4; ) {
+      const opened = this.openedByHover(cur);
+      const over = opened && this.lastOutside(opened.what, opened.within);
+      if (!over || over === cur || out.includes(over)) break;
+      out.unshift(over);
+      cur = over;
     }
     return out;
   }
 
-  private revealedBy(el: Element): Element | null {
+  /**
+   * What a hover opened that holds `el`: the part a style shows only while something is hovered (`.menu:hover
+   * .submenu`), or, opened by the page's code, the piece of a part that was entered since the last step when `el`
+   * did not show in it (`within`: that part). Of the two, the one inside: the pointer crosses what is around a menu
+   * on its way to it (a bar, a header), and `el` did not show then either.
+   */
+  private openedByHover(el: Element): { what: Element; within?: Element } | null {
+    const styled = shownByHover(el);
+    let part: Element | null = null;
     if (el.matches(INTERACTIVE)) {
-      for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+      for (let a = el.parentElement; a && a !== document.body && !part; a = a.parentElement) {
         const shown = this.entered.get(a);
-        if (shown && (this.enteredAt.get(a) ?? 0) > this.stepAt && !shown.has(el) && a.matches(':hover')) return a;
+        if (shown && (this.enteredAt.get(a) ?? 0) > this.stepAt && !shown.has(el) && a.matches(':hover')) part = a;
       }
     }
-    return hoverRuleShowing(el);
+    let piece: Element | null = part && el;
+    while (piece && piece.parentElement && piece.parentElement !== part) piece = piece.parentElement;
+    if (styled && (!piece || piece.contains(styled))) return { what: styled };
+    return part && piece ? { what: piece, within: part } : null;
+  }
+
+  /**
+   * What the pointer was last on, since the last step, outside `what` (and inside `within`, when what opened was
+   * opened by the page's code): the control it is part of, a menu's own word before the menu's bare surface. With
+   * none on record, the part the page's code opened it in; null for a style's (the pointer never left what it shows).
+   */
+  private lastOutside(what: Element, within?: Element): Element | null {
+    const ok = (on: Element) => on.isConnected && on !== document.body && on !== document.documentElement && !what.contains(on) && (!within || within.contains(on)) && isVisible(on);
+    for (let i = this.path.length - 1; i >= 0 && this.path[i].at > this.stepAt; i--) {
+      let on = this.path[i].on;
+      if (!ok(on)) continue;
+      // The surface of what holds the menu (the pointer crossed its edge): what it was on in there before, if anything.
+      if (on.contains(what)) {
+        for (let j = i - 1; j >= 0 && this.path[j].at > this.stepAt; j--) {
+          const before = this.path[j].on;
+          if (before !== on && on.contains(before) && !before.contains(what) && ok(before)) {
+            on = before;
+            break;
+          }
+        }
+      }
+      const control = on.closest(INTERACTIVE);
+      return control && !control.contains(what) && ok(control) ? control : on;
+    }
+    return within ?? null;
   }
 
   private onPointerMove = (e: PointerEvent) => {

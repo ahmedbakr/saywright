@@ -383,6 +383,89 @@ test('steps find what was used by the words written in the page, whatever a styl
   await expect(new Function('page', `return ${check.locator}`)(app) as ReturnType<typeof app.locator>).toHaveText(check.expected);
 });
 
+test('a menu that opens on hover is hovered by its own word, however the pointer came to it and however the page opens it, and a test opens it the same way', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => {
+    const box = document.createElement('div');
+    // A bar of menus, as a site's header has them. Each opens its own way: a style rule (written with nesting); the
+    // page's code, on the menu; Tailwind's group-hover, as Tailwind 4 writes it; the page's code, on one button of
+    // several. And links that only fade while the bar is hovered, which opens nothing.
+    box.innerHTML = `<style>#bar { display: flex; gap: 50px; padding: 20px } #bar > div { position: relative }
+      .sub, #js-sub, .pop, #tools-pop { position: absolute; top: 100%; left: 0; white-space: nowrap }
+      .sub, #js-sub, #tools-pop { display: none }
+      .menu { &:hover .sub { display: block } }
+      @layer utilities { .hidden { display: none } @media (hover: hover) { :is(:where(.group):hover .group-hover\\:block) { display: block } } }
+      #links:hover a { opacity: 0.6 } #links a:hover { opacity: 1 }</style>
+      <button id="like">Like</button>
+      <nav id="bar">
+        <div class="menu"><span>Products</span><div class="sub"><button>Laptops</button><button>Desktops</button></div></div>
+        <div id="js-menu"><span>Account menu</span><div id="js-sub"><button>Sign out everywhere</button></div></div>
+        <div class="group"><span>Reports</span><div class="pop hidden group-hover:block"><button>Monthly</button></div></div>
+        <div id="tools"><button>Other</button> <button id="more">More tools</button><div id="tools-pop"><button>Export</button></div></div>
+        <div id="links"><a href="#/account">Docs</a> <a href="#/account">Blog</a></div>
+      </nav>
+      <p id="log" style="margin-top: 70px">Nothing yet</p>`;
+    document.querySelector('main')!.prepend(box);
+    const show = (id: string, on: boolean) => ((box.querySelector(id) as HTMLElement).style.display = on ? 'block' : 'none');
+    box.querySelector('#js-menu')!.addEventListener('mouseenter', () => show('#js-sub', true));
+    box.querySelector('#js-menu')!.addEventListener('mouseleave', () => show('#js-sub', false));
+    box.querySelector('#more')!.addEventListener('mouseenter', () => show('#tools-pop', true));
+    box.querySelector('#tools')!.addEventListener('mouseleave', () => show('#tools-pop', false));
+    for (const b of Array.from(box.querySelectorAll('button'))) b.addEventListener('click', () => (box.querySelector('#log')!.textContent = `Did: ${b.textContent}`));
+  });
+  expect(await app.locator('body').evaluate(() => matchMedia('(hover: hover)').matches)).toBe(true);
+  await app.getByRole('button', { name: 'Like' }).click();
+  // As a hand moves it: into the bar first, where no menu is, then onto a menu's word, then to what it opened.
+  const bar = (await app.locator('#bar').boundingBox())!;
+  const onto = async (word: ReturnType<typeof app.locator>) => {
+    const at = (await word.boundingBox())!;
+    await page.mouse.move(at.x + 5, bar.y + 4, { steps: 3 });
+    await page.mouse.move(at.x + 5, at.y + 5, { steps: 4 });
+  };
+  await page.mouse.move(bar.x + 4, bar.y + 4, { steps: 3 });
+  await onto(app.getByText('Products', { exact: true }));
+  await app.getByRole('button', { name: 'Laptops' }).click();
+  await onto(app.getByText('Account menu', { exact: true }));
+  await app.getByRole('button', { name: 'Sign out everywhere' }).click();
+  await onto(app.getByText('Reports', { exact: true }));
+  await app.getByRole('button', { name: 'Monthly' }).click();
+  // Into this one by another of its buttons, then along to the one that opens it.
+  await onto(app.getByRole('button', { name: 'Other' }));
+  const more = (await app.getByRole('button', { name: 'More tools' }).boundingBox())!;
+  await page.mouse.move(more.x + 5, more.y + 5, { steps: 4 });
+  await app.getByRole('button', { name: 'Export' }).click();
+  await onto(app.getByRole('link', { name: 'Docs' }));
+  await app.getByRole('link', { name: 'Docs' }).click();
+  await expect
+    .poll(async () => (await store<{ kind: string; locator: string; description: string }[]>(page, 's.recorder.steps')).map((s) => `${s.description} = ${s.locator}`))
+    .toEqual([
+      "Click the “Like” button = page.getByRole('button', { name: 'Like' })",
+      "Hover over “Products” = page.getByText('Products', { exact: true })",
+      "Click the “Laptops” button = page.getByRole('button', { name: 'Laptops' })",
+      "Hover over “Account menu” = page.getByText('Account menu', { exact: true })",
+      "Click the “Sign out everywhere” button = page.getByRole('button', { name: 'Sign out everywhere' })",
+      "Hover over “Reports” = page.getByText('Reports', { exact: true })",
+      "Click the “Monthly” button = page.getByRole('button', { name: 'Monthly' })",
+      "Hover over the “More tools” button = page.getByRole('button', { name: 'More tools' })",
+      "Click the “Export” button = page.getByRole('button', { name: 'Export' })",
+      "Click the “Docs” link = page.getByRole('link', { name: 'Docs' })",
+    ]);
+  // A test does the same, from a pointer that is nowhere near: each hover opens its menu for the click after it.
+  const recorded = await store<{ kind: string; locator: string }[]>(page, 's.recorder.steps');
+  await page.evaluate(() => (window as any).__saywright.setMode('use'));
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('use');
+  await page.mouse.move(2, 2);
+  await expect(app.getByRole('button', { name: 'Laptops' })).toBeHidden();
+  for (const { kind, locator } of recorded) {
+    const found = new Function('page', `return ${locator}`)(app) as ReturnType<typeof app.locator>;
+    if (kind === 'hover') await found.hover({ timeout: 5000 });
+    else await found.click({ timeout: 5000 });
+    const did = /name: '(Laptops|Sign out everywhere|Monthly|Export)'/.exec(locator)?.[1];
+    if (kind === 'click' && did) await expect(app.locator('#log')).toHaveText(`Did: ${did}`);
+  }
+});
+
 test('while writing a test, pointing reaches a value inside a web component, and an embedded frame is pointed at as itself', async ({ page }) => {
   await writeTestOnAccount(page);
   const app = page.frameLocator('iframe');
