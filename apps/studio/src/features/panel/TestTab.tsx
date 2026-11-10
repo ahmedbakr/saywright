@@ -237,7 +237,7 @@ export function TestTab() {
 
       {(rec.installing || rec.installLog.length > 0) && (
         <div>
-          <SectionTitle>{rec.installing ? 'Installing the test browser…' : 'Install log'}</SectionTitle>
+          <SectionTitle>{rec.installing === 'playwright' ? 'Adding Playwright to the app…' : rec.installing ? 'Installing the test browser…' : 'Install log'}</SectionTitle>
           <pre tabIndex={0} role="region" aria-label="Install output" className="max-h-[160px] overflow-auto rounded-[8px] bg-sunken p-2 font-mono text-[11px] leading-relaxed text-fg-3 ring-1 ring-inset ring-line">{rec.installLog.join('\n') || '…'}</pre>
         </div>
       )}
@@ -344,6 +344,7 @@ function RunSteps() {
 function RunResult() {
   const run = useStudio((s) => s.recorder.run)!;
   const verifying = useStudio((s) => s.recorder.verifying);
+  const installing = useStudio((s) => s.recorder.installing);
   const ai = useAiName();
   const counted = run.counts ? `${run.counts.steps} step${run.counts.steps === 1 ? '' : 's'} and ${run.counts.checks} check${run.counts.checks === 1 ? '' : 's'}` : '';
   if (run.status === 'passed' && run.verified)
@@ -445,8 +446,13 @@ function RunResult() {
     return (
       <div className="space-y-2 rounded-[10px] bg-warn-soft p-3 ring-1 ring-inset ring-warn/25">
         <div className="text-[12.5px] text-fg">{run.message}</div>
-        {/Chromium/.test(run.message ?? '') && (
-          <Button size="sm" onClick={() => void controller.installBrowser()}>
+        {run.needs === 'playwright' && (
+          <Button size="sm" variant="primary" icon={installing === 'playwright' ? <Spinner className="size-3" /> : undefined} disabled={!!installing} onClick={() => void controller.addPlaywright()} data-add-playwright>
+            {installing === 'playwright' ? 'Adding Playwright…' : 'Add Playwright to this app'}
+          </Button>
+        )}
+        {run.needs === 'browser' && (
+          <Button size="sm" disabled={!!installing} onClick={() => void controller.installBrowser()}>
             Install test browser
           </Button>
         )}

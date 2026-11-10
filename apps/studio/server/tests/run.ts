@@ -15,8 +15,10 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { MASK, maskSecrets, secretEnvName } from '@saywright/vite/protocol';
 import type { RunStep, TestRunResult } from '../../shared/api.ts';
+import type { PackageManager } from '../../shared/apps.ts';
 import { focusOn } from '../../shared/text.ts';
-import { spawnProgram } from '../program.ts';
+import { installedPackage, packageManagerFor } from '../apps/detect.ts';
+import { programExists, spawnProgram } from '../program.ts';
 import type { Project } from '../project.ts';
 import { HELD, secretsOf, STARTS_ELSEWHERE } from './generate.ts';
 
@@ -345,6 +347,52 @@ function ownChromium(project: Project, exists: (p: string) => boolean): boolean 
   }
 }
 
+/**
+ * Whether the app has Playwright's test runner (@playwright/test), which runs the tests the studio writes: installed
+ * for it (in its folder, or its workspace's), or found from its folder as Node finds packages.
+ */
+export function hasPlaywright(project: Project): boolean {
+  if (installedPackage(project.root, '@playwright/test')) return true;
+  try {
+    createRequire(path.join(project.root, 'package.json')).resolve('@playwright/test/cli');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const ADD: Record<PackageManager, string[]> = { npm: ['install', '--save-dev'], pnpm: ['add', '-D'], yarn: ['add', '-D'], bun: ['add', '-d'] };
+
+/** What adds Playwright to the app: the package manager that installs its packages, as a development dependency. */
+export function addPlaywrightCommand(root: string): { cmd: string[]; says: string } {
+  const { uses } = packageManagerFor(root);
+  const cmd = [uses, ...ADD[uses], '@playwright/test'];
+  return { cmd, says: cmd.join(' ') };
+}
+
+/** Said when a test can't run for want of Playwright: what it is for, and what adds it. */
+function needsPlaywright(root: string): string {
+  const made = fs.existsSync(path.join(root, 'package.json')) ? '' : ' This folder has no package.json: adding Playwright makes one, with node_modules beside it.';
+  return `This app doesn’t have Playwright yet (@playwright/test), which runs the test. Add it here, or run in the app’s folder: ${addPlaywrightCommand(root).says}.${made}`;
+}
+
+/**
+ * Add Playwright to the app with its own package manager, saying each line of what it prints. Resolves with whether
+ * the app has it afterwards (a command that ends well without installing it isn't done).
+ */
+export async function addPlaywright(project: Project, onLine: (line: string) => void): Promise<boolean> {
+  const { cmd, says } = addPlaywrightCommand(project.root);
+  if (!programExists(cmd[0])) {
+    onLine(`This app uses ${cmd[0]}, which isn’t installed on this computer. Install it (npm install -g ${cmd[0]}), then run in the app’s folder: ${says}`);
+    return false;
+  }
+  onLine(`$ ${says}`);
+  const { code } = await run(cmd, project.root, process.env, 10 * 60_000, onLine);
+  if (code === 0 && hasPlaywright(project)) return true;
+  onLine(code === 0 ? `It ended without an error, but the app still has no @playwright/test. Run it in the app’s folder: ${says}` : code === null ? `It was stopped (it took more than 10 minutes). Run it in the app’s folder: ${says}` : `It didn’t work (code ${code}). Run it in the app’s folder to see why: ${says}`);
+  return false;
+}
+
 export async function runSpec(project: Project, rel: string, opts: RunOptions): Promise<TestRunResult> {
   const file = project.resolve(rel); // refuses anything outside the project
   const started = Date.now();
@@ -355,6 +403,9 @@ export async function runSpec(project: Project, rel: string, opts: RunOptions): 
     return { status: 'error', durationMs: 0, message: `${rel} isn’t there any more.` };
   }
   const hash = hashOf(code);
+  // Without Playwright in the app there is nothing to run the test: said at once (npx would fetch one of its own first,
+  // which the test's own import still couldn't find).
+  if (!hasPlaywright(project)) return { status: 'setup-needed', durationMs: 0, hash, needs: 'playwright', message: needsPlaywright(project.root) };
   // Every secret it types must have a value: a test that types an empty password fails for the wrong reason.
   const env: NodeJS.ProcessEnv = { ...process.env, SAYWRIGHT_TARGET_URL: opts.baseUrl, FORCE_COLOR: '0' };
   delete env.CI;
@@ -407,11 +458,9 @@ ${browser.executablePath ? `    launchOptions: { executablePath: ${js(browser.ex
     const { code: exit, stdout, stderr } = await run([...playwrightCli(project), 'test', '--config', configFile], project.root, env, 180_000);
     const durationMs = Date.now() - started;
     const all = mask(`${stdout}\n${stderr}`)!.replace(ANSI, '');
-    if (NEEDS_BROWSER.test(all)) return { status: 'setup-needed', durationMs, hash, message: 'Playwright needs its Chromium browser (one-time, about 150 MB): no Chrome or Edge was found on this computer to use instead.' };
-    if (/Cannot find module '@playwright\/test'|Cannot find package '@playwright\/test'/.test(all)) {
-      const pm = fs.existsSync(path.join(project.root, 'pnpm-lock.yaml')) ? 'pnpm add -D' : fs.existsSync(path.join(project.root, 'yarn.lock')) ? 'yarn add -D' : fs.existsSync(path.join(project.root, 'bun.lockb')) || fs.existsSync(path.join(project.root, 'bun.lock')) ? 'bun add -d' : 'npm i -D';
-      return { status: 'setup-needed', durationMs, hash, message: `This project needs @playwright/test. Run: ${pm} @playwright/test` };
-    }
+    if (NEEDS_BROWSER.test(all)) return { status: 'setup-needed', durationMs, hash, needs: 'browser', message: 'Playwright needs its Chromium browser (one-time, about 150 MB): no Chrome or Edge was found on this computer to use instead.' };
+    // Found from the app's folder, but not from where the test is (a test kept outside the app's packages).
+    if (/Cannot find module '@playwright\/test'|Cannot find package '@playwright\/test'/.test(all)) return { status: 'setup-needed', durationMs, hash, needs: 'playwright', message: needsPlaywright(project.root) };
     let report: PwReport;
     try {
       report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));

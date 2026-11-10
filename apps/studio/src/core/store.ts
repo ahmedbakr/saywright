@@ -86,7 +86,8 @@ export interface RecorderState {
   spec: { path: string; code: string } | null;
   run: (TestRunResult & { at: number }) | null;
   running: boolean;
-  installing: boolean;
+  /** What is being added for a test to run: Playwright's browser, or Playwright itself to the app. */
+  installing: false | 'browser' | 'playwright';
   installLog: string[];
   /** A fix preview was made for the failing test and is being re-checked. */
   verifying: boolean;

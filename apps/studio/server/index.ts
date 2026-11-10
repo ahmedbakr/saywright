@@ -46,7 +46,7 @@ import { STUDIO_PORT, STUDIO_URL, type ExpertId, type PageReview } from '@saywri
 import type { SpeechLang } from './speech/catalog.ts';
 import { SPEECH_DOWNLOADS, SpeechService } from './speech/service.ts';
 import { sanitizeSteps, writeSpec } from './tests/generate.ts';
-import { installBrowser, runSpec } from './tests/run.ts';
+import { addPlaywright, installBrowser, runSpec } from './tests/run.ts';
 import { validChecks, validSteps } from './tests/validate.ts';
 import { secretKey, TestSecrets } from './tests/secrets.ts';
 
@@ -563,6 +563,14 @@ export async function createStudioApi(layout: StudioLayout) {
 
   router.post('/tests/install', async () => {
     const ok = await installBrowser(ws().project, (line) => hub.emit('install', { line }));
+    return { ok };
+  });
+
+  /** Add Playwright (@playwright/test) to the app, with its own package manager: what a test needs to run at all. */
+  router.post('/tests/playwright', async () => {
+    const { project } = ws();
+    if (!project.hasCode) throw new HttpError(400, 'This app is linked by its address alone: link its folder to write and run tests in it.');
+    const ok = await addPlaywright(project, (line) => hub.emit('install', { line }));
     return { ok };
   });
 

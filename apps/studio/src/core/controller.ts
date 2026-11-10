@@ -2035,9 +2035,11 @@ class Controller {
             text: res.message ?? 'Playwright needs a one-time setup.',
             actions: res.missingSecrets?.length
               ? [{ label: 'Open the Test tab', primary: true, run: () => (settings().setUi({ panelOpen: true, panelTab: 'test' }), this.dismissIsland()) }]
-              : /Chromium/.test(res.message ?? '')
-                ? [{ label: 'Install test browser', primary: true, run: () => void this.installBrowser() }]
-                : [details],
+              : res.needs === 'playwright'
+                ? [{ label: 'Add Playwright to this app', primary: true, run: () => void this.addPlaywright() }]
+                : res.needs === 'browser'
+                  ? [{ label: 'Install test browser', primary: true, run: () => void this.installBrowser() }]
+                  : [details],
           },
         });
         return;
@@ -2070,8 +2072,28 @@ class Controller {
     });
   }
 
+  /** Add Playwright to the app with its own package manager (what a first test needs), then run the test it was for. */
+  async addPlaywright(): Promise<void> {
+    if (get().recorder.installing) return;
+    set({ recorder: { ...get().recorder, installing: 'playwright', installLog: [] }, island: { kind: 'idle' } });
+    settings().setUi({ panelOpen: true, panelTab: 'test' });
+    let ok = false;
+    try {
+      ({ ok } = await api.post<{ ok: boolean }>('/tests/playwright'));
+    } catch (err) {
+      this.fail(err);
+      return;
+    } finally {
+      set({ recorder: { ...get().recorder, installing: false } });
+    }
+    if (!ok) return this.notify('Playwright couldn’t be added. The log in the Test tab says why.', 'error');
+    // What it was added for: the run that asked for it.
+    if (get().recorder.spec) await this.runTest();
+    else this.notify('Playwright is added to the app.', 'ok');
+  }
+
   async installBrowser(): Promise<void> {
-    set({ recorder: { ...get().recorder, installing: true, installLog: [] }, island: { kind: 'idle' } });
+    set({ recorder: { ...get().recorder, installing: 'browser', installLog: [] }, island: { kind: 'idle' } });
     settings().setUi({ panelOpen: true, panelTab: 'test' });
     try {
       const { ok } = await api.post<{ ok: boolean }>('/tests/install');

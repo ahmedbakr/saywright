@@ -216,6 +216,8 @@ export interface TestRunResult {
   hash?: string;
   /** Secrets the test types that aren't set (setup-needed): by name, PASSWORD. */
   missingSecrets?: string[];
+  /** What a setup-needed run is missing that the studio can add: Playwright in the app, or a browser to run it in. */
+  needs?: 'playwright' | 'browser';
 }
 
 export interface MetricEvent {
