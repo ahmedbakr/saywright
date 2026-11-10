@@ -51,6 +51,19 @@ export class StudioOrigins {
     this.known = [config?.studio || STUDIO_URL, ...(config?.origins ?? [])].filter((o): o is string => typeof o === 'string' && !!o);
   }
 
+  /** The studios this page knows of before any says hello: where a new page announces itself. */
+  announceTo(): string[] {
+    const out = new Set<string>();
+    for (const k of this.known) {
+      try {
+        out.add(new URL(k).origin);
+      } catch {
+        /* not an address */
+      }
+    }
+    return [...out];
+  }
+
   trusted(origin: string): boolean {
     return this.proven.has(origin) || this.known.some((k) => sameServer(k, origin));
   }

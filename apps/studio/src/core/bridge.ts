@@ -47,6 +47,10 @@ export class BridgeClient {
   onMoment: ((reason: string) => void) | null = null;
   /** The app answered, but its bridge and this studio can't work together. */
   onOutdated: ((side: 'plugin' | 'studio') => void) | null = null;
+  /** A new page's bridge announced itself (before the frame's load event): the page before it is gone. */
+  onHere: (() => void) | null = null;
+  /** The frame's current page announced itself, so its load event needs no hello of its own. */
+  private announced = false;
 
   attach(frame: HTMLIFrameElement, src: string): void {
     this.detach();
@@ -77,6 +81,13 @@ export class BridgeClient {
       }
       hello();
     }, 400);
+  }
+
+  /** Whether the page that just finished loading already announced itself (and was greeted): asked once per load. */
+  takeAnnounced(): boolean {
+    const was = this.announced;
+    this.announced = false;
+    return was;
   }
 
   detach(): void {
@@ -118,6 +129,11 @@ export class BridgeClient {
         this.onReady?.({ url: m.url, title: m.title });
         break;
       }
+      case 'here':
+        this.announced = true;
+        this.onHere?.();
+        this.sayHello();
+        break;
       case 'probe': {
         const once = this.oneShot.get(m.seq);
         if (once) {

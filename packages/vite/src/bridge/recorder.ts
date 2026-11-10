@@ -49,6 +49,10 @@ export class Recorder {
     document.addEventListener('keydown', this.onKeyDown, true);
     document.addEventListener('blur', this.onBlur, true);
     document.addEventListener('focusin', this.onFocus, true);
+    // A page left for another (a link, a form sent, location.href): what was being typed is a step before it goes.
+    window.addEventListener('pagehide', () => {
+      if (this.on) this.flushAll();
+    });
   }
 
   setOn(on: boolean): void {

@@ -274,6 +274,11 @@ export type StudioToBridge = Base &
 export type BridgeToStudio = Base &
   (
     | { type: 'ready'; v: number; oldest?: number; url: string; title: string }
+    /**
+     * A new page's bridge, as soon as its script runs (long before the frame's load event, which waits for every
+     * image): the studio says hello at once, so a recording carries on from the page's first moments.
+     */
+    | { type: 'here' }
     | {
         type: 'probe';
         seq: number;

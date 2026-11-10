@@ -108,6 +108,10 @@ test('an app whose own script declares common names runs with the studio’s scr
     expect(errors).toEqual([]);
     await studio.close();
   } finally {
+    // The sample shop is the open app again, for the tests that follow.
+    const { apps } = await call<{ apps: { id: string; root: string | null }[] }>('GET', '/apps');
+    const shop = apps.find((a) => a.root?.endsWith('.e2e-shop'));
+    if (shop) await call('POST', `/apps/${shop.id}/open`, { decide: 'undo' }).catch(() => undefined);
     if (linked) await call('DELETE', `/apps/${linked}`).catch(() => undefined);
     site.close();
   }

@@ -315,6 +315,17 @@ function start(): void {
   );
   window.addEventListener('blur', releaseSpace);
 
+  // A new page says it is here as soon as this script runs: the studio answers at once (the frame's load event can
+  // be seconds away, behind a slow image), so a recording carries on before the person does anything on this page.
+  // Only to the studios this page already trusts: another page sees nothing.
+  for (const origin of studios.announceTo()) {
+    try {
+      window.parent.postMessage({ ns: NS, type: 'here' }, origin);
+    } catch {
+      /* not an origin */
+    }
+  }
+
   const notify = () => post({ type: 'navigated', url: location.href, title: document.title });
   window.addEventListener('hashchange', notify);
   window.addEventListener('popstate', notify);

@@ -3,8 +3,10 @@
  * clicked), a date picked as the date, typing before the suggestion clicked straight after it, and the keys that
  * choose from a combobox's list.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { openStudio, resetAll, store } from './helpers';
+import { E2E_SHOP, openStudio, resetAll, store } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -132,4 +134,40 @@ test('a space typed into a field inside a web component is typing, in an open or
   // Nothing started listening.
   expect(await store<string>(page, 's.voice.state')).toBe('idle');
   await expect.poll(async () => (await steps(page)).filter((s) => s.kind === 'fill').map((s) => s.value)).toContain('Ada Lovelace the First');
+});
+
+test('on full page loads the recording carries on from each page’s first moment, and waits for each new page', async ({ page }) => {
+  // A three-page wizard of plain pages: each moves on by location.href; the second has an image that takes 6 s.
+  const pages = [1, 2, 3].map((n) => path.join(E2E_SHOP, `wizard${n}.html`));
+  pages.forEach((file, i) =>
+    fs.writeFileSync(
+      file,
+      `<!doctype html><html><head><meta charset="utf-8"><title>Step ${i + 1}</title></head><body><main>
+<h1>Step ${i + 1}</h1>${i === 1 ? '<img src="/slow.png" alt="" width="10" height="10">' : ''}
+<label>Answer ${i + 1} <input id="a"></label> <button id="go">Continue</button>
+<script>
+document.getElementById('go').onclick = () => { sessionStorage.setItem('a${i + 1}', document.getElementById('a').value); setTimeout(() => (location.href = '/wizard${i + 2}.html'), 300); };
+</script></main></body></html>`,
+    ),
+  );
+  try {
+    await page.route('**/slow.png', async (route) => {
+      await new Promise((r) => setTimeout(r, 6000));
+      await route.fulfill({ status: 404, body: '' });
+    });
+    await writeTestOnAccount(page);
+    const app = page.frameLocator('iframe');
+    await app.locator('body').evaluate(() => (location.href = '/wizard1.html'));
+    for (const n of [1, 2]) {
+      await expect(app.getByRole('heading', { name: `Step ${n}` })).toBeVisible();
+      await page.waitForTimeout(300);
+      await app.getByLabel(`Answer ${n}`).fill(n === 1 ? 'a' : 'b');
+      await app.getByRole('button', { name: 'Continue' }).click();
+    }
+    await expect
+      .poll(async () => (await steps(page)).map((s) => `${s.kind} ${s.kind === 'fill' ? s.value : s.kind === 'url' ? s.description : ''}`.trim()), { timeout: 4000 })
+      .toEqual(['fill a', 'click', 'url Wait for /wizard2.html', 'fill b', 'click', 'url Wait for /wizard3.html']);
+  } finally {
+    for (const file of pages) fs.rmSync(file, { force: true });
+  }
 });

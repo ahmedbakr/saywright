@@ -345,6 +345,8 @@ class Controller {
 
   /** The iframe (re)loaded: its bridge starts fresh, so old element ids mean nothing now. */
   frameLoaded(): void {
+    // A page that announced itself as its script ran was greeted then, and may already be recording.
+    if (this.bridge.takeAnnounced()) return;
     set({ app: { ...get().app, connected: false } });
     this.bridge.sayHello();
   }
@@ -384,7 +386,10 @@ class Controller {
       b.record(mode === 'record');
       b.forwardKeys(true);
       void this.reresolveAll();
+      // A full page load (a link, a form sent, location.href) moved the app: the test waits for the new page too.
+      this.recordedPage(url);
     };
+    b.onHere = () => set({ app: { ...get().app, connected: false } });
     b.onOutdated = (outdated) => set({ app: { ...get().app, connected: false, outdated } });
     b.onNavigated = ({ url, title }) => {
       set({ app: { ...get().app, url, title } });
