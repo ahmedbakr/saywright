@@ -57,7 +57,8 @@ export function HelpDialog() {
           </IconButton>
         </div>
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-5 md:grid-cols-2">
+      {/* Longer than the dialog on a small screen: the list itself takes the focus, so the keyboard can scroll it. */}
+      <div tabIndex={0} role="region" aria-label="All phrases and shortcuts" className="grid min-h-0 flex-1 grid-cols-1 gap-6 overflow-y-auto p-5 focus-visible:[outline-offset:-2px] md:grid-cols-2">
         <section>
           <h3 className="mb-2.5 text-[12px] font-medium text-fg-3">Say</h3>
           <ul className="space-y-2.5">
