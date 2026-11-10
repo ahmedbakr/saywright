@@ -346,6 +346,40 @@ describe('memory stays flat over a long day', () => {
   });
 });
 
+describe('what a change leaves behind', () => {
+  it('leftovers of a write the studio was stopped in are cleared when the app is opened', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    await store.preview({ title: 'a', source: 'quick', edits: [edit(p, 'toFixed(2)', 'toFixed(3)')] });
+    fs.writeFileSync(path.join(p.root, 'src/lib/money.ts.saywright-tmp'), 'half');
+    const stale = path.join(p.stateDir(), 'changes.json.999999999-1.tmp');
+    fs.writeFileSync(stale, '{');
+    const again = new ChangeStore(p);
+    expect(again.previews()).toHaveLength(1);
+    expect(fs.existsSync(path.join(p.root, 'src/lib/money.ts.saywright-tmp'))).toBe(false);
+    expect(fs.existsSync(stale)).toBe(false);
+  });
+
+  it('Undo of a change that made a file in new folders removes the folders it made, and only those', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    fs.mkdirSync(path.join(p.root, 'src/empty'));
+    await store.preview({ title: 'new', source: 'ai', edits: [{ path: 'src/new/deep/New.tsx', before: null, after: 'x' }, { path: 'src/empty/A.ts', before: null, after: 'y' }] });
+    await store.undo();
+    expect(fs.existsSync(path.join(p.root, 'src/new'))).toBe(false);
+    expect(fs.existsSync(path.join(p.root, 'src/empty'))).toBe(true);
+    expect(fs.existsSync(path.join(p.root, 'src/empty/A.ts'))).toBe(false);
+  });
+
+  it('Undo says a file is gone, not that it was edited', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    await store.preview({ title: 'a', source: 'quick', edits: [edit(p, 'toFixed(2)', 'toFixed(3)')] });
+    fs.rmSync(path.join(p.root, 'src/lib/money.ts'));
+    await expect(store.undo()).rejects.toThrow('src/lib/money.ts isn’t there any more (deleted or moved since this change), so there is nothing to undo in it. Undo anyway puts it back as it was before the change.');
+  });
+});
+
 describe('committing kept changes', () => {
   it('commits alongside the studio, and says what git said when a hook refuses', async () => {
     const p = tempShop();

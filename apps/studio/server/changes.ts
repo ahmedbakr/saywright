@@ -26,6 +26,8 @@ interface StoredEdit {
   path: string;
   before: Buffer | null;
   after: Buffer;
+  /** For a file the change creates: the folders it made for it, deepest first (Undo removes them when empty). */
+  dirs?: string[];
 }
 
 const sameBytes = (a: Buffer | null, b: Buffer | null) => (a === null || b === null ? a === b : a.equals(b));
@@ -52,7 +54,7 @@ interface Journal {
   changes: Change[];
   edits?: Record<string, JournalEdit[]>;
 }
-type JournalEdit = { path: string; before: string | null; after: string };
+type JournalEdit = { path: string; before: string | null; after: string; dirs?: string[] };
 
 /** Changes listed, in this run and after a restart (previews are always kept). */
 const HISTORY = 200;
@@ -134,7 +136,7 @@ export class ChangeStore {
       const bytes = this.current(e.path);
       if (e.before === null || bytes === null) {
         if (e.before !== null || bytes !== null) throw this.stale(e);
-        return { path: e.path, before: null, after: Buffer.from(e.after, 'utf8') };
+        return { path: e.path, before: null, after: Buffer.from(e.after, 'utf8'), dirs: this.missingDirs(e.path) };
       }
       let read: ReturnType<typeof decodeText>;
       try {
@@ -158,6 +160,16 @@ export class ChangeStore {
    */
   private unchanged(edits: StoredEdit[]): void {
     for (const e of edits) if (!sameBytes(this.current(e.path), e.before)) throw this.stale(e);
+  }
+
+  /** The folders a new file needs that aren't there yet, deepest first. */
+  private missingDirs(rel: string): string[] | undefined {
+    const out: string[] = [];
+    for (let dir = path.posix.dirname(rel.replace(/\\/g, '/')); dir !== '.' && dir !== '/' && dir; dir = path.posix.dirname(dir)) {
+      if (fs.existsSync(this.project.resolve(dir))) break;
+      out.push(dir);
+    }
+    return out.length ? out : undefined;
   }
 
   /** A file's bytes now, or null when there is no such file. */
@@ -342,6 +354,9 @@ export class ChangeStore {
       for (const c of stack) {
         for (const e of (this.edits.get(c.id) ?? []).slice().reverse()) {
           const current = expected.has(e.path) ? expected.get(e.path)! : this.current(e.path);
+          if (current === null && !expected.has(e.path)) {
+            throw new HttpError(409, `${e.path} isn’t there any more (deleted or moved since this change), so there is nothing to undo in it. Undo anyway puts it back as it was before the change.`, 'conflict');
+          }
           if (!sameBytes(current, e.after)) {
             throw new HttpError(409, `${e.path} was edited after this change, so undoing it here could lose work. Undo it in your editor instead.`, 'conflict');
           }
@@ -358,6 +373,18 @@ export class ChangeStore {
       [...restored].map(([p, content]) => ({ path: p, content })),
       opts.force ? undefined : untouched,
     );
+    // The folders these changes made for new files go too, when nothing else is in them now.
+    for (const c of stack) {
+      for (const e of this.edits.get(c.id) ?? []) {
+        for (const dir of e.before === null ? (e.dirs ?? []) : []) {
+          try {
+            fs.rmdirSync(this.project.resolve(dir));
+          } catch {
+            break; // not empty (or not there): neither is any folder above it
+          }
+        }
+      }
+    }
     const now = Date.now();
     for (const c of stack) {
       c.status = 'undone';
@@ -403,9 +430,41 @@ export class ChangeStore {
     writeFileAtomic(this.journal, JSON.stringify(journal));
   }
 
+  /**
+   * A new version written beside a file of this change (`<file>.saywright-tmp`) and never moved in: the studio was
+   * stopped while writing it. Nothing else reads it, and a dev server or `git status` would see it: removed.
+   */
+  private clearLeftovers(c: Change): void {
+    for (const f of c.files ?? []) {
+      try {
+        const asked = this.project.resolve(f.path);
+        for (const abs of new Set([asked, fs.existsSync(asked) ? fs.realpathSync(asked) : asked])) fs.rmSync(`${abs}.saywright-tmp`, { force: true });
+      } catch {
+        /* a path no longer allowed, or the folder can't be written: left alone */
+      }
+    }
+  }
+
+  /** The journal's own half-written copies left by a studio that stopped (`changes.json.<pid>-<n>.tmp`), unless that studio still runs. */
+  private clearDataLeftovers(): void {
+    for (const dir of [path.dirname(this.journal), this.contents]) {
+      let names: string[];
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const m = /^(?:changes\.json|[\w-]+\.json)\.(\d+)-\d+\.tmp$/.exec(name);
+        if (!m || (dir !== this.contents && !name.startsWith('changes.json.')) || alive(Number(m[1]))) continue;
+        fs.rmSync(path.join(dir, name), { force: true });
+      }
+    }
+  }
+
   /** A preview's file contents, beside the list, before the list names it. */
   private saveContents(id: string, edits: StoredEdit[]): void {
-    const data: JournalEdit[] = edits.map((e) => ({ path: e.path, before: e.before?.toString('base64') ?? null, after: e.after.toString('base64') }));
+    const data: JournalEdit[] = edits.map((e) => ({ path: e.path, before: e.before?.toString('base64') ?? null, after: e.after.toString('base64'), ...(e.dirs ? { dirs: e.dirs } : {}) }));
     writeFileAtomic(path.join(this.contents, `${id}.json`), JSON.stringify(data));
   }
 
@@ -438,7 +497,8 @@ export class ChangeStore {
       }
     };
     for (const c of journal.changes) {
-      const edits = c.status === 'preview' ? stored(c.id)?.map((e): StoredEdit => ({ path: e.path, before: e.before === null ? null : bytes(e.before), after: bytes(e.after) })) : undefined;
+      const edits = c.status === 'preview' ? stored(c.id)?.map((e): StoredEdit => ({ path: e.path, before: e.before === null ? null : bytes(e.before), after: bytes(e.after), ...(Array.isArray(e.dirs) ? { dirs: e.dirs } : {}) })) : undefined;
+      this.clearLeftovers(c);
       if (c.status === 'preview') {
         const found = edits?.map((e) => this.current(e.path)) ?? [];
         if (!edits?.length) {
@@ -460,6 +520,7 @@ export class ChangeStore {
       }
       this.changes.push(c);
     }
+    this.clearDataLeftovers();
     const waiting = this.previews().length;
     this.trim();
     // A journal of an earlier version is written as this one: each waiting preview's contents in a file of its own.
@@ -472,6 +533,17 @@ export class ChangeStore {
       console.warn(`[saywright] couldn’t save the list of changes: ${(err as Error).message}`);
     }
     return waiting;
+  }
+}
+
+/** Whether a process with this id runs (this one included). */
+function alive(pid: number): boolean {
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
