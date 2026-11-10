@@ -51,6 +51,15 @@ function isAbsolute(u: string): boolean {
   return /^https?:\/\//i.test(u);
 }
 
+/** The site an address is on, without “www.”: http and https, with and without www, are the same site. */
+function hostOf(u: string): string | null {
+  try {
+    return new URL(u).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
 /** Visible, rendered, not inside the studio's own recorder button. */
 function shown(el: Element): boolean {
   return !el.closest('saywright-recorder') && isVisible(el);
@@ -239,6 +248,10 @@ function seo(f: PageFacts): PageCheck[] {
   else if (/^(home|untitled|index|document|react app|vite \+ react|new page)$/i.test(f.title.trim())) add({ rule: 'SEO-17', severity: 'medium', title: 'The title is a placeholder', what: `The title is “${f.title}”, which says nothing about the page.`, fix: 'Write a unique title that says what the page is, with the brand short at the end.', source: `${G}/appearance/title-link` });
   else if (f.title.length > 70) add({ rule: 'SEO-18', severity: 'info', title: 'The title may be cut off in results', what: `The title is ${f.title.length} characters; Google truncates title links to fit the device width.`, fix: 'Put what matters first. There is no length limit, so only trim if the start doesn’t say what the page is.', source: `${G}/appearance/title-link` });
 
+  // SVG has <title> elements of its own: only the document's count.
+  const titles = Array.from(document.querySelectorAll('title')).filter((t) => t.namespaceURI === 'http://www.w3.org/1999/xhtml');
+  if (titles.length > 1) add({ rule: 'SEO-16', severity: 'medium', title: 'More than one title', what: `The page has ${titles.length} <title> elements; browsers show the first (“${collapse(titles[0].textContent, 60)}”) and search engines may pick either.`, fix: 'Keep exactly one <title>, in <head> (a single-page app updates that one on every route).', source: `${G}/appearance/title-link` }, titles);
+
   if (!f.description) add({ rule: 'SEO-19', severity: 'low', title: 'No meta description', what: 'Without one, Google builds the snippet from the page text.', fix: 'Add a page-specific summary in <meta name="description">: what the reader gets here, not a list of keywords.', source: `${G}/appearance/snippet` });
 
   const robots = `${f.robots ?? ''} ${meta('googlebot') ?? ''}`.toLowerCase();
@@ -252,11 +265,18 @@ function seo(f: PageFacts): PageCheck[] {
     const href = canon[0].getAttribute('href') ?? '';
     if (bodyCanon.length) add({ rule: 'SEO-13', severity: 'high', title: 'The canonical is outside <head>', what: 'rel=canonical only counts in the <head>.', fix: 'Move it into <head>.', source: `${G}/crawling-indexing/consolidate-duplicate-urls` }, canon);
     else if (!isAbsolute(href)) add({ rule: 'SEO-13', severity: 'low', title: 'The canonical URL is relative', what: `rel=canonical is “${href}”.`, fix: 'Use the absolute URL (https://…).', source: `${G}/crawling-indexing/consolidate-duplicate-urls` }, canon);
+    // Another site: judged against the addresses the page gives for itself (og:url, hreflang alternates), not
+    // against where it is served, since a dev server or a preview deployment rightly names the production site.
+    const site = (u: string) => (isAbsolute(u) ? hostOf(u) : null);
+    const declared = [document.querySelector('meta[property="og:url"]')?.getAttribute('content') ?? '', ...Array.from(document.querySelectorAll('link[rel="alternate"][hreflang]')).map((l) => l.getAttribute('href') ?? '')].map(site).filter((h): h is string => !!h);
+    const to = site(href);
+    if (!bodyCanon.length && to && declared.length && !declared.includes(to)) add({ rule: 'SEO-13', severity: 'high', title: 'The canonical points to another site', what: `rel=canonical is “${redactUrl(href).slice(0, 120)}”, but the page’s own addresses (og:url, hreflang) are on ${Array.from(new Set(declared)).join(', ')}: Google may index the other site’s page instead of this one.`, fix: 'Point the canonical at this page’s own address (or at its preferred duplicate on the same site).', source: `${G}/crawling-indexing/consolidate-duplicate-urls` }, canon);
     if (['hreflang', 'lang', 'media', 'type'].some((a) => canon[0].hasAttribute(a))) add({ rule: 'SEO-13', severity: 'high', title: 'The canonical carries attributes that void it', what: 'A canonical with hreflang, lang, media or type isn’t used for canonicalization.', fix: 'Remove those attributes from the canonical link.', source: `${G}/crawling-indexing/consolidate-duplicate-urls` }, canon);
   }
 
   const h1 = Array.from(document.querySelectorAll('h1, [role="heading"][aria-level="1"]')).filter(shown);
   if (!h1.length && !f.headings.length) add({ rule: 'SEO-20', severity: 'low', title: 'No main heading', what: 'The page has no visible headings, so its topic isn’t stated in its structure.', fix: 'Add a descriptive main heading (an <h1>). More than one is fine.', source: `${G}/fundamentals/seo-starter-guide` });
+  else if (h1.length > 1) add({ rule: 'SEO-20', severity: 'info', title: 'More than one main heading', what: `${h1.length} visible <h1> headings. Google is fine with that, but the page’s main topic is clearer, to people using a screen reader too, with one.`, fix: 'Keep one <h1> for what the page is about and make the others <h2>, unless each really is a main heading.', source: `${G}/fundamentals/seo-starter-guide` }, h1);
 
   if (!f.viewport || !/width\s*=\s*device-width/i.test(f.viewport)) add({ rule: 'SEO-28', severity: 'high', title: 'No mobile viewport', what: f.viewport ? `The viewport is “${f.viewport}”.` : 'There is no <meta name="viewport">: phones get a zoomed-out desktop page.', fix: 'Add <meta name="viewport" content="width=device-width, initial-scale=1">.', source: `${G}/crawling-indexing/mobile/mobile-sites-mobile-first-indexing` });
 

@@ -48,11 +48,11 @@ It uses the AI set for **Reports and reviews** in Settings → AI, with a struct
 | SEO-08 | robots.txt answers with a server error, is over 500 KiB, or lists sitemaps by relative URL | blocker / medium / low |
 | SEO-09 | robots.txt blocks this page (Google's matching: longest rule wins, `Allow` wins a tie, `*` and `$`) | blocker |
 | SEO-10, SEO-11 | No sitemap, a sitemap that isn't one, over 50,000 URLs, or one that doesn't list this page | medium / low |
-| SEO-13 | Canonical problems: more than one, outside `<head>`, relative, or carrying attributes that void it | high / low |
-| SEO-16, SEO-17 | No title, or a placeholder title (“Home”, “Vite + React”…) | high / medium |
+| SEO-13 | Canonical problems: more than one, outside `<head>`, relative, carrying attributes that void it, or naming another site than the page's own addresses (og:url, hreflang) | high / low |
+| SEO-16, SEO-17 | No title, more than one title, or a placeholder title (“Home”, “Vite + React”…) | high / medium |
 | SEO-18 | A title long enough to be cut off in results (no length limit exists; only order matters) | info |
 | SEO-19 | No meta description | low |
-| SEO-20 | No headings at all | low |
+| SEO-20 | No headings at all; more than one visible `<h1>` | low / info |
 | SEO-21 | Images without alt text; large content images set as CSS backgrounds | medium / info |
 | SEO-22 | Links Google can't follow (no `href`, `#`, `javascript:`) | medium |
 | SEO-23 | Link text that says nothing (“click here”, “read more”, “اضغط هنا”…) | low |

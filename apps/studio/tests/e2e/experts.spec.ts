@@ -187,7 +187,7 @@ test('every check, on a page built with known problems, and none on a clean page
     // Each problem in the page is found once, by the expert whose rule covers it.
     expect(await rules()).toEqual(
       [
-        'seo SEO-05', 'seo SEO-13', 'seo SEO-17', 'seo SEO-19', 'seo SEO-21', 'seo SEO-22', 'seo SEO-23', 'seo SEO-25', 'seo SEO-31', 'seo SEO-37', 'seo SEO-38', 'seo SEO-40',
+        'seo SEO-05', 'seo SEO-13', 'seo SEO-16', 'seo SEO-17', 'seo SEO-19', 'seo SEO-20', 'seo SEO-21', 'seo SEO-22', 'seo SEO-23', 'seo SEO-25', 'seo SEO-31', 'seo SEO-37', 'seo SEO-38', 'seo SEO-40',
         'content CNT-01', 'content CNT-02', 'content CNT-06', 'content CNT-07',
         'ux UX-01', 'ux UX-06', 'ux UX-07', 'ux UX-08', 'ux UX-08', 'ux UX-09', 'ux UX-14', 'ux UX-16', 'ux UX-17',
         'a11y axe:button-name', 'a11y axe:html-has-lang', 'a11y axe:image-alt', 'a11y axe:label', 'a11y axe:meta-viewport', 'a11y axe:target-size',
@@ -208,6 +208,14 @@ test('every check, on a page built with known problems, and none on a clean page
     await expect(page.locator('[data-expert="seo"]')).toContainText('Nothing found', { timeout: 30_000 });
     expect(await rules()).toEqual([]);
     for (const e of ['seo', 'content', 'ux', 'a11y']) await expect(page.locator(`[data-expert="${e}"]`)).toContainText('Nothing found');
+
+    // The same page with a canonical naming another site than its og:url: that one problem.
+    await page.frameLocator('iframe').locator('body').evaluate(() => location.assign('/elsewhere.html'));
+    await expect.poll(() => store<string>(page, 's.app.url')).toMatch(/\/elsewhere\.html$/);
+    await waitForApp(page);
+    await page.locator('[data-review-page]').click();
+    await expect(page.locator('[data-expert="seo"]')).toContainText('The canonical points to another site', { timeout: 30_000 });
+    expect(await rules()).toEqual(['seo SEO-13']);
   } finally {
     await call('POST', `/apps/${shop}/open`, { decide: 'undo' }).catch(() => undefined);
     await call('DELETE', `/apps/${app.id}`).catch(() => undefined);
