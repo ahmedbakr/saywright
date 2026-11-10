@@ -111,3 +111,25 @@ test('Start over on another page asks where the new test starts: here, or the ap
   await expect(tab.locator('[data-start-over]')).toHaveCount(0);
   expect(await steps(page)).toEqual([]);
 });
+
+test('a space typed into a field inside a web component is typing, in an open or a closed shadow root', async ({ page }) => {
+  await writeTestOnAccount(page);
+  await page.frameLocator('iframe').locator('body').evaluate(() => {
+    for (const mode of ['open', 'closed'] as const) {
+      const host = document.createElement(`nick-${mode}`);
+      const root = host.attachShadow({ mode });
+      root.innerHTML = `<label>Nickname ${mode} <input /></label>`;
+      document.querySelector('main')!.prepend(host);
+      (window as unknown as Record<string, HTMLInputElement>)[`nick_${mode}`] = root.querySelector('input')!;
+    }
+  });
+  const frame = page.frames().find((f) => f !== page.mainFrame())!;
+  for (const mode of ['open', 'closed']) {
+    await frame.evaluate((m) => (window as unknown as Record<string, HTMLInputElement>)[`nick_${m}`].focus(), mode);
+    await page.keyboard.type('Ada Lovelace the First', { delay: 15 });
+    expect(await frame.evaluate((m) => (window as unknown as Record<string, HTMLInputElement>)[`nick_${m}`].value, mode)).toBe('Ada Lovelace the First');
+  }
+  // Nothing started listening.
+  expect(await store<string>(page, 's.voice.state')).toBe('idle');
+  await expect.poll(async () => (await steps(page)).filter((s) => s.kind === 'fill').map((s) => s.value)).toContain('Ada Lovelace the First');
+});

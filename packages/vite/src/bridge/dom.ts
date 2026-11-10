@@ -102,6 +102,27 @@ export function editableOf(el: Element | null): HTMLElement | null {
   return host;
 }
 
+/**
+ * The element an event happened on, also inside an open shadow root: a listener on the window or the document sees
+ * only the root's host as `e.target`.
+ */
+export function eventTarget(e: Event): Element | null {
+  const t = e.composedPath()[0] ?? e.target;
+  return t instanceof Element ? t : null;
+}
+
+/**
+ * Whether a key pressed now goes into something the person types in: a field or a rich text editor, also inside a
+ * web component. A closed shadow root shows nothing of itself but its host: when the focus is in one, it may be a
+ * field, so the key is taken for typing (a space must never be swallowed in a field).
+ */
+export function typesInto(e: Event): boolean {
+  const t = eventTarget(e);
+  if (!(t instanceof HTMLElement)) return false;
+  if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return true;
+  return t.localName.includes('-') && !t.shadowRoot && document.activeElement === t;
+}
+
 /** What a rich text editor holds, as its text: line by line, without the line break it ends with. */
 export const editedText = (el: HTMLElement) => (el.innerText ?? el.textContent ?? '').replace(/\n+$/, '');
 

@@ -1,5 +1,5 @@
 import { MASK, maskSecrets, type RecordedAction } from '../protocol';
-import { collapse, editableOf, editedText, isField, isSecretEditor, isSecretField, secretNameOf } from './dom';
+import { collapse, editableOf, eventTarget, editedText, isField, isSecretEditor, isSecretField, secretNameOf } from './dom';
 import { EnterSubmits } from './forms';
 import { buildLocator } from './locator';
 
@@ -24,10 +24,7 @@ const isCombobox = (el: Element) => el.getAttribute('role') === 'combobox' || el
 const optionName = (o: HTMLOptionElement) => collapse(o.label || o.text, 80);
 
 /** The element an event happened on, also inside an open shadow root (where the page sees only the root's host). */
-function targetOf(e: Event): Element | null {
-  const t = e.composedPath()[0] ?? e.target;
-  return t instanceof Element ? t : null;
-}
+const targetOf = eventTarget;
 
 /**
  * Records what the user does in the app as Playwright steps: clicks, text

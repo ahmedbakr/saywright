@@ -15,7 +15,7 @@
  *   so nothing is lost or doubled.
  */
 import { dots, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
-import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, publicText, roleOf, screenLines, screenText, secretNameOf, sourceHint } from './dom';
+import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, publicText, roleOf, screenLines, screenText, secretNameOf, sourceHint, typesInto } from './dom';
 import { maskScreen } from './mask';
 import { EnterSubmits, formLabel } from './forms';
 import { buildLocator, locatorFromInfo } from './locator';
@@ -615,7 +615,8 @@ export class SessionRecorder {
     this.submits.keydown(e);
     const mods = `${e.ctrlKey ? 'Ctrl+' : ''}${e.metaKey ? 'Meta+' : ''}${e.altKey ? 'Alt+' : ''}${e.shiftKey && e.key.length > 1 ? 'Shift+' : ''}`;
     const el = e.target instanceof Element ? e.target : null;
-    const typing = !!el && (isField(el) || (el as HTMLElement).isContentEditable);
+    // Where the key really goes: a field inside a web component is typing too (e.target is its host).
+    const typing = typesInto(e);
     // Named keys and shortcuts only: what was typed is captured as the field's value.
     const special = e.key.length > 1 && !['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Backspace', 'Delete'].includes(e.key);
     const shortcut = (e.ctrlKey || e.metaKey) && e.key.length === 1;

@@ -17,7 +17,7 @@ import {
   type StudioToBridge,
 } from '../protocol';
 import { clickAt, scrollAt, typeText } from './actions';
-import { annotatedAncestor, controlOf, describe, elOf, isVisible, rectOf, stateOf } from './dom';
+import { annotatedAncestor, controlOf, describe, elOf, isVisible, rectOf, stateOf, typesInto } from './dom';
 import { snapshot } from './explore';
 import { probe, probeSticky, releaseSticky } from './hit';
 import { buildLocator } from './locator';
@@ -273,7 +273,6 @@ function start(): void {
 
   let keysOn = false;
   let spaceDown = false;
-  const editable = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
   window.addEventListener(
     'keydown',
     (e) => {
@@ -285,7 +284,8 @@ function start(): void {
         return;
       }
       if (e.altKey) return;
-      if (e.code === 'Space' && !editable(e.target)) {
+      // Typing is decided from where the key really goes: a field inside a web component takes its spaces.
+      if (e.code === 'Space' && !typesInto(e)) {
         e.preventDefault();
         e.stopPropagation();
         if (!e.repeat && !spaceDown) {

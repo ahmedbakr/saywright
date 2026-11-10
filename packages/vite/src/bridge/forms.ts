@@ -29,7 +29,8 @@ export class EnterSubmits {
   private last: { form: HTMLFormElement; at: number } | null = null;
 
   keydown(e: KeyboardEvent): void {
-    const el = e.target;
+    // The field itself, also inside a web component's shadow root (e.target is then its host).
+    const el = e.composedPath()[0] ?? e.target;
     if (e.key === 'Enter' && !e.isComposing && el instanceof HTMLInputElement && el.form) this.last = { form: el.form, at: e.timeStamp };
   }
 
