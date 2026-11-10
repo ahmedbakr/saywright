@@ -33,6 +33,8 @@ interface SessionsUi {
   setup: boolean;
   speech: SpeechStatus | null;
   prefs: SessionPrefs;
+  /** A mark whose note is being typed: the moment it was made, and the words so far. */
+  noting: { t: number; via: string; text: string } | null;
 }
 
 const PREFS_KEY = 'saywright.session.prefs';
@@ -66,6 +68,7 @@ export const useSessions = create<SessionsUi>()(() => ({
   setup: false,
   speech: null,
   prefs: loadPrefs(),
+  noting: null,
 }));
 
 const setS = useSessions.setState;
@@ -271,6 +274,8 @@ class StudioSessions {
   async stop(): Promise<void> {
     if (!this.recording) return;
     if (getS().live.status === 'starting' && !getS().live.id) return this.cancelStart();
+    // A note still being typed is kept with what it says so far.
+    this.saveNote();
     this.flushPointing();
     await this.flush();
     void this.host?.bridgeSession(false);
@@ -279,11 +284,38 @@ class StudioSessions {
     await this.client.stop();
   }
 
+  /**
+   * Mark this moment. Said aloud, the mark is whole. From the button or the key it can take a typed note (a tester
+   * without a microphone says what they noticed this way): the moment and its screenshot are taken now, and the
+   * words follow when the note is saved.
+   */
   mark(note = '', via = 'key'): void {
     if (getS().live.status !== 'recording') return;
-    this.host?.bridgeMark(note, via);
-    // The app's recorder logs the mark; the studio adds a screenshot.
+    if (note || via === 'voice') {
+      this.host?.bridgeMark(note, via);
+      // The app's recorder logs the mark; the studio adds a screenshot.
+      this.client.moment('mark', true);
+      return;
+    }
+    // Marked again while a note is open: that one is kept as it is.
+    this.saveNote();
     this.client.moment('mark', true);
+    setS({ noting: { t: Date.now(), via, text: '' } });
+  }
+
+  /** The words of the note being typed. */
+  noteText(text: string): void {
+    const noting = getS().noting;
+    if (noting) setS({ noting: { ...noting, text: text.slice(0, 300) } });
+  }
+
+  /** Keep the mark being noted, at the moment it was made, with its words (`keepWords` false: without them). */
+  saveNote(keepWords = true): void {
+    const noting = getS().noting;
+    if (!noting) return;
+    setS({ noting: null });
+    if (getS().live.status !== 'recording') return;
+    this.queue({ type: 'mark', note: keepWords ? noting.text.trim() : '', via: noting.via, t: noting.t });
   }
 
   moment(reason: string): void {

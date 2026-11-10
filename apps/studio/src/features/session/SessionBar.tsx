@@ -70,6 +70,7 @@ function Voice() {
 
 export function SessionBar() {
   const live = useSessions((s) => s.live);
+  const noting = useSessions((s) => s.noting);
   const recording = live.status === 'recording' || live.status === 'starting' || live.status === 'stopping';
   const now = useTicker(recording, 250);
   const caption = live.captions[live.captions.length - 1];
@@ -106,7 +107,32 @@ export function SessionBar() {
 
             <div className="relative h-full min-w-0 flex-1">
               <AnimatePresence mode="popLayout" initial={false}>
-                {freshIssue ? (
+                {noting ? (
+                  <motion.div key={`n${noting.t}`} initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -12, opacity: 0 }} className="absolute inset-0 flex items-center gap-2">
+                    <Flag className="size-3.5 shrink-0 text-human-fg" />
+                    {/* Leaving the field (a click back into the app) keeps the mark with what was typed. */}
+                    <input
+                      autoFocus
+                      id="session-note"
+                      dir="auto"
+                      value={noting.text}
+                      maxLength={300}
+                      onChange={(e) => sessions.noteText(e.target.value)}
+                      onBlur={() => sessions.saveNote()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') sessions.saveNote();
+                        else if (e.key === 'Escape') sessions.saveNote(false);
+                        else return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      aria-label="What did you notice?"
+                      placeholder="Marked. What did you notice? Enter saves it, Esc keeps the mark alone"
+                      className="h-7 min-w-0 flex-1 rounded-[7px] bg-raised px-2.5 text-[12.5px] text-fg outline-none ring-1 ring-inset ring-line-strong placeholder:text-fg-3 focus:ring-human-line"
+                      data-session-note
+                    />
+                  </motion.div>
+                ) : freshIssue ? (
                   <motion.div key={`i${freshIssue.t}`} initial={{ y: 12, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -12, opacity: 0 }} className="absolute inset-0 flex items-center gap-1.5 text-[12.5px] text-bad">
                     <TriangleAlert className="size-3.5 shrink-0" />
                     <span className="truncate">{freshIssue.text}</span>
@@ -119,7 +145,7 @@ export function SessionBar() {
                   </motion.div>
                 ) : (
                   <motion.div key="hint" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 flex items-center text-[12.5px] text-fg-3">
-                    {live.mic === 'on' || live.mic === 'starting' ? 'Use your app and say what you notice — it appears here as you talk.' : 'Use your app; everything you do is being captured.'}
+                    {live.mic === 'on' || live.mic === 'starting' ? 'Use your app and say what you notice — it appears here as you talk.' : 'Use your app; everything you do is being captured. Press M to note what you notice.'}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -149,7 +175,7 @@ export function SessionBar() {
             </div>
 
             <div className="flex items-center gap-1">
-              <Tip label="Mark this moment" kbd="M">
+              <Tip label="Mark this moment, and say what you noticed" kbd="M">
                 <Button size="sm" variant="ghost" icon={<Flag />} onClick={() => sessions.mark('', 'button')} disabled={live.status !== 'recording'}>
                   Mark
                 </Button>
