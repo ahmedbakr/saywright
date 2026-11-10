@@ -67,6 +67,8 @@ type Outgoing = BridgeToStudio extends infer M ? (M extends unknown ? Omit<M, 'n
 
 function start(): void {
   let studioOrigin: string | null = null;
+  /** This page, among the pages the studio has seen in its frame: every load is another one. */
+  const pageKey = Math.random().toString(36).slice(2, 12);
   const studios = new StudioOrigins(window.__SAYWRIGHT__);
 
   const post = (msg: Outgoing) => {
@@ -229,7 +231,7 @@ function start(): void {
       const side = outdated({ v: Number(m.v) || 0, oldest: m.oldest }, { v: PROTOCOL_VERSION, oldest: OLDEST_PROTOCOL });
       if (side && side !== mismatch) console.warn(side === 'plugin' ? '[saywright] This app’s Saywright plugin is older than the studio: run npm i -D @saywright/vite@latest and restart the dev server.' : '[saywright] The Saywright studio is older than this app’s plugin: update Saywright (npx @saywright/studio@latest).');
       mismatch = side;
-      post({ type: 'ready', v: PROTOCOL_VERSION, oldest: OLDEST_PROTOCOL, url: location.href, title: document.title });
+      post({ type: 'ready', v: PROTOCOL_VERSION, oldest: OLDEST_PROTOCOL, url: location.href, title: document.title, page: pageKey, loaded: document.readyState === 'complete' });
       if (!mismatch) post({ type: 'session', id: session.id, events: 0, issues: 0 });
       return;
     }

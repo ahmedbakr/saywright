@@ -307,7 +307,12 @@ export type StudioToBridge = Base &
 
 export type BridgeToStudio = Base &
   (
-    | { type: 'ready'; v: number; oldest?: number; url: string; title: string }
+    /**
+     * The page's answer to a hello. `page` names this page (every load of the app is another one) and `loaded` says
+     * whether it has finished loading: a page that announced itself (`here`) answers once as it starts, and again
+     * once it has loaded. Without them (a plugin from before 0.3.0), every answer is a loaded page.
+     */
+    | { type: 'ready'; v: number; oldest?: number; url: string; title: string; page?: string; loaded?: boolean }
     /**
      * A new page's bridge, as soon as its script runs (long before the frame's load event, which waits for every
      * image): the studio says hello at once, so a recording carries on from the page's first moments.
