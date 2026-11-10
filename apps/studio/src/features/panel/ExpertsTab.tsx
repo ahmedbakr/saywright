@@ -209,7 +209,7 @@ export function ExpertsTab() {
   const error = useExperts((s) => s.error);
   const appUrl = useStudio((s) => s.app.url);
   const connected = useStudio((s) => s.app.connected);
-  const [installed, setInstalled] = useState<string[] | null>(null);
+  const [installed, setInstalled] = useState<{ written: string[]; message?: string } | null>(null);
 
   // The saved review of the page shown, when the page changes.
   useEffect(() => {
@@ -278,7 +278,7 @@ export function ExpertsTab() {
                 size="sm"
                 onClick={async () => {
                   const r = await experts.installSkills();
-                  if (r) setInstalled(r.written);
+                  if (r) setInstalled(r);
                 }}
               >
                 Add to this app
@@ -287,7 +287,8 @@ export function ExpertsTab() {
                 Connect Google data
               </Button>
             </div>
-            {installed && <div className="mt-1.5 font-mono text-[11px] text-ok">{installed.slice(0, 4).join(' · ')}</div>}
+            {installed && installed.written.length > 0 && <div className="mt-1.5 font-mono text-[11px] text-ok">{installed.written.slice(0, 4).join(' · ')}</div>}
+            {installed?.message && <div className="mt-1.5 text-[11.5px] text-warn">{installed.message}</div>}
           </div>
         </>
       )}

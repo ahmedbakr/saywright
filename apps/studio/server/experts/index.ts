@@ -266,18 +266,47 @@ function unrepeated(findings: AiFinding[], r: PageReviewRecord, expert: ExpertId
   return findings.filter((f) => !theirs.some((g) => same(f, g)));
 }
 
-/** The experts as Agent Skills in the app's folder, for the person's own coding agent. */
-export function installSkills(root: string, skills: { id: ExpertId; text: string }[]): string[] {
+/** A skill file the studio wrote: its frontmatter says it comes from Saywright (`skillFile` puts it there). */
+const fromStudio = (text: string) => /^---\r?\n(?:(?!---\r?\n)[^\n]*\n)*?\s+source: Saywright\r?\n/.test(text);
+
+/**
+ * The experts as Agent Skills in the app's folder, for the person's own coding agent. A file the studio wrote
+ * before is brought up to date; a file of the same name that the person wrote is left as it is (`kept`), since
+ * a team's own `seo-audit` skill is theirs and replacing it would lose their work without a word.
+ */
+export function installSkills(root: string, skills: { id: ExpertId; text: string }[]): { written: string[]; kept: string[] } {
   const dirs = ['.agents/skills'];
   if (fs.existsSync(path.join(root, '.claude'))) dirs.push('.claude/skills');
   const written: string[] = [];
+  const kept: string[] = [];
   for (const d of dirs) {
     for (const s of skills) {
       const rel = path.join(d, EXPERTS[s.id].skill, 'SKILL.md');
-      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-      fs.writeFileSync(path.join(root, rel), s.text);
-      written.push(rel.split(path.sep).join('/'));
+      const file = path.join(root, rel);
+      const shown = rel.split(path.sep).join('/');
+      let before: string | null = null;
+      try {
+        before = fs.readFileSync(file, 'utf8');
+      } catch {
+        // Not there yet (or not a file we can read: writing below says so).
+      }
+      if (before !== null && before !== s.text && !fromStudio(before)) {
+        kept.push(shown);
+        continue;
+      }
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, s.text);
+      written.push(shown);
     }
   }
-  return written;
+  return { written, kept };
+}
+
+/** What to tell the person about the skill files left alone, by name; nothing when every file was written. */
+export function skillsAnswer(r: { written: string[]; kept: string[] }): string | undefined {
+  if (!r.kept.length) return undefined;
+  const names = r.kept.join(', ');
+  return r.kept.length === 1
+    ? `Left ${names} as it is: a skill of that name is already there and the studio didn’t write it. Rename or move it to add the studio’s.`
+    : `Left ${names} as they are: skills of those names are already there and the studio didn’t write them. Rename or move them to add the studio’s.`;
 }

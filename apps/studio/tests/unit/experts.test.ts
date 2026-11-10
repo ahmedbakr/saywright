@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ElementInfo, PageCheck, PageFacts, PageReview } from '@saywright/vite/protocol';
 import type { JsonRequest } from '../../server/ai/service';
 import { crawl, robotsBlocks } from '../../server/experts/crawl';
-import { ExpertAnswer, ReviewStore, aiReview, expertPrompt, installSkills, pageKey, reviewPage } from '../../server/experts/index';
+import { ExpertAnswer, ReviewStore, aiReview, expertPrompt, installSkills, pageKey, reviewPage, skillsAnswer } from '../../server/experts/index';
 import { EXPERTS, skillFile, systemPromptFor } from '../../server/experts/instructions';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-experts-'));
@@ -320,9 +320,27 @@ describe('the experts as Agent Skills', () => {
   it('are written for every coding agent, and for Claude Code when the app uses it', () => {
     const root = tmp();
     const list = [{ id: 'seo' as const, text: skillFile('seo') }];
-    expect(installSkills(root, list)).toEqual(['.agents/skills/seo-audit/SKILL.md']);
+    expect(installSkills(root, list)).toEqual({ written: ['.agents/skills/seo-audit/SKILL.md'], kept: [] });
     fs.mkdirSync(path.join(root, '.claude'));
-    expect(installSkills(root, list)).toEqual(['.agents/skills/seo-audit/SKILL.md', '.claude/skills/seo-audit/SKILL.md']);
+    expect(installSkills(root, list)).toEqual({ written: ['.agents/skills/seo-audit/SKILL.md', '.claude/skills/seo-audit/SKILL.md'], kept: [] });
     expect(fs.readFileSync(path.join(root, '.claude/skills/seo-audit/SKILL.md'), 'utf8')).toBe(skillFile('seo'));
+  });
+
+  it('update what the studio wrote before, and never replace a skill of the person’s own', () => {
+    const root = tmp();
+    const own = '---\nname: seo-audit\ndescription: Our team’s SEO checklist\n---\n\nOur rules.\n';
+    const older = skillFile('seo').replace('# SEO review', '# SEO review (an older edition)');
+    fs.mkdirSync(path.join(root, '.claude/skills/seo-audit'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude/skills/seo-audit/SKILL.md'), own);
+    fs.mkdirSync(path.join(root, '.agents/skills/seo-audit'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.agents/skills/seo-audit/SKILL.md'), older);
+    const list = [{ id: 'seo' as const, text: skillFile('seo') }];
+    expect(installSkills(root, list)).toEqual({ written: ['.agents/skills/seo-audit/SKILL.md'], kept: ['.claude/skills/seo-audit/SKILL.md'] });
+    expect(fs.readFileSync(path.join(root, '.claude/skills/seo-audit/SKILL.md'), 'utf8')).toBe(own);
+    expect(fs.readFileSync(path.join(root, '.agents/skills/seo-audit/SKILL.md'), 'utf8')).toBe(skillFile('seo'));
+    expect(skillsAnswer({ written: ['.agents/skills/seo-audit/SKILL.md'], kept: ['.claude/skills/seo-audit/SKILL.md'] })).toBe(
+      'Left .claude/skills/seo-audit/SKILL.md as it is: a skill of that name is already there and the studio didn’t write it. Rename or move it to add the studio’s.',
+    );
+    expect(skillsAnswer({ written: ['a'], kept: [] })).toBeUndefined();
   });
 });

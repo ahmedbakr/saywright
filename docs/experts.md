@@ -105,7 +105,7 @@ axe-core is loaded into the page only for a review, from the studio. Pages shown
 
 ## The experts in your own coding agent
 
-**Add to this app** (at the bottom of the Experts tab) writes the four experts into your app as [Agent Skills](https://agentskills.io): `.agents/skills/<name>/SKILL.md`, and `.claude/skills/<name>/SKILL.md` when your app already has a `.claude` folder. Claude Code, Codex, Cursor, GitHub Copilot and other agents that read skills then review and fix pages with the same rules: `seo-audit`, `content-review`, `ux-review` and `a11y-audit`.
+**Add to this app** (at the bottom of the Experts tab) writes the four experts into your app as [Agent Skills](https://agentskills.io): `.agents/skills/<name>/SKILL.md`, and `.claude/skills/<name>/SKILL.md` when your app already has a `.claude` folder. Claude Code, Codex, Cursor, GitHub Copilot and other agents that read skills then review and fix pages with the same rules: `seo-audit`, `content-review`, `ux-review` and `a11y-audit`. Pressing it again brings the files the studio wrote up to date; a skill of the same name that you wrote yourself is left as it is, and the studio tells you which file it left.
 
 ## Google data
 

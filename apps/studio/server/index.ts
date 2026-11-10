@@ -40,7 +40,7 @@ import { ModelReportWriter } from './sessions/report.ts';
 import { McpServer, clientToken } from './mcp.ts';
 import { mcpTools, type StudioContext } from './mcp-tools.ts';
 import { GoogleConnector, type GoogleSettings } from './connectors/google.ts';
-import { ReviewStore, aiReview, installSkills, reviewPage } from './experts/index.ts';
+import { ReviewStore, aiReview, installSkills, reviewPage, skillsAnswer } from './experts/index.ts';
 import { EXPERTS, skillFile } from './experts/instructions.ts';
 import { STUDIO_PORT, STUDIO_URL, type ExpertId, type PageReview } from '@saywright/vite/protocol';
 import type { SpeechLang } from './speech/catalog.ts';
@@ -818,7 +818,9 @@ export async function createStudioApi(layout: StudioLayout) {
     if (!project.hasCode) throw new HttpError(409, 'This app has no code on this computer to add the experts to.', 'no-code');
     const experts = expertsOf((req.body as { experts?: unknown } | undefined)?.experts);
     const list = (experts.length ? experts : (['seo', 'content', 'ux', 'a11y'] as ExpertId[])).map((id) => ({ id, text: skillFile(id) }));
-    return { written: installSkills(project.root, list), skills: list.map((s) => EXPERTS[s.id].skill) };
+    const done = installSkills(project.root, list);
+    const message = skillsAnswer(done);
+    return { written: done.written, kept: done.kept, ...(message ? { message } : {}), skills: list.map((s) => EXPERTS[s.id].skill) };
   });
 
   // ── Google: Chrome UX Report (API key), Search Console and Analytics (service account) ──

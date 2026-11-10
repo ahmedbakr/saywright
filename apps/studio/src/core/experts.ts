@@ -107,9 +107,9 @@ export const experts = {
     return controller.fixReview(items, EXPERT_LIST.find((e) => e.id === expert)?.label ?? expert);
   },
 
-  async installSkills(): Promise<{ written: string[] } | null> {
+  async installSkills(): Promise<{ written: string[]; kept: string[]; message?: string } | null> {
     try {
-      return await api.post<{ written: string[] }>('/experts/skills', {});
+      return await api.post<{ written: string[]; kept: string[]; message?: string }>('/experts/skills', {});
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
       return null;
