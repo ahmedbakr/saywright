@@ -3,7 +3,7 @@
  * deciding on previews, navigating the selection, switching modes, driving the
  * test recorder. Everything else is a request for a change.
  */
-import { spokenMoney } from '@shared/expected';
+import { cutSaid, spokenMoney } from '@shared/expected';
 
 export type Mode = 'edit' | 'use' | 'record';
 
@@ -104,29 +104,36 @@ export interface SpokenExpectation {
   /** The word that names the element ("this", "the total"), when there is one. */
   subject: string | null;
   expected: string;
+  /**
+   * All the words said, when `expected` was cut from them at a “not” or a “but” (“Paid, not yet” → “Paid”): what the
+   * check is about if the element already shows all of it.
+   */
+  whole?: string;
 }
 
 /**
- * "this should show $80.80", "the total should be 80.80 not 78.40",
- * "it ought to say Free". Used in Record mode to turn narration into a check.
+ * "this should show $80.80", "the total should be 80.80 not 78.40", "this should show $64.64, not $51.71",
+ * "it ought to say Free", "it should say “Item not found”". Used in Record mode to turn narration into a check.
  */
 export function parseExpectation(text: string): SpokenExpectation | null {
   // "this shouldn't be checked", "it should not be ticked": a box that must be left clear.
   const off = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|ought to|is supposed to)\s*(?:not|n['’]t)\s+be\s+(?:checked|ticked|selected|chosen|on)[.!?]*$/i.exec(text.trim());
   if (off) return { subject: off[1]?.toLowerCase() ?? null, expected: 'not checked' };
-  const m = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|needs to|ought to|is supposed to|has to)\s+(?:be|say|show|read|display|equal|contain|have|include)\s+(.+)$/i.exec(
+  const m = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|needs to|ought to|is supposed to|has to)\s+(?:be|say|show|read|display|equal|contain|have|include)\s+(.+)$/is.exec(
     text.trim(),
   );
   if (!m) return null;
-  let expected = m[2]
-    .replace(/\s+(?:but|instead|and not|not)\b.*$/i, '')
-    .replace(/[.!?]+$/, '')
-    .trim();
-  expected = expected.replace(/^["“'‘]|["”'’]$/g, '').trim();
+  const subject = m[1]?.toLowerCase() ?? null;
+  // A quoted value is taken whole, whatever words are in it.
+  const quoted = /^(?:"([^"]+)"|“([^”]+)”|‘([^’]+)’|'([^']+)'|«([^»]+)»)/.exec(m[2].trim());
+  const inQuotes = quoted?.slice(1).find((x) => x !== undefined)?.trim();
+  if (quoted) return inQuotes ? { subject, expected: inQuotes } : null;
+  const all = m[2].replace(/[\s.,;:!?]+$/, '').trim();
+  let expected = cutSaid(m[2]);
   // Speech often says "57.60 dollars" for "$57.60".
   const dollars = /^(\d+(?:[.,]\d{1,2})?)\s*(?:dollars|bucks|usd)$/i.exec(expected);
   if (dollars) expected = `$${dollars[1]}`;
   else expected = spokenMoney(expected) ?? expected;
   if (!expected) return null;
-  return { subject: m[1]?.toLowerCase() ?? null, expected };
+  return { subject, expected, ...(all.length > expected.length && cutSaid(all) !== all ? { whole: all } : {}) };
 }

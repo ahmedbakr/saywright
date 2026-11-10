@@ -14,6 +14,7 @@ import { ApiError, api, subscribe } from '@/lib/api';
 import { apps, useApps } from './apps';
 import { fileName, plural } from '@/lib/format';
 import { focusOn, shouldBe, stateWord } from '@shared/text';
+import { showsValue } from '@shared/expected';
 import { sanitizeSteps } from '@shared/steps';
 import { BridgeClient } from './bridge';
 import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
@@ -1549,8 +1550,10 @@ class Controller {
   private async addExpectation(exp: SpokenExpectation, spoken: Spoken | null): Promise<void> {
     const el = this.targetFrom(spoken);
     if (!el) return this.notify('Point at the element that shows the wrong value while you say it.', 'warn');
-    const e = await this.checkOf(el, exp.expected);
-    if (!e) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
+    const found = await this.checkOf(el, exp.expected);
+    if (!found) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
+    // “Paid, not yet” said of an element that shows “Paid, not yet”: those words are the value, not a value and an aside.
+    const e = exp.whole && !found.field && showsValue(found.actual, exp.whole) ? { ...found, expected: exp.whole } : found;
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
     play('keep');

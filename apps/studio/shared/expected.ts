@@ -121,6 +121,24 @@ function valueIn(clause: string): string | null {
 }
 
 /**
+ * What a sentence says something should show, without the part where it moves on to what it shows instead: “$64.64,
+ * not $51.71” → “$64.64”; “80.80 not 78.40” → “80.80”; “Paid but it shows Pending” → “Paid”. Words that are only
+ * part of the value stay: “Item not found” is all of it. No punctuation is left at its end.
+ */
+export function cutSaid(said: string): string {
+  return said
+    .replace(/\s*[,;]\s*(?:(?:and|but|or)\s+)?(?:not|but|instead|rather than|whereas|while|it shows|it says|it's|it is)\b.*$/is, '')
+    .replace(/\s*;.*$/s, '')
+    .replace(/\s+(?:but|instead of|rather than|whereas)\b.*$/is, '')
+    .replace(/\s+instead[.!?]*$/i, '')
+    // “not” without a comma ends it only before another value: “80.80 not 78.40”, “Paid and not “Due””.
+    .replace(/\s+(?:and\s+)?not\s+(?=[$€£¥₹"“‘'«]|\d).*$/is, '')
+    .replace(/\s+(?:مش|وليس|بدل|بس)\s.*$/s, '')
+    .replace(/[\s.,;:!?]+$/, '')
+    .trim();
+}
+
+/**
  * The value a sentence says something should show, from the last part of it that says one, or null when it says
  * none (an opinion like “this should be bigger” is no value to check).
  */

@@ -130,6 +130,24 @@ describe('spoken expectations (Write test mode)', () => {
     expect(parseExpectation('this should show $80.80 but it shows $78.40')?.expected).toBe('$80.80');
   });
 
+  it('expects what was said, not the comma or the value it is said against (“$64.64, not $51.71”)', () => {
+    expect(parseExpectation('this should show $64.64, not $51.71')?.expected).toBe('$64.64');
+    expect(parseExpectation('this should show $64.64; it shows $51.71')?.expected).toBe('$64.64');
+    expect(parseExpectation('the total should be 64.64 not 51.71')?.expected).toBe('64.64');
+    expect(parseExpectation('this should say Paid, but it says Pending.')?.expected).toBe('Paid');
+    expect(parseExpectation('this should show Paid instead of Pending')?.expected).toBe('Paid');
+    expect(parseExpectation('this should show Paid instead')?.expected).toBe('Paid');
+  });
+
+  it('takes a quoted value whole, and never cuts inside words that are part of the value', () => {
+    expect(parseExpectation('this should show "Item not found"')?.expected).toBe('Item not found');
+    expect(parseExpectation('this should show “Item not found”, not “Items: 3”')?.expected).toBe('Item not found');
+    expect(parseExpectation("it should say “Don't panic”.")?.expected).toBe("Don't panic");
+    expect(parseExpectation('this should show Item not found')?.expected).toBe('Item not found');
+    // Cut at a comma: all of it is kept too, for an element that shows all of it.
+    expect(parseExpectation('this should show Paid, not yet shipped')).toEqual({ subject: 'this', expected: 'Paid', whole: 'Paid, not yet shipped' });
+  });
+
   it('ignores ordinary requests', () => {
     expect(parseExpectation('make this bigger')).toBeNull();
   });
