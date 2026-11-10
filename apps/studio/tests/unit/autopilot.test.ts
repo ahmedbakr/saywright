@@ -3,9 +3,9 @@
  * happens when it names a control that isn't there, presses a key without one or goes round in circles; and a run
  * that can't start (no AI, or the budget is used up) leaving no session behind.
  */
-import type { PageSnapshot } from '@saywright/vite/protocol';
+import type { PageControl, PageSnapshot } from '@saywright/vite/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { describeStep, isRisky, notAllowed, pageStateOf } from '../../shared/autopilot';
+import { describeStep, isRisky, notAllowed, pageStateOf, riskOf } from '../../shared/autopilot';
 import { autopilotRoutes, nextTurn, turnPrompt, type AutopilotTurn, type TurnInput } from '../../server/autopilot';
 import { AgentError } from '../../server/ai/types';
 import type { JsonRequest } from '../../server/ai/service';
@@ -14,7 +14,7 @@ import type { Sessions } from '../../server/sessions/index';
 import { Autopilot, type AutopilotHost } from '../../src/core/autopilot';
 
 const calls = vi.hoisted(() => [] as { method: string; path: string }[]);
-const refuse = vi.hoisted(() => ({ ready: null as null | { status: number; message: string }, turn: null as null | { status: number; message: string } }));
+const refuse = vi.hoisted(() => ({ ready: null as null | { status: number; message: string }, turn: null as null | { status: number; message: string }, turns: [] as unknown[], posted: [] as { path: string; body: unknown }[] }));
 vi.mock('@/lib/api', () => {
   class ApiError extends Error {
     constructor(
@@ -24,14 +24,16 @@ vi.mock('@/lib/api', () => {
       super(message);
     }
   }
-  const call = async (method: string, path: string) => {
+  const call = async (method: string, path: string, body?: unknown) => {
     calls.push({ method, path });
+    refuse.posted.push({ path, body });
     if (path === '/autopilot/ready' && refuse.ready) throw new ApiError(refuse.ready.status, refuse.ready.message);
     if (path === '/autopilot/turn' && refuse.turn) throw new ApiError(refuse.turn.status, refuse.turn.message);
+    if (path === '/autopilot/turn' && refuse.turns.length) return { turn: refuse.turns.shift() };
     if (path === '/sessions' && method === 'POST') return { session: { id: 's1' }, key: 'k' };
     return { ok: true };
   };
-  return { ApiError, api: { get: (p: string) => call('GET', p), post: (p: string) => call('POST', p), put: (p: string) => call('PUT', p), delete: (p: string) => call('DELETE', p) } };
+  return { ApiError, api: { get: (p: string) => call('GET', p), post: (p: string, b?: unknown) => call('POST', p, b), put: (p: string) => call('PUT', p), delete: (p: string) => call('DELETE', p) } };
 });
 
 const page: PageSnapshot = {
@@ -75,7 +77,68 @@ describe('the prompt', () => {
 describe('controls it leaves alone', () => {
   it('knows deleting, paying, sending and signing out, in English and Arabic', () => {
     for (const name of ['Delete account', 'Pay $98.00', 'Place order', 'Send', 'Log out', 'Sign out', 'حذف الحساب', 'ادفع الآن', 'تسجيل الخروج']) expect(isRisky(name)).toBe(true);
-    for (const name of ['Apply', 'Remove', 'Add to cart', 'Checkout', 'Sender name', 'Display settings', 'Save']) expect(isRisky(name)).toBe(false);
+    for (const name of ['Apply', 'Add to cart', 'Checkout', 'Sender name', 'Display settings', 'Save', 'Cancel']) expect(isRisky(name)).toBe(false);
+  });
+
+  const url = 'http://localhost:7551/auto';
+  const click = { kind: 'click' as const, control: 1 };
+  const button = (name: string, about?: PageControl['about']): PageControl => ({ locator: `page.getByRole('button', { name: '${name}' })`, role: 'button', name, disabled: false, offscreen: false, src: null, ...(about ? { about } : {}) });
+
+  it('judges what a control is, not only what it is called (the audit’s admin page)', () => {
+    const risky: [string, PageControl][] = [
+      ['icon-only trash button', button('', { classes: 'icon-trash', context: 'Grace Hopper' })],
+      ['lucide icon', button('', { words: 'lucide lucide-trash-2', context: 'Row 2' })],
+      ['svg use id', button('', { words: 'icon-delete' })],
+      ['danger variant', button('Yes', { classes: 'btn btn-danger' })],
+      ['destructive variant', button('Confirm', { classes: 'inline-flex destructive' })],
+      ['title only', button('✕', { words: 'Remove member' })],
+      ['data-method', { ...button('Grace'), role: 'link', about: { method: 'delete', href: 'http://localhost:7551/users/7' } }],
+      ['the app asks first', button('Archive', { confirms: true })],
+      ['link to sign out', { ...button('Exit'), role: 'link', about: { href: 'http://localhost:7551/logout' } }],
+      ['link to another site', { ...button('Docs'), role: 'link', about: { href: 'https://other.example/docs' } }],
+      ['form posting to delete', button('Yes, continue', { form: { action: 'http://localhost:7551/account/delete', method: 'post' } })],
+      ['form with delete method', button('Save', { form: { action: 'http://localhost:7551/users/7', method: 'delete' } })],
+      ['alert dialog confirm', button('OK', { dialog: { alert: true, text: 'Are you sure?' } })],
+      ['dialog about deleting', button('Yes', { dialog: { alert: false, text: 'Delete 3 items? This can’t be undone.' } })],
+      ['no name at all', button('')],
+    ];
+    for (const [what, c] of risky) expect(riskOf(click, c, url), what).not.toBeNull();
+    for (const name of ['Clear all', 'Cancel order', 'Cancel my subscription', 'Deactivate', 'Unsubscribe', 'Submit payment', 'Complete payment', 'Place order', 'Order now', 'Donate $50', 'Empty trash', 'Factory reset', 'Revoke access', 'Wipe device', 'Terminate instance', 'Drop table', 'Email all customers', 'Send feedback', 'Refund', 'Log off', 'Sign off', 'Leave team', 'Ban user', 'Uninstall', 'Remove', 'Remove member', 'Remove filter', 'Pay later',
+      'حذف', 'إزالة', 'مسح الكل', 'إتمام الطلب', 'إلغاء الطلب', 'تعطيل الحساب', 'تسجيل الخروج',
+      'Supprimer', 'Payer', 'Se déconnecter', 'Eliminar', 'Cerrar sesión', 'Löschen', 'Jetzt kaufen', 'Abmelden', 'Excluir', 'Finalizar compra', 'Elimina', 'Esci', 'Sil', 'Satın al', 'Çıkış yap'])
+      expect(riskOf(click, button(name), url), name).not.toBeNull();
+  });
+
+  it('says why in the step it skipped', () => {
+    expect(riskOf(click, button('', { classes: 'icon-trash' }), url)).toBe('its icon or style says “trash”');
+    expect(riskOf(click, { ...button('Exit'), role: 'link', about: { href: 'http://localhost:7551/logout' } }, url)).toBe('it goes to an address that says “logout”');
+  });
+
+  it('leaves the controls of ordinary use alone', () => {
+    const fine: PageControl[] = [
+      button('Open menu', { words: 'Open menu lucide lucide-menu' }),
+      { ...button('Next page'), role: 'link', about: { href: 'http://localhost:7551/products?page=2' } },
+      button('Add to cart', { classes: 'btn btn-primary' }),
+      button('Apply', { form: { action: 'http://localhost:7551/cart/coupon', method: 'post' } }),
+      button('Search', { form: { action: 'http://localhost:7551/search', method: 'get' } }),
+      button('Sort by price'),
+      { ...button('Shipping'), role: 'tab' },
+      { ...button('Cancel'), about: { dialog: { alert: true, text: 'Delete this order?' } } },
+      { ...button('Checkout'), role: 'link', about: { href: 'http://localhost:7551/checkout' } },
+      { ...button('Payment methods'), role: 'link', about: { href: 'http://localhost:7551/settings/billing' } },
+      button('Ordina per prezzo'),
+      button('Save', { dialog: { alert: false, text: 'Edit profile' } }),
+      { ...button('Email'), role: 'textbox', field: { type: 'email', value: '', required: true } },
+    ];
+    for (const c of fine) expect(riskOf(click, c, url), c.name).toBeNull();
+  });
+
+  it('doesn’t open an address that says it deletes or signs out, nor another site', () => {
+    expect(riskOf({ kind: 'goto', value: '/logout' }, undefined, url)).not.toBeNull();
+    expect(riskOf({ kind: 'goto', value: '/account/delete' }, undefined, url)).not.toBeNull();
+    expect(riskOf({ kind: 'goto', value: '/api/users/7?_method=DELETE' }, undefined, url)).not.toBeNull();
+    expect(riskOf({ kind: 'goto', value: '/products/2' }, undefined, url)).toBeNull();
+    expect(notAllowed({ kind: 'goto', value: '/logout' }, undefined, true, url)).toBe(false);
   });
 });
 
@@ -276,6 +339,59 @@ describe('a run that can’t start', () => {
       refuse.ready = null;
       refuse.turn = null;
       vi.unstubAllGlobals();
+    });
+
+    describe('with “Let it delete, pay, send and sign out” off', () => {
+      const turn = (action: object) => ({ thought: 'next', action, findings: [] });
+      const steps: { locator: string; step?: { guard?: boolean } }[] = [];
+      let blocked: string[] = [];
+      const refusing: string[] = [];
+      let onShow = () => undefined as void;
+      const acting = {
+        ...host,
+        bridge: {
+          session: async () => true,
+          explore: async () => ({ ...page, blocked: blocked.splice(0) }),
+          replay: async (locator: string, step?: { guard?: boolean }) => {
+            if (!step) onShow();
+            else {
+              steps.push({ locator, step });
+              blocked = refusing.splice(0);
+            }
+            return { ok: true, info: { tag: 'button' } };
+          },
+        },
+      } as unknown as AutopilotHost;
+      beforeEach(() => {
+        steps.length = 0;
+        refuse.posted.length = 0;
+        refuse.turns.length = 0;
+        onShow = () => undefined;
+      });
+
+      it('has the page refuse what would delete, pay, send or sign out, and lists what it left alone as skipped steps', async () => {
+        refuse.turns.push(turn({ kind: 'click', control: 2 }), turn({ kind: 'click', control: 3 }), turn({ kind: 'goto', value: '/logout' }), turn({ kind: 'done' }));
+        refusing.push('a DELETE request to /api/coupon');
+        await new Autopilot(acting).run({ goal: '', maxSteps: 5, allowRisky: false });
+        // Apply was clicked, armed; Pay was never clicked.
+        expect(steps).toEqual([{ locator: "page.getByRole('button', { name: 'Apply' })", step: { kind: 'click', guard: true } }]);
+        const skipped = refuse.posted.filter((p) => p.path === '/sessions/s1/studio-events').map((p) => (p.body as { events: { did: string }[] }).events[0].did);
+        expect(skipped).toEqual([
+          'Stopped in the page: a DELETE request to /api/coupon (not allowed)',
+          'Skipped “Pay $98.00” (not allowed: it says “Pay”)',
+          'Skipped opening /logout (not allowed: its address says “logout”)',
+        ]);
+      }, 15_000);
+
+      it('stops before the next action when Stop is pressed while a control is being shown', async () => {
+        refuse.turns.push(turn({ kind: 'click', control: 2 }), turn({ kind: 'click', control: 2 }));
+        const run = new Autopilot(acting);
+        onShow = () => run.stop();
+        await run.run({ goal: '', maxSteps: 5, allowRisky: false });
+        expect(steps).toEqual([]);
+        expect(refuse.posted.filter((p) => p.path === '/autopilot/turn')).toHaveLength(1);
+        refuse.turns.length = 0;
+      }, 15_000);
     });
 
     it('creates no session when the budget is used up', async () => {

@@ -1,5 +1,5 @@
 /** Autopilot's steps, as the studio and its server both describe them (see server/autopilot.ts). */
-import { isSecretHint, looksSecret, maskSecrets, MASK, type PageSnapshot } from '@saywright/vite/protocol';
+import { dismisses, isSecretHint, looksSecret, maskSecrets, MASK, riskyPath, riskyToken, riskyWords, type PageControl, type PageSnapshot } from '@saywright/vite/protocol';
 
 // Not yet: a drag (pointer down, move, up), which canvas apps such as drawing tools need to be used at all.
 export const STEP_KINDS = ['click', 'fill', 'select', 'check', 'press', 'scroll', 'back', 'goto', 'done'] as const;
@@ -39,20 +39,69 @@ export function pageStateOf(s: PageSnapshot): string {
   return (h >>> 0).toString(36);
 }
 
-/** Controls whose names say they delete, pay, send or sign out, in English and Arabic: Autopilot leaves them alone unless allowed. */
-const RISKY =
-  /\b(delete|remove account|destroy|erase|deactivate|close (?:my )?account|log ?out|sign ?out|unsubscribe|pay|purchase|buy now|place (?:the |my )?order|confirm (?:order|payment|purchase)|send|transfer|withdraw|publish|deploy|reset all)\b|حذف|احذف|إلغاء الاشتراك|تسجيل الخروج|خروج|ادفع|دفع|شراء|اشتر|إرسال|أرسل|تحويل|نشر/i;
+/** Whether a name says it deletes, pays, sends or signs out, as a whole word, in the languages the studio is used in. */
+export const isRisky = (name: string): boolean => !!riskyWords(name);
 
-export const isRisky = (name: string): boolean => RISKY.test(name);
+type Judged = Pick<PageControl, 'name'> & Partial<Pick<PageControl, 'role' | 'submits' | 'about' | 'field'>>;
 
 /**
- * Whether Autopilot must leave a step alone unless allowed: a control whose name is risky, or Enter in a field that
- * sends its form with one ("Pay $45.45 and subscribe"), which is the same as pressing that button.
+ * Why Autopilot must leave a step alone unless allowed, or null. A control is judged by what it is, not only by what
+ * it is called: its name, title and icons, classes that mean danger, a link's address, the address and method of
+ * the form it sends, whether the app asks before it acts, and in a dialog that asks, any answer but no. Enter in a
+ * field that sends its form counts as that form's button. It can't know what every control does: when a control
+ * says nothing about itself, it is left alone too. (The page refuses the rest while Autopilot acts: bridge/guard.ts.)
  */
-export function notAllowed(action: AutopilotAction, control: { name: string; submits?: string } | undefined, allowRisky: boolean): boolean {
-  if (allowRisky || !control) return false;
-  if (isRisky(control.name)) return true;
-  return action.kind === 'press' && (action.value || 'Enter') === 'Enter' && !!control.submits && isRisky(control.submits);
+export function riskOf(action: AutopilotAction, control: Judged | undefined, pageUrl = 'http://localhost/'): string | null {
+  if (action.kind === 'goto') {
+    const word = riskyPath(action.value || '/', pageUrl);
+    return word ? `its address says “${word}”` : null;
+  }
+  if (!control || (action.kind !== 'click' && action.kind !== 'press')) return null;
+  // Clicking into a field to type only focuses it: a field called “Email” sends nothing.
+  if (action.kind === 'click' && control.field && !['checkbox', 'radio', 'submit', 'button', 'image', 'reset'].includes(control.field.type)) return null;
+  const about = control.about ?? {};
+  const form = about.form;
+  const formRisk = (): string | null => {
+    if (!form) return null;
+    if (form.method === 'delete') return 'its form sends a delete request';
+    const word = riskyPath(form.action, pageUrl);
+    return word ? `its form goes to an address that says “${word}”` : null;
+  };
+  if (action.kind === 'press') {
+    if ((action.value || 'Enter') !== 'Enter' || !control.submits) return null;
+    const word = riskyWords(control.submits);
+    return word ? `pressing Enter sends its form with “${control.submits}”` : formRisk();
+  }
+  const said = riskyWords(control.name) ?? riskyWords(about.words ?? '');
+  if (said) return `it says “${said}”`;
+  const icon = riskyToken(about.words ?? '') ?? riskyToken(about.classes ?? '');
+  if (icon) return `its icon or style says “${icon}”`;
+  if (about.method === 'delete') return 'it sends a delete request';
+  if (about.confirms) return 'the app asks before it does this';
+  if (about.href) {
+    try {
+      const to = new URL(about.href, pageUrl);
+      if ((to.protocol === 'http:' || to.protocol === 'https:') && to.origin !== new URL(pageUrl).origin) return 'it leaves the app for another site';
+    } catch {
+      /* not an address */
+    }
+    const word = riskyPath(about.href, pageUrl);
+    if (word) return `it goes to an address that says “${word}”`;
+  }
+  const sent = formRisk();
+  if (sent) return sent;
+  if (about.dialog && !dismisses(control.name)) {
+    if (about.dialog.alert) return 'it answers yes in a dialog that asks for confirmation';
+    const asked = riskyWords(about.dialog.text);
+    if (asked) return `it answers yes in a dialog about “${asked}”`;
+  }
+  if (!control.name.trim() && !about.words?.trim() && !control.field) return 'it has no name: there is no telling what it does';
+  return null;
+}
+
+/** Whether Autopilot must leave a step alone unless allowed (riskOf says why). */
+export function notAllowed(action: AutopilotAction, control: Judged | undefined, allowRisky: boolean, pageUrl?: string): boolean {
+  return !allowRisky && !!riskOf(action, control, pageUrl);
 }
 
 /** A step in words, for the timeline and the next turn: Clicked “Apply”, Typed “SAVE20” into “Coupon”. */

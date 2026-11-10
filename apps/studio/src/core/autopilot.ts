@@ -4,7 +4,7 @@
  * the next step, and the step is carried out the way a replayed one is: shown, then clicked, filled or pressed.
  */
 import type { ElementInfo, PageSnapshot } from '@saywright/vite/protocol';
-import { describeStep, notAllowed, pageStateOf, type AutopilotAction, type StepRecord } from '@shared/autopilot';
+import { describeStep, pageStateOf, riskOf, type AutopilotAction, type StepRecord } from '@shared/autopilot';
 import { api } from '@/lib/api';
 import type { BridgeClient } from './bridge';
 
@@ -83,9 +83,14 @@ export class Autopilot {
   }
 
   /** Carry a step out in the app. */
-  private async act(action: AutopilotAction, page: PageSnapshot, previous: string | null, opts: AutopilotOptions): Promise<{ ok: boolean; error?: string }> {
+  private async act(action: AutopilotAction, page: PageSnapshot, previous: string | null, opts: AutopilotOptions): Promise<{ ok: boolean; error?: string; why?: string }> {
     const control = action.control ? page.controls[action.control - 1] : undefined;
     const origin = new URL(page.url).origin;
+    // The server marks these for the AI; this is the guarantee (and the page refuses the rest: bridge/guard.ts).
+    const why = opts.allowRisky ? null : riskOf(action, control, page.url);
+    if (why) return { ok: false, error: 'not allowed', why };
+    // Without leave, every step that acts in the page has the page refuse what would delete, pay, send or sign out.
+    const guard = !opts.allowRisky;
     switch (action.kind) {
       case 'click':
       case 'fill':
@@ -94,16 +99,16 @@ export class Autopilot {
       case 'press': {
         // A key with no control in focus goes to the page (Escape closes a menu, a shortcut runs).
         if (action.kind === 'press' && !control) {
-          const r = await this.host.bridge.replay("page.locator('body')", { kind: 'press', key: action.value || 'Enter' }, false, undefined, 4000);
+          const r = await this.host.bridge.replay("page.locator('body')", { kind: 'press', key: action.value || 'Enter', guard }, false, undefined, 4000);
           return r.ok ? { ok: true } : { ok: false, error: r.error ?? 'failed' };
         }
         if (!control) return { ok: false, error: 'not on the page' };
-        // The server marks these for the AI; this is the guarantee (Enter in a field counts as its form's button).
-        if (notAllowed(action, control, !!opts.allowRisky)) return { ok: false, error: 'not allowed' };
         const shown = await this.host.bridge.replay(control.locator, undefined, false, undefined, 2500);
         if (!shown.ok || !shown.info) return { ok: false, error: shown.error ?? 'missing' };
         this.host.point(shown.info, false);
         await sleep(400);
+        // Stop takes effect before the next action, even one already shown.
+        if (this.stopped) return { ok: false, error: 'stopped' };
         const step =
           action.kind === 'click'
             ? { kind: 'click' as const }
@@ -112,6 +117,7 @@ export class Autopilot {
               : action.kind === 'check'
                 ? { kind: 'fill' as const, checked: action.value !== 'off' }
                 : { kind: 'fill' as const, value: action.value ?? '' };
+        if (guard) Object.assign(step, { guard });
         const r = await this.host.bridge.replay(control.locator, step, false, undefined, 4000);
         this.host.point(shown.info, true);
         return r.ok ? { ok: true } : { ok: false, error: r.error ?? 'failed' };
@@ -137,6 +143,13 @@ export class Autopilot {
     }
   }
 
+  /** A step left alone, in the session's timeline with why. */
+  private skipped(session: string | null, did: string): void {
+    if (!session) return;
+    const event = { type: 'autopilot', did, why: 'Not allowed: “Let it delete, pay, send and sign out” is off.', t: Date.now(), seq: Date.now() * 100 + Math.floor(Math.random() * 100) };
+    void api.post(`/sessions/${session}/studio-events`, { events: [event] }).catch(() => undefined);
+  }
+
   async run(opts: AutopilotOptions): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -151,6 +164,14 @@ export class Autopilot {
     let failures = 0;
     let since = Date.now();
     let failed = false;
+    let refusedBy: { n: number; page: PageSnapshot } | null = null;
+    const refused = (list: string[] | undefined) => {
+      for (const what of refusedBy ? (list ?? []) : []) {
+        const did = `Stopped in the page: ${what} (not allowed)`;
+        this.skipped(session, did);
+        history.push({ n: refusedBy!.n, did, ok: false, error: 'not allowed', url: this.host.appUrl() || refusedBy!.page.url, page: pageStateOf(refusedBy!.page) });
+      }
+    };
     try {
       // An AI to drive it, within the budget, before there is a session: a run that can't start leaves none behind.
       await api.post('/autopilot/ready', {});
@@ -163,6 +184,8 @@ export class Autopilot {
         this.host.show({ ...view });
         const page = await this.look();
         if (!page) throw new Error('Your app stopped answering: is it still running?');
+        // What the page refused after the last look (a request the last step started late).
+        refused(page.blocked);
         if (visited[visited.length - 1] !== page.url) visited.push(page.url);
         const { turn } = await api.post<{ turn: Turn }>('/autopilot/turn', { session, goal: opts.goal, step: n, maxSteps: opts.maxSteps, allowRisky: opts.allowRisky, since, snapshot: page, history, reported });
         reported.push(...turn.findings.map((f) => f.title));
@@ -172,18 +195,20 @@ export class Autopilot {
         const loads = this.host.connections();
         since = Date.now();
         const control = turn.action.control ? page.controls[turn.action.control - 1] : undefined;
-        const r = await this.act(turn.action, page, visited[visited.length - 2] ?? null, opts);
+        const r = this.stopped ? { ok: false, error: 'stopped' } : await this.act(turn.action, page, visited[visited.length - 2] ?? null, opts);
+        if (r.error === 'stopped') break;
         // The app's response: a new page (it reconnects) or what the step changed on this one.
         await sleep(900);
         if (this.host.connections() !== loads) await this.connected(10_000);
         const sends = turn.action.kind === 'press' && control?.submits ? `pressing Enter in “${control.name}”, which sends the form with “${control.submits}”` : null;
-        const did = r.error === 'not allowed' ? `Skipped ${sends ?? (control ? `“${control.name}”` : 'a control')} (not allowed)` : describeStep(turn.action, control);
+        const what = sends ?? (turn.action.kind === 'goto' ? `opening ${turn.action.value ?? '/'}` : control ? `“${control.name || control.role}”` : 'a control');
+        const did = r.error === 'not allowed' ? `Skipped ${what} (not allowed: ${r.why})` : describeStep(turn.action, control);
         // In the timeline too: the run's report says what it left alone, and why.
-        if (r.error === 'not allowed') {
-          const event = { type: 'autopilot', did, why: 'Not allowed: “Let it delete, pay, send and sign out” is off.', t: Date.now(), seq: Date.now() * 100 + Math.floor(Math.random() * 100) };
-          void api.post(`/sessions/${session}/studio-events`, { events: [event] }).catch(() => undefined);
-        }
+        if (r.error === 'not allowed') this.skipped(session, did);
         history.push({ n, did, ok: r.ok, ...(r.error ? { error: r.error } : {}), url: this.host.appUrl() || page.url, page: pageStateOf(page) });
+        // What the page itself refused while the step played out (a delete request, a sign-out address, a “confirm”).
+        refusedBy = { n, page };
+        refused((await this.host.bridge.explore())?.blocked);
         failures = r.ok ? 0 : failures + 1;
         if (failures >= MAX_FAILURES) {
           this.host.notify('Autopilot stopped: its last steps didn’t work.');

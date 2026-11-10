@@ -116,8 +116,13 @@ function AutopilotCard() {
         <span id={riskyLabel} className="text-[12px] text-fg-2">
           Let it delete, pay, send and sign out
         </span>
-        <Switch checked={risky} onCheckedChange={setRisky} disabled={running} aria-labelledby={riskyLabel} />
+        <Switch checked={risky} onCheckedChange={setRisky} disabled={running} aria-labelledby={riskyLabel} aria-describedby={`${riskyLabel}-hint`} />
       </div>
+      <p id={`${riskyLabel}-hint`} className="mt-1 text-[11.5px] leading-snug text-fg-3">
+        {risky
+          ? 'On: it may use anything, including what deletes, pays, sends or signs out. Use it on test data only.'
+          : 'Off: it avoids what looks like deleting, paying, sending or signing out, and never sends a delete request. It can’t know what every control does: use it on test data.'}
+      </p>
       <Button
         size="sm"
         className="mt-2.5 w-full"

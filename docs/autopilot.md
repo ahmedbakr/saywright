@@ -40,9 +40,17 @@ From the report you can send findings to the AI to fix, set aside the ones that 
 
 - **Your app, your browser.** Autopilot drives the app inside the studio's frame on your computer. It doesn't run
   anywhere else, and it only goes to pages of the app you opened.
-- **Risky controls are off limits by default.** Buttons and links whose names say they delete, pay, buy, place an
-  order, send, transfer, publish, deploy or sign out (in English and Arabic) are skipped and noted in the timeline. Turn
-  on **Let it delete, pay, send and sign out** only on test data.
+- **Risky controls are off limits by default.** With **Let it delete, pay, send and sign out** off, Autopilot avoids
+  what looks like deleting, paying, sending or signing out, and never sends a delete request. It judges a control by
+  what it is, not only by its name: its words in English, Arabic, French, Spanish, German, Portuguese, Italian and
+  Turkish (“Remove”, “Clear all”, “Cancel order”, “Submit payment”, “Supprimer”, “حذف”), its title and icon (a trash
+  can), classes that mean danger (`btn-danger`, `destructive`), a link's address (`/logout`), the address and method of
+  the form a button sends, `data-method="delete"`, and in a dialog that asks for confirmation, any answer but no. A
+  control with no name at all is left alone too. Below that, while it acts the page itself refuses every `DELETE`
+  request, every request, form, link or page whose address says sign out, log out, delete, destroy, remove, cancel,
+  unsubscribe, deactivate, pay, charge, purchase or send, and any page of another site; `confirm()` and `prompt()`
+  are answered “Cancel”. What it left alone, and why, is listed in its steps and in the report's timeline.
+  It can't know what every control does: run it on test data, and turn the switch on only when you mean it.
 - **Passwords stay out.** Password fields are described to the AI as filled or empty, never with their value.
 - **Each run is bounded.** It stops at the step limit, when it decides it is done, after three steps in a row that
   didn't work, or when you stop it.

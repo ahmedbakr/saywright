@@ -5,6 +5,7 @@
  */
 
 export * from './redact';
+export * from './risk';
 
 export const NS = 'saywright' as const;
 /**
@@ -269,7 +270,8 @@ export type StudioToBridge = Base &
         reqId: number;
         locator: string;
         /** `select`: the options to choose, by what they say or their value (all of them, in a list that takes several). */
-        step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean };
+        /** `guard`: Autopilot acts, with “Let it delete, pay, send and sign out” off: the page refuses what would (bridge/guard.ts). */
+        step?: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean; guard?: boolean };
         read?: boolean;
         like?: { tag: string; name: string; text: string; shape?: string };
       }
@@ -359,6 +361,8 @@ export interface PageSnapshot {
   viewport: [number, number];
   /** The control that has the keyboard focus (its index in `controls`), where a key press goes. */
   focused?: number | null;
+  /** What the page refused to do since it was last read, while Autopilot acted: “a DELETE request to /api/users/7”. */
+  blocked?: string[];
 }
 
 export interface PageControl {
@@ -376,6 +380,27 @@ export interface PageControl {
   offscreen: boolean;
   /** Where it was written ("src/components/Cart.tsx:18:9"), when known. */
   src: string | null;
+  /** What the control is, beyond its name: what Autopilot judges before it uses it (see risk.ts). */
+  about?: ControlAbout;
+}
+
+/** What a control is, beyond what it is called. */
+export interface ControlAbout {
+  /** Its title, its value, and the names of its icons (an svg `<use>` id, an icon's classes). */
+  words?: string;
+  /** Its own classes and variant (`btn-danger`, `destructive`). */
+  classes?: string;
+  /** `data-method` (a link that deletes), or `data-confirm` (the app asks first). */
+  method?: string;
+  confirms?: boolean;
+  /** A link's address (with its secrets masked). */
+  href?: string;
+  /** The form a submit button sends: its address and method. */
+  form?: { action: string; method: string };
+  /** A control with no words of its own: what its row or card says. */
+  context?: string;
+  /** In a dialog that asks (`alertdialog`, or a `<dialog>` with a question): whether it is an alert, and what it says. */
+  dialog?: { alert: boolean; text: string };
 }
 
 export type ExpertId = 'seo' | 'content' | 'ux' | 'a11y';

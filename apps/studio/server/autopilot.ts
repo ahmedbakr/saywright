@@ -6,7 +6,7 @@
  */
 import type { PageControl, PageSnapshot, SessionTarget } from '@saywright/vite/protocol';
 import { z } from 'zod';
-import { STEP_KINDS, describeStep, isRisky, pageStateOf, type StepRecord } from '../shared/autopilot.ts';
+import { STEP_KINDS, describeStep, pageStateOf, riskOf, type StepRecord } from '../shared/autopilot.ts';
 import type { JsonRequest } from './ai/service.ts';
 import { AgentError } from './ai/types.ts';
 import { HttpError, type Router } from './http.ts';
@@ -71,7 +71,7 @@ Report a finding only for something you can see in the page text or the app's si
 - Call a value wrong only when you can show why from the page (the arithmetic, or what the page says elsewhere). A product's description, like “2 × 250 g”, is not a quantity. When the page could be read either way, it is not a finding.
 - One finding per problem; never repeat one already reported.`;
 
-const describeControl = (c: PageControl, i: number, allowRisky: boolean, focused: boolean): string => {
+const describeControl = (c: PageControl, i: number, allowRisky: boolean, focused: boolean, url: string): string => {
   const parts = [`[${i + 1}] ${c.role}`, c.name ? `“${c.name}”` : '(no name)'];
   if (c.field) {
     const f = c.field;
@@ -83,7 +83,7 @@ const describeControl = (c: PageControl, i: number, allowRisky: boolean, focused
   if (c.disabled) parts.push('(disabled)');
   if (c.offscreen) parts.push('(below or above the visible part)');
   if (focused) parts.push('(focused)');
-  if (!allowRisky && isRisky(c.name)) parts.push('(not allowed)');
+  if (!allowRisky && riskOf({ kind: c.field && !['checkbox', 'radio', 'submit', 'button'].includes(c.field.type) ? 'press' : 'click' }, c, url)) parts.push('(not allowed)');
   return parts.join(' ');
 };
 
@@ -109,7 +109,7 @@ export function turnPrompt(input: TurnInput): { system: string; text: string } {
     `Text on the page: ${s.text || '(none)'}`,
     '',
     'Controls:',
-    ...s.controls.map((c, i) => describeControl(c, i, input.allowRisky, s.focused === i)),
+    ...s.controls.map((c, i) => describeControl(c, i, input.allowRisky, s.focused === i, s.url)),
     s.more ? `(${s.more} more not listed: scroll to reach them)` : '',
     '',
     input.history.length ? `Steps so far:\n${input.history.map((h) => `${h.n}. ${h.did}${h.ok ? '' : ` — failed: ${h.error ?? 'unknown'}`}${h.url !== s.url ? ` (then at ${h.url})` : ''}`).join('\n')}` : 'No steps yet.',
@@ -176,9 +176,24 @@ const Control = z.object({
   field: z
     .object({ type: z.string().max(30), value: z.string().max(200), required: z.boolean(), checked: z.boolean().optional(), options: z.array(z.string().max(80)).max(30).optional() })
     .optional(),
+  submits: z.string().max(120).optional(),
   disabled: z.boolean(),
   offscreen: z.boolean(),
   src: z.string().max(400).nullable(),
+  // What the control is beyond its name: which ones the AI is told it may not use (shared/autopilot.ts riskOf).
+  about: z
+    .object({
+      words: z.string().max(300),
+      classes: z.string().max(300),
+      method: z.string().max(20),
+      confirms: z.boolean(),
+      href: z.string().max(2000),
+      form: z.object({ action: z.string().max(2000), method: z.string().max(20) }),
+      context: z.string().max(200),
+      dialog: z.object({ alert: z.boolean(), text: z.string().max(300) }),
+    })
+    .partial()
+    .optional(),
 });
 
 const TurnRequest = z.object({

@@ -3,8 +3,9 @@
  * the Playwright locator the recorder would write for it, so the step Autopilot takes is replayed, recorded and
  * saved as a test exactly like a person's.
  */
-import { maskSecrets, redactUrl, SRC_ATTR, type PageControl, type PageSnapshot } from '../protocol';
+import { maskSecrets, redactUrl, SRC_ATTR, type ControlAbout, type PageControl, type PageSnapshot } from '../protocol';
 import { accessibleName, annotatedAncestor, collapse, fieldValue, isField, isSecretField, isVisible, publicText, roleOf, screenText, visibleText } from './dom';
+import { takeBlocked } from './guard';
 import { buildLocator } from './locator';
 
 const CONTROLS =
@@ -34,13 +35,62 @@ function submitsOf(el: Element): string | undefined {
   return collapse(name, 60) || undefined;
 }
 
+/** The names of the icons a control shows: an svg `<use>`'s id, an icon element's classes and label. */
+function iconWords(el: Element): string {
+  const out: string[] = [];
+  for (const icon of Array.from(el.querySelectorAll('svg, i, [class*="icon"], img')).slice(0, 4)) {
+    const use = icon.querySelector('use');
+    const ref = use?.getAttribute('href') ?? use?.getAttribute('xlink:href');
+    if (ref) out.push(ref.replace(/^.*#/, ''));
+    const cls = icon.getAttribute('class');
+    if (cls) out.push(cls);
+    for (const a of ['aria-label', 'title', 'alt', 'data-icon', 'name']) {
+      const v = icon.getAttribute(a);
+      if (v) out.push(v);
+    }
+    const title = icon.querySelector('title')?.textContent;
+    if (title) out.push(title);
+  }
+  return out.join(' ');
+}
+
+/** What a control is beyond its name: Autopilot judges this before it uses it (risk.ts, the studio's shared/autopilot.ts). */
+function aboutOf(el: Element, name: string): ControlAbout | undefined {
+  const about: ControlAbout = {};
+  const words = [el.getAttribute('title'), el.getAttribute('aria-label'), el instanceof HTMLInputElement && ['submit', 'button'].includes(el.type) ? el.value : null, iconWords(el)].filter(Boolean).join(' ');
+  if (words) about.words = collapse(words, 200);
+  const classes = [el.getAttribute('class'), el.getAttribute('data-variant'), el.getAttribute('variant'), el.getAttribute('data-color')].filter(Boolean).join(' ');
+  if (classes) about.classes = collapse(classes, 200);
+  const method = el.getAttribute('data-method') ?? el.getAttribute('data-turbo-method');
+  if (method) about.method = method.toLowerCase();
+  if (el.hasAttribute('data-confirm') || el.hasAttribute('data-turbo-confirm')) about.confirms = true;
+  if (el instanceof HTMLAnchorElement && el.getAttribute('href')) about.href = redactUrl(el.href);
+  const submit = (el instanceof HTMLButtonElement && el.type === 'submit') || (el instanceof HTMLInputElement && (el.type === 'submit' || el.type === 'image'));
+  // A submit button's form, or the form a field sends when Enter is pressed in it.
+  const form = submit || (el instanceof HTMLInputElement && submitsOf(el)) ? (el as HTMLButtonElement).form : null;
+  if (form) {
+    const override = (form.querySelector('input[name="_method"]') as HTMLInputElement | null)?.value;
+    const action = el.getAttribute('formaction') || form.getAttribute('action') || location.href;
+    about.form = { action: redactUrl(new URL(action, location.href).href), method: (override || el.getAttribute('formmethod') || form.getAttribute('method') || 'get').toLowerCase() };
+  }
+  // An icon-only control: what its row or card is about tells what it acts on.
+  if (!name || name.length < 2) {
+    const row = el.closest('tr, li, [role="row"], [role="listitem"], article, [class*="card"], [class*="row"], [class*="item"]');
+    if (row) about.context = collapse(maskSecrets(publicText(row)), 100);
+  }
+  const dialog = el.closest('dialog, [role="dialog"], [role="alertdialog"]');
+  if (dialog) about.dialog = { alert: dialog.getAttribute('role') === 'alertdialog', text: collapse(maskSecrets(publicText(dialog)), 200) };
+  return Object.keys(about).length ? about : undefined;
+}
+
 function control(el: Element, offscreen: boolean): PageControl {
   const role = roleOf(el) ?? el.tagName.toLowerCase();
   const name = collapse(accessibleName(el) || visibleText(el) || el.getAttribute('placeholder') || el.getAttribute('title'), 60);
   const src = el.getAttribute(SRC_ATTR) ?? annotatedAncestor(el)?.getAttribute(SRC_ATTR) ?? null;
   const disabled = (el as HTMLButtonElement).disabled === true || el.getAttribute('aria-disabled') === 'true';
   const submits = submitsOf(el);
-  return { locator: buildLocator(el, { cheap: true }).code, role, name, ...(isField(el) ? { field: fieldOf(el) } : {}), ...(submits ? { submits } : {}), disabled, offscreen, src };
+  const about = aboutOf(el, name);
+  return { locator: buildLocator(el, { cheap: true }).code, role, name, ...(isField(el) ? { field: fieldOf(el) } : {}), ...(submits ? { submits } : {}), disabled, offscreen, src, ...(about ? { about } : {}) };
 }
 
 export function snapshot(): PageSnapshot {
@@ -71,5 +121,6 @@ export function snapshot(): PageSnapshot {
     dialog: dialog ? collapse(accessibleName(dialog) || dialog.querySelector('h1, h2, h3')?.textContent, 80) || 'a dialog' : null,
     viewport: [innerWidth, innerHeight],
     focused: focused >= 0 ? focused : null,
+    blocked: takeBlocked(),
   };
 }

@@ -7,6 +7,7 @@
  */
 import { NAME_ATTR, SRC_ATTR } from '../protocol';
 import { accessibleName, collapse, deepAll, fieldValue, isField, isVisible, labelText, shapeOf } from './dom';
+import { arm } from './guard';
 import { ROLE_SELECTORS, roleFor } from './locator';
 import { scriptedInput } from './own';
 
@@ -333,8 +334,10 @@ const mouse = (type: string, x: number, y: number) => new MouseEvent(type, { bub
  * person couldn't use now (disabled, inert) is refused: clicking it would do nothing, and the replay would go on as
  * if it had worked.
  */
-export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean }): void {
+export function act(el: Element, step: { kind: 'click' | 'fill' | 'press'; value?: string; key?: string; checked?: boolean; select?: string[]; values?: string[]; byValue?: boolean; guard?: boolean }): void {
   if (unusable(el)) throw new Error('disabled');
+  // Autopilot without leave to delete, pay, send or sign out: the page refuses those, whatever the control says.
+  arm(!!step.guard);
   scriptedInput();
   const r = el.getBoundingClientRect();
   const x = r.left + r.width / 2;

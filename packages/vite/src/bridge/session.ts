@@ -16,6 +16,7 @@
  */
 import { dots, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
 import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, publicText, roleOf, screenLines, screenText, secretNameOf, sourceHint, typesInto } from './dom';
+import { disarm, isGuardRefusal } from './guard';
 import { maskScreen } from './mask';
 import { EnterSubmits, formLabel } from './forms';
 import { buildLocator, locatorFromInfo } from './locator';
@@ -253,6 +254,8 @@ export class SessionRecorder {
     this.active = null;
     this.outbox = null;
     maskScreen(false);
+    // Autopilot's run is over: the person's own use of the app is never refused.
+    disarm();
     // Everything left goes now, in as many batches as it takes.
     void outbox?.retire();
     this.report();
@@ -265,6 +268,7 @@ export class SessionRecorder {
     this.active = null;
     this.outbox = null;
     maskScreen(false);
+    disarm();
     this.report();
   }
 
@@ -710,6 +714,7 @@ export class SessionRecorder {
     if (!this.active) return;
     if (e instanceof ErrorEvent) {
       const err = e.error as Error | undefined;
+      if (isGuardRefusal(err)) return;
       const body: SessionEventBody = { type: 'error', kind: 'error', message: collapse(e.message || String(err), 500), stack: err?.stack?.slice(0, 2000), source: e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : undefined };
       if (this.repeated(`e:${e.message}`, body)) return;
       this.record(body, eventTime(e), true);
@@ -724,7 +729,8 @@ export class SessionRecorder {
   };
 
   private onRejection = (e: PromiseRejectionEvent): void => {
-    if (!this.active) return;
+    // A request Autopilot's guard refused is a skipped step (bridge/guard.ts), not an error of the app.
+    if (!this.active || isGuardRefusal(e.reason)) return;
     const r = e.reason as { message?: string; stack?: string } | undefined;
     const message = collapse(r?.message ?? String(e.reason), 500);
     const body: SessionEventBody = { type: 'error', kind: 'rejection', message, stack: r?.stack?.slice(0, 2000) };
