@@ -208,8 +208,11 @@ export class Connections {
         .filter((m) => !m.supported_parameters || m.supported_parameters.includes('tools'))
         .map((m): ModelInfo => {
           const known = modelInfo('compatible', m.id);
-          const per = (v?: string) => (v && Number.isFinite(Number(v)) ? Number(v) * 1_000_000 : undefined);
-          const price = m.pricing?.prompt != null ? { input: per(m.pricing.prompt) ?? 0, output: per(m.pricing.completion) ?? 0, cacheRead: per(m.pricing.input_cache_read) } : known?.price;
+          // A price per token, as text; a negative one ("-1", OpenRouter's "varies") or one that isn't a number is no price.
+          const per = (v?: string) => (v != null && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) * 1_000_000 : undefined);
+          const input = per(m.pricing?.prompt);
+          const output = per(m.pricing?.completion);
+          const price = m.pricing?.prompt != null ? (input !== undefined && output !== undefined ? { input, output, cacheRead: per(m.pricing.input_cache_read) } : undefined) : known?.price;
           return { id: m.id, label: m.name ?? known?.label ?? m.id, tools: true, vision: m.architecture?.input_modalities?.includes('image') ?? known?.vision, price, tier: known?.tier };
         });
       const models = [...remembered.filter((r) => !listed.some((l) => l.id === r.id)), ...listed];

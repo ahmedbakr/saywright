@@ -35,6 +35,8 @@ export interface UsageEntry extends Usage {
   /** What prompt caching saved. */
   saved?: number;
   ms?: number;
+  /** The tokens are the studio's estimate: the provider didn't say (no usage sent, or the call was stopped or failed). */
+  estimate?: boolean;
 }
 
 /** What a call may be charged, before it is sent. */
@@ -117,7 +119,31 @@ const share = (used: number, limit: number) => (limit > 0 ? used / limit : used 
 function dearest(price: Price | null | undefined, input: number): { input: number; output: number } | null {
   if (!price) return null;
   const p = price.long && price.longAbove !== undefined && input > price.longAbove ? price.long : price;
-  return { input: Math.max(p.input, p.cacheWrite ?? p.input) / 1e6, output: p.output / 1e6 };
+  const r = { input: Math.max(p.input, p.cacheWrite ?? p.input) / 1e6, output: p.output / 1e6 };
+  // A rate that isn't a real amount is no price at all: the call is held as one whose price isn't known.
+  return Number.isFinite(r.input) && Number.isFinite(r.output) && r.input >= 0 && r.output >= 0 ? r : null;
+}
+
+/** A count read back from the ledger, which may have been edited by hand: a finite, non-negative number, or 0. */
+const num = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
+/** The budget as read from its file, each value checked with the rules `setBudget` applies. */
+function validBudget(raw: unknown): Budget {
+  const b: Budget = { ...DEFAULT_BUDGET };
+  if (!raw || typeof raw !== 'object') return b;
+  const r = raw as Record<string, unknown>;
+  for (const k of ['dailyUsd', 'monthlyUsd', 'dailyTokens'] as const) {
+    if (!(k in r)) continue;
+    const v = r[k];
+    if (v === null) b[k] = null;
+    else if (typeof v === 'number' && Number.isFinite(v) && v >= 0) b[k] = v;
+  }
+  if (r.mode === 'warn' || r.mode === 'stop') b.mode = r.mode;
+  if (typeof r.warnAt === 'number' && r.warnAt > 0 && r.warnAt <= 1) b.warnAt = r.warnAt;
+  return b;
 }
 
 /** Why a call is refused: a limit used up, or one with too little left for it. */
@@ -153,10 +179,37 @@ export class UsageLedger {
     return path.join(this.dir, 'state.json');
   }
 
+  /** Said in Usage and budget when the budget file was damaged and what it held may be lost. */
+  private notice: string | null = null;
+
   private loadState(): State {
+    let text = '';
+    try {
+      text = fs.readFileSync(this.stateFile, 'utf8');
+    } catch {
+      /* no budget saved yet */
+    }
+    let damaged = false;
+    try {
+      if (text) JSON.parse(text);
+    } catch {
+      damaged = true;
+    }
     const raw = readJson<Partial<State>>(this.stateFile);
-    if (!raw || typeof raw !== 'object') return { budget: { ...DEFAULT_BUDGET }, resetToday: null, resetMonth: null };
-    return { budget: { ...DEFAULT_BUDGET, ...raw.budget }, resetToday: raw.resetToday ?? null, resetMonth: raw.resetMonth ?? null };
+    const time = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    const state: State = { budget: validBudget(raw && typeof raw === 'object' ? raw.budget : undefined), resetToday: time(raw?.resetToday), resetMonth: time(raw?.resetMonth) };
+    if (damaged) {
+      // What the damaged file still shows is kept where it is the safer choice: a stop, and a lower limit. A budget
+      // set to stop must not quietly become a warning because its file was cut short.
+      if (/"mode"\s*:\s*"stop"/.test(text)) state.budget.mode = 'stop';
+      for (const k of ['dailyUsd', 'monthlyUsd', 'dailyTokens'] as const) {
+        const m = new RegExp(`"${k}"\\s*:\\s*(\\d+(?:\\.\\d+)?)`).exec(text);
+        const v = m ? Number(m[1]) : NaN;
+        if (Number.isFinite(v) && (state.budget[k] == null || v < state.budget[k]!)) state.budget[k] = v;
+      }
+      this.notice = `The budget file was damaged, so its last good copy${raw ? '' : ' (none was found, so the defaults)'} is used${state.budget.mode === 'stop' ? ', still set to stop' : ''}. Check the limits below and save them again.`;
+    }
+    return state;
   }
 
   private saveState(): void {
@@ -171,7 +224,11 @@ export class UsageLedger {
         for (const line of fs.readFileSync(path.join(this.dir, `${key}.jsonl`), 'utf8').split('\n')) {
           if (!line.trim()) continue;
           try {
-            list.push(JSON.parse(line) as UsageEntry);
+            const e = JSON.parse(line) as UsageEntry;
+            if (!e || typeof e !== 'object' || typeof e.t !== 'number') continue;
+            for (const k of ['input', 'output', 'cacheRead', 'cacheWrite'] as const) e[k] = num(e[k]);
+            if (e.usd != null) e.usd = num(e.usd);
+            list.push(e);
           } catch {
             /* a torn last line */
           }
@@ -187,7 +244,22 @@ export class UsageLedger {
   record(e: UsageEntry): void {
     const key = monthKey(e.t);
     this.month(key).push(e);
-    fs.appendFileSync(path.join(this.dir, `${key}.jsonl`), JSON.stringify(e) + '\n');
+    const file = path.join(this.dir, `${key}.jsonl`);
+    // A line cut short by a crash would swallow this one too: it starts on a line of its own.
+    let after = '';
+    try {
+      const fd = fs.openSync(file, 'r');
+      try {
+        const size = fs.fstatSync(fd).size;
+        const last = Buffer.alloc(1);
+        if (size > 0 && fs.readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) after = '\n';
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      /* a new file */
+    }
+    fs.appendFileSync(file, after + JSON.stringify(e) + '\n');
   }
 
   get budget(): Budget {
@@ -206,6 +278,7 @@ export class UsageLedger {
     if (patch.mode === 'warn' || patch.mode === 'stop') b.mode = patch.mode;
     if (typeof patch.warnAt === 'number' && patch.warnAt > 0 && patch.warnAt <= 1) b.warnAt = patch.warnAt;
     this.state.budget = b;
+    this.notice = null;
     this.saveState();
     return b;
   }
@@ -374,7 +447,9 @@ export class UsageLedger {
       resetAt: { today: this.state.resetToday, month: this.state.resetMonth },
       budget: this.state.budget,
       status: this.status(now),
-      savedUsd: entries.reduce((s, e) => s + (e.saved ?? 0), 0),
+      savedUsd: entries.reduce((s, e) => s + num(e.saved), 0),
+      estimated: entries.filter((e) => e.estimate).length,
+      ...(this.notice ? { notice: this.notice } : {}),
     };
   }
 }

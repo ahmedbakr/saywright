@@ -4,7 +4,7 @@
  * reasoning between steps). Long prompts are cached by Gemini automatically.
  */
 import { AgentError } from '../types.ts';
-import { jsonSchemaOf, lostWhileAnswering, stream, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { count, jsonSchemaOf, lostWhileAnswering, stream, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 interface GPart {
   text?: string;
@@ -109,18 +109,18 @@ export class GeminiModel implements ChatModel {
       if (p.functionCall) calls.push({ id: p.functionCall.id ?? `call_${i}_${p.functionCall.name}`, name: p.functionCall.name, args: p.functionCall.args ?? {} });
     });
     const u = res.usageMetadata ?? {};
-    const cacheRead = u.cachedContentTokenCount ?? 0;
+    const cacheRead = count(u.cachedContentTokenCount);
     const reason = cand?.finishReason;
     return {
       text: text.join('').trim(),
       calls,
       stop: res.promptFeedback?.blockReason || (reason && BLOCKED.has(reason)) ? 'refusal' : reason === 'MAX_TOKENS' ? 'length' : calls.length ? 'tools' : 'end',
       usage: {
-        input: Math.max(0, (u.promptTokenCount ?? 0) + (u.toolUsePromptTokenCount ?? 0) - cacheRead),
-        output: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0),
+        input: Math.max(0, count(u.promptTokenCount) + count(u.toolUsePromptTokenCount) - cacheRead),
+        output: count(u.candidatesTokenCount) + count(u.thoughtsTokenCount),
         cacheRead,
         cacheWrite: 0,
-        reasoning: u.thoughtsTokenCount ?? 0,
+        reasoning: count(u.thoughtsTokenCount),
       },
       model: res.modelVersion ?? this.model,
       raw: { role: 'model', parts: content.parts ?? [] },

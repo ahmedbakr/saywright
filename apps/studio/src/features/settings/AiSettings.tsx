@@ -582,9 +582,14 @@ export function UsageSettings() {
           {u.status.message} {u.status.level === 'over' && u.budget.mode === 'stop' ? 'AI requests are paused until you raise the limit or reset the count.' : ''}
         </div>
       )}
+      {u.notice && (
+        <div className="mb-3 rounded-[10px] px-3 py-2 text-[12.5px] text-warn ring-1 ring-inset ring-warn/40" data-budget-notice>
+          {u.notice}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-usage>
         <Stat label="Today" value={usd(u.today.usd)} sub={`${compact(tokens(u.today))} tokens · ${u.today.calls} calls`} />
-        <Stat label="This month" value={usd(u.month.usd)} sub={`${compact(tokens(u.month))} tokens · ${u.month.calls} calls`} />
+        <Stat label="This month" value={usd(u.month.usd)} sub={`${compact(tokens(u.month))} tokens · ${u.month.calls} calls${u.estimated ? ` (${u.estimated} estimated)` : ''}`} />
         <Stat label="Plan use this month" value={usd(u.month.planUsd)} sub="what it would cost through the API" />
         <Stat label="Saved by caching" value={usd(u.savedUsd)} sub="this month" />
       </div>

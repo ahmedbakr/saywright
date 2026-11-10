@@ -686,7 +686,7 @@ export async function createStudioApi(layout: StudioLayout) {
   router.post('/ai/usage/reset', (req) => {
     const scope = (req.body as { scope?: unknown } | undefined)?.scope;
     if (scope !== 'today' && scope !== 'month' && scope !== 'all') throw new HttpError(400, 'scope is today, month or all');
-    ai.usage.reset(scope);
+    ai.resetUsage(scope);
     hub.emit('usage', usagePill());
     return ai.usage.summary();
   });

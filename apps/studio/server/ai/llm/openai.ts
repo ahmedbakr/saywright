@@ -6,7 +6,7 @@
  * about the same code on the same cache.
  */
 import { AgentError } from '../types.ts';
-import { jsonSchemaOf, lostWhileAnswering, parseArgs, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { count, jsonSchemaOf, lostWhileAnswering, parseArgs, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 interface OutputItem {
   type: string;
@@ -106,19 +106,19 @@ export class OpenAIModel implements ChatModel {
       }
     }
     const u = res.usage ?? {};
-    const cacheRead = u.input_tokens_details?.cached_tokens ?? 0;
-    const cacheWrite = u.input_tokens_details?.cache_write_tokens ?? 0;
+    const cacheRead = count(u.input_tokens_details?.cached_tokens);
+    const cacheWrite = count(u.input_tokens_details?.cache_write_tokens);
     const reason = res.incomplete_details?.reason;
     return {
       text: text.join('\n').trim(),
       calls,
       stop: refused || reason === 'content_filter' ? 'refusal' : reason === 'max_output_tokens' ? 'length' : calls.length ? 'tools' : 'end',
       usage: {
-        input: Math.max(0, (u.input_tokens ?? 0) - cacheRead - cacheWrite),
-        output: u.output_tokens ?? 0,
+        input: Math.max(0, count(u.input_tokens) - cacheRead - cacheWrite),
+        output: count(u.output_tokens),
         cacheRead,
         cacheWrite,
-        reasoning: u.output_tokens_details?.reasoning_tokens ?? 0,
+        reasoning: count(u.output_tokens_details?.reasoning_tokens),
       },
       model: res.model ?? this.model,
       raw: res.output ?? [],

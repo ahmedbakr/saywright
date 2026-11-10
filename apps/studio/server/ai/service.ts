@@ -7,13 +7,13 @@
 import path from 'node:path';
 import type { z } from 'zod';
 import { AI_TASKS, type AiEffort, type AiState, type AiTask, type ConnectionView, type Price, type Usage } from '../../shared/ai.ts';
-import { costOf, modelInfo, sameModel, savedBy } from '../../shared/models.ts';
+import { costOf, dearestKnown, modelInfo, sameModel, savedBy } from '../../shared/models.ts';
 import type { McpServer } from '../mcp.ts';
 import { ModelAgent } from './agent.ts';
 import { CliAgent, cliJson, type CliDeps, type CliKind, type CliUsage } from './cli.ts';
 import { Connections, kindLabel } from './connections.ts';
-import { inputTokens } from './llm/tokens.ts';
-import { dropNulls, jsonSchemaOf, noFallback, type Admit, type ChatModel, type ChatResult, type Msg, type Part } from './llm/types.ts';
+import { inputTokens, textTokens } from './llm/tokens.ts';
+import { amount, dropNulls, jsonSchemaOf, noFallback, type Admit, type ChatModel, type ChatResult, type Msg, type Part, type Ticket } from './llm/types.ts';
 import { AgentError, type AgentProvider } from './types.ts';
 import { UsageLedger } from './usage.ts';
 
@@ -46,6 +46,17 @@ interface AiDeps {
 }
 
 const CLI_KINDS = new Set(['claude-code', 'codex', 'gemini-cli']);
+const tokensIn = (u: Usage) => u.input + u.output + u.cacheRead + u.cacheWrite;
+/** About how many tokens an answer took, for a provider that didn't say: its text and its tool calls. */
+const answerTokens = (res: ChatResult) => textTokens(res.text) + res.calls.reduce((n, c) => n + textTokens(JSON.stringify(c.args)) + 10, 0);
+
+/** A listed price that can be used: none when any rate is negative or not a number (OpenRouter writes -1 for "varies"). */
+export function usablePrice(p: Price | null | undefined): Price | undefined {
+  if (!p) return undefined;
+  const ok = (v: unknown) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+  const rates = (r: Partial<Price>) => ok(r.input) && ok(r.output) && ok(r.cacheRead) && ok(r.cacheWrite);
+  return typeof p.input === 'number' && typeof p.output === 'number' && rates(p) && (!p.long || rates(p.long)) ? p : undefined;
+}
 const CARRY_ON = 'Raise the limit or reset the count in Settings → Usage and budget to carry on.';
 
 /**
@@ -90,21 +101,30 @@ export class AiService {
     const priced = model === 'default' ? (c.models.find((m) => m.id !== 'default' && m.price)?.id ?? model) : model;
     // A dated name ("claude-opus-5-5-20261015", "gpt-6.1-sol-2026-09-30") is priced as the model it names.
     const undated = priced.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, '');
-    return (c.models.find((m) => m.id === priced || m.id === undated) ?? modelInfo(c.kind, priced) ?? modelInfo(c.kind, undated))?.price;
+    return usablePrice((c.models.find((m) => m.id === priced || m.id === undated) ?? modelInfo(c.kind, priced) ?? modelInfo(c.kind, undated))?.price);
   }
 
   /**
    * How many more tokens than estimated a model's requests have been seen to send (its tokenizer counts more than the
-   * estimate does): later estimates are made that much bigger, so a budget isn't short twice for the same reason.
+   * estimate does): later estimates are made that much bigger, so a budget isn't short twice for the same reason. It
+   * rises at once and comes back down by half the gap with each call that sends what was estimated, never below 1 or
+   * above 4, so one oversized call doesn't inflate every later one; resetting the counts forgets it.
    */
   private inputScale = new Map<string, number>();
+
+  /** Start counting again (Settings → Usage and budget): the history of what models sent goes too. */
+  resetUsage(scope: 'today' | 'month' | 'all'): void {
+    this.usage.reset(scope);
+    this.inputScale.clear();
+  }
 
   /**
    * Each call's place in the budget, for calls to `model`: the most it can cost is held before it is sent (its room
    * to answer cut to what the budget has left, or the call refused), and what it used is written down after.
    */
   private admit(c: ConnectionView, model: string, feature: string): Admit {
-    const price = this.priceOf(c, model);
+    // A model with no known price is held at its provider's dearest known rates: a limit can't be passed with it.
+    const price = this.priceOf(c, model) ?? (c.auth === 'key' ? this.unknownPrice(c) : undefined);
     const billed = c.auth === 'key';
     const key = `${c.id}:${model}`;
     return (call) => {
@@ -112,19 +132,30 @@ export class AiService {
       const held = this.usage.hold({ ...call, input, price, billed });
       if ('refused' in held) throw new AgentError(`${held.refused} ${CARRY_ON}`, 'budget');
       let settled = false;
+      const estimate = (output: number): Usage => ({ input, output, cacheRead: 0, cacheWrite: 0 });
       return {
         maxTokens: held.maxTokens,
         // A second attempt on another model (a declined request's fallback) can't be set aside: not under a hard limit.
         fallback: !this.usage.bounded(billed),
-        settle: (res, ms = 0) => {
+        settle: (res, ms = 0, err) => {
           if (settled) return;
           settled = true;
           if (res) {
             // Every attempt, each at the price of the model that ran it (else the one that answered, else the one asked).
             const attempts = res.attempts?.length ? res.attempts : [{ model: res.model || model, usage: res.usage }];
-            attempts.forEach((a, i) => this.record(c, answeredAs(model, a.model), a.usage, feature, i ? 0 : ms, attempts.length === 1 ? res.usd : undefined, model));
+            // A provider that sent no usage (some gateways and local servers) is counted at the estimate, never as free.
+            const missing = attempts.length === 1 && tokensIn(res.usage) === 0;
+            if (missing) this.record(c, answeredAs(model, res.model), estimate(answerTokens(res)), feature, ms, res.usd, model, true);
+            else attempts.forEach((a, i) => this.record(c, answeredAs(model, a.model), a.usage, feature, i ? 0 : ms, attempts.length === 1 ? res.usd : undefined, model));
             const sent = attempts[0].usage.input + attempts[0].usage.cacheRead + attempts[0].usage.cacheWrite;
-            if (call.input > 0 && sent > input) this.inputScale.set(key, Math.min(4, sent / call.input));
+            if (call.input > 0 && !missing) {
+              // Up at once (the next call must not be short again), down by half the gap each call.
+              const seen = Math.min(4, Math.max(1, sent / call.input));
+              this.inputScale.set(key, Math.max(seen, ((this.inputScale.get(key) ?? 1) + seen) / 2));
+            }
+          } else if (err instanceof AgentError && (err.partial || err.sent)) {
+            // Stopped, gone quiet or cut off after it was sent: what the provider said it used, else the estimate.
+            this.record(c, model, err.partial && tokensIn(err.partial) > 0 ? err.partial : estimate(0), feature, ms, undefined, model, !(err.partial && tokensIn(err.partial) > 0));
           }
           this.usage.release(held);
         },
@@ -133,10 +164,23 @@ export class AiService {
   }
 
   /** One call, or one attempt of it, written down: priced at the model that ran it (else `asked`'s, the model asked). */
-  private record(c: ConnectionView, model: string, u: Usage, feature: string, ms: number, reportedUsd?: number, asked?: string): void {
-    const price = this.priceOf(c, model) ?? (asked ? this.priceOf(c, asked) : undefined);
-    const usd = reportedUsd ?? costOf(price, u);
+  /** The rates a call to a model with no known price is counted at: its provider's dearest known ones. */
+  private unknownPrice(c: ConnectionView): Price {
+    return dearestKnown(c.kind, c.models.map((m) => usablePrice(m.price)));
+  }
+
+  private record(c: ConnectionView, model: string, u: Usage, feature: string, ms: number, reportedUsd?: number, asked?: string, estimated = false): void {
+    let price = this.priceOf(c, model) ?? (asked ? this.priceOf(c, asked) : undefined);
+    // Paid in dollars at a price nobody listed (and the provider didn't say): counted at the dearest known rates, as
+    // an estimate, rather than as free.
+    if (!price && c.auth === 'key' && amount(reportedUsd) === undefined) {
+      price = this.unknownPrice(c);
+      estimated = true;
+    }
+    const computed = costOf(price, u);
+    const usd = amount(reportedUsd) ?? (computed != null && Number.isFinite(computed) ? Math.max(0, computed) : computed);
     const app = this.deps.app();
+    const saved = savedBy(price, u);
     this.usage.record({
       t: Date.now(),
       app: app?.id ?? null,
@@ -148,8 +192,9 @@ export class AiService {
       plan: c.auth === 'subscription',
       ...u,
       usd: c.auth === 'local' ? 0 : usd,
-      saved: savedBy(price, u),
+      saved: saved && saved > 0 ? saved : 0,
       ms,
+      ...(estimated ? { estimate: true } : {}),
     });
     this.onUsage?.();
   }
@@ -218,13 +263,23 @@ export class AiService {
     if (!model) return { ok: false, message: 'It lists no models.' };
     const chat = this.connections.chatModel(c.id, model);
     if (!chat) return { ok: false, message: 'Not available.' };
+    const system = 'Reply with the single word OK.';
+    const messages: Msg[] = [{ role: 'user', parts: [{ type: 'text', text: 'Connection check.' }] }];
+    let ticket: Ticket;
     try {
-      const started = Date.now();
+      // A check is a paid call like any other: held to the budget, and written down.
+      ticket = this.admit(c, model, 'test')({ input: inputTokens({ system, messages }), maxTokens: 16, minTokens: 16 });
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+    const started = Date.now();
+    try {
       // A check needs no second model: one that declines it says the connection works.
-      const res = await chat.chat({ system: 'Reply with the single word OK.', messages: [{ role: 'user', parts: [{ type: 'text', text: 'Connection check.' }] }], maxTokens: 16, fallback: false });
-      this.record(c, answeredAs(model, res.model), res.usage, 'test', Date.now() - started, res.usd, model);
+      const res = await chat.chat({ system, messages, maxTokens: ticket.maxTokens, fallback: false });
+      ticket.settle(res, Date.now() - started);
       return { ok: true, message: `Connected. ${c.models.find((m) => m.id === model)?.label ?? model} answered.` };
     } catch (err) {
+      ticket.settle(null, Date.now() - started, err);
       return { ok: false, message: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -255,7 +310,7 @@ export async function jsonFrom<T>(chat: ChatModel, req: Pick<JsonRequest<T>, 'sy
     try {
       res = await chat.chat({ system: req.system, messages, json: { name: req.name, schema: req.schema }, maxTokens: ticket.maxTokens, effort: req.effort, signal: req.signal, cache: req.cache, fallback: ticket.fallback });
     } catch (err) {
-      ticket.settle(null);
+      ticket.settle(null, Date.now() - started, err);
       throw err;
     }
     ticket.settle(res, Date.now() - started);

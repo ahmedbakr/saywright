@@ -12,8 +12,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { Usage } from '../../../shared/ai.ts';
 import { AgentError } from '../types.ts';
-import { lostWhileAnswering, stoppedAnswering, timing, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { count, lostWhileAnswering, stoppedAnswering, timing, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 type Client = Pick<Anthropic, 'beta'>;
 
@@ -89,6 +90,7 @@ export class AnthropicModel implements ChatModel {
     if (req.signal?.aborted) ctl.abort();
     let idle = false;
     let began = false;
+    let partial: Usage | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const arm = () => {
       clearTimeout(timer);
@@ -104,15 +106,26 @@ export class AnthropicModel implements ChatModel {
         arm();
       };
       // (A stand-in client in the tests may give only the final message.)
-      if (typeof s.on === 'function') s.on('connect', beat).on('streamEvent', beat);
+      if (typeof s.on === 'function')
+        s.on('connect', beat).on('streamEvent', (ev) => {
+          beat();
+          // What the stream has counted so far: written down if it fails before its end.
+          if (ev.type === 'message_start') {
+            const u = ev.message.usage;
+            partial = { input: count(u.input_tokens), output: count(u.output_tokens), cacheRead: count(u.cache_read_input_tokens), cacheWrite: count(u.cache_creation_input_tokens) };
+          } else if (ev.type === 'message_delta' && partial) partial = { ...partial, output: count(ev.usage.output_tokens) };
+        });
       msg = await s.finalMessage();
     } catch (err) {
-      if (req.signal?.aborted) throw new AgentError('Stopped.', 'aborted');
-      if (idle) throw stoppedAnswering('Anthropic');
+      // Once the stream began, what it counted is known and is written down; a request stopped before then may
+      // still have been read, and is counted at its estimate.
+      const known = (e: AgentError) => Object.assign(e, { partial, sent: began || !!req.signal?.aborted || idle || undefined });
+      if (req.signal?.aborted) throw known(new AgentError('Stopped.', 'aborted'));
+      if (idle) throw known(stoppedAnswering('Anthropic'));
       const e = anthropicError(err);
       // A stream that broke after it began (not an error Anthropic answered with) is a lost connection.
-      if (began && !(err instanceof Anthropic.APIError && err.status) && (e.code === 'other' || e.code === 'network')) throw lostWhileAnswering('Anthropic');
-      throw e;
+      if (began && !(err instanceof Anthropic.APIError && err.status) && (e.code === 'other' || e.code === 'network')) throw known(lostWhileAnswering('Anthropic'));
+      throw began ? known(e) : e;
     } finally {
       clearTimeout(timer);
       req.signal?.removeEventListener('abort', onAbort);
@@ -127,17 +140,17 @@ export class AnthropicModel implements ChatModel {
     // Each attempt as billed (a declined one, then the fallback model's): the top-level usage is only the last one's.
     const attempts = (u.iterations ?? []).map((it) => ({
       model: ('model' in it && it.model) || msg.model,
-      usage: { input: it.input_tokens ?? 0, output: it.output_tokens ?? 0, cacheRead: it.cache_read_input_tokens ?? 0, cacheWrite: it.cache_creation_input_tokens ?? 0 },
+      usage: { input: count(it.input_tokens), output: count(it.output_tokens), cacheRead: count(it.cache_read_input_tokens), cacheWrite: count(it.cache_creation_input_tokens) },
     }));
     return {
       text: text.join('\n').trim(),
       calls,
       stop: msg.stop_reason === 'tool_use' ? 'tools' : msg.stop_reason === 'max_tokens' ? 'length' : msg.stop_reason === 'refusal' ? 'refusal' : 'end',
       usage: {
-        input: u.input_tokens ?? 0,
-        output: u.output_tokens ?? 0,
-        cacheRead: u.cache_read_input_tokens ?? 0,
-        cacheWrite: u.cache_creation_input_tokens ?? 0,
+        input: count(u.input_tokens),
+        output: count(u.output_tokens),
+        cacheRead: count(u.cache_read_input_tokens),
+        cacheWrite: count(u.cache_creation_input_tokens),
       },
       model: msg.model,
       raw: msg.content,

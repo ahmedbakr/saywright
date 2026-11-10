@@ -212,14 +212,22 @@ describe('what a call used, by the models that ran it', () => {
     const estimate = held[0];
     expect(held[1]).toBeGreaterThanOrEqual(Math.round(estimate * 2.5));
     expect(held[1]).toBeLessThanOrEqual(Math.round(estimate * 2.5) + 1);
-    // Sending less later doesn't make it trust the estimate again; sending far more is held at most four times over.
+    // Sending less later lowers it by half the gap at a time (never below the estimate); far more is held at most
+    // four times over, at once.
     times = 0.5;
     await report(ai, 1000);
-    expect(held[2]).toBe(held[1]);
+    expect(held[2]).toBe(Math.ceil(estimate * 2.5));
+    await report(ai, 1000);
+    expect(held[3]).toBe(Math.ceil(estimate * 1.75));
     times = 40;
     await report(ai, 1000);
     await report(ai, 1000);
-    expect(held[4]).toBe(estimate * 4);
+    expect(held[5]).toBe(estimate * 4);
+    // Resetting the counts forgets it.
+    ai.resetUsage('today');
+    times = 1;
+    await report(ai, 1000);
+    expect(held[6]).toBe(estimate);
   });
 });
 

@@ -1,3 +1,4 @@
+import type { Usage } from '../../shared/ai.ts';
 import type { RefInfo } from '../../shared/api.ts';
 import type { FileEdit } from '../changes.ts';
 import type { Project } from '../project.ts';
@@ -28,6 +29,11 @@ export interface AgentContext {
 export type AgentErrorCode = 'no-key' | 'auth' | 'rate' | 'network' | 'refused' | 'invalid' | 'aborted' | 'budget' | 'other';
 
 export class AgentError extends Error {
+  /** What the provider said it used before the call failed (a stream's first counts), when it said. */
+  partial?: Usage;
+  /** The provider got the request and may have billed it (Stop, silence or a broken connection after it was sent). */
+  sent?: boolean;
+
   constructor(
     message: string,
     public code: AgentErrorCode,

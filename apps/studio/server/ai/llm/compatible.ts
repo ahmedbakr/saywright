@@ -5,7 +5,7 @@
  * that can't do that is asked for plain JSON, which the caller checks.
  */
 import { AgentError } from '../types.ts';
-import { jsonSchemaOf, parseArgs, post, ProviderHttpError, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { amount, count, jsonSchemaOf, parseArgs, post, ProviderHttpError, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 type ContentPart = { type: string; text?: string; image_url?: { url: string } };
 
@@ -182,22 +182,22 @@ export class CompatibleModel implements ChatModel {
     const calls: ToolCall[] = (msg.tool_calls ?? []).map((c, i) => ({ id: c.id || `call_${i}`, name: c.function.name, args: parseArgs(c.function.arguments) }));
     const text = typeof msg.content === 'string' ? msg.content : (msg.content ?? []).map((c) => c.text ?? '').join('');
     const u = res.usage ?? {};
-    const cacheRead = u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? 0;
-    const cacheWrite = u.prompt_tokens_details?.cache_write_tokens ?? 0;
+    const cacheRead = count(u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens);
+    const cacheWrite = count(u.prompt_tokens_details?.cache_write_tokens);
     return {
       text: text.trim(),
       calls,
       stop: msg.refusal || choice.finish_reason === 'content_filter' ? 'refusal' : choice.finish_reason === 'length' ? 'length' : calls.length ? 'tools' : 'end',
       usage: {
-        input: Math.max(0, (u.prompt_tokens ?? 0) - cacheRead - cacheWrite),
-        output: u.completion_tokens ?? 0,
+        input: Math.max(0, count(u.prompt_tokens) - cacheRead - cacheWrite),
+        output: count(u.completion_tokens),
         cacheRead,
         cacheWrite,
-        reasoning: u.completion_tokens_details?.reasoning_tokens ?? 0,
+        reasoning: count(u.completion_tokens_details?.reasoning_tokens),
       },
       model: res.model ?? this.model,
       raw: { role: 'assistant', content: msg.content ?? null, ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) },
-      ...(typeof u.cost === 'number' ? { usd: u.cost } : {}),
+      ...(amount(u.cost) !== undefined ? { usd: amount(u.cost) } : {}),
     };
   }
 }

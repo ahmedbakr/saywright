@@ -75,8 +75,12 @@ export interface Ticket {
   maxTokens: number;
   /** Whether the provider may run a declined request again on another model (see ChatRequest.fallback). */
   fallback: boolean;
-  /** What the call used (written down), or null when it failed: either way, what was held for it is let go. */
-  settle(res: ChatResult | null, ms?: number): void;
+  /**
+   * What the call used (written down), or null when it failed, with the error: a failed call the provider may have
+   * billed is written down with what it said it used, else with the estimate made before it was sent. Either way,
+   * what was held for it is let go.
+   */
+  settle(res: ChatResult | null, ms?: number, err?: unknown): void;
 }
 
 /**
@@ -195,10 +199,12 @@ async function send(provider: string, url: string, headers: Record<string, strin
     return await read(res, alive);
   } catch (err) {
     if (err instanceof AgentError) throw err;
-    if (signal?.aborted) throw new AgentError('Stopped.', 'aborted');
-    if (why === 'idle') throw stoppedAnswering(provider);
-    if (why === 'whole') throw new AgentError(`${provider} took longer than ${seconds(timing.wholeMs)} to answer. Try again, or ask for something smaller.`, 'network');
-    if (began) throw lostWhileAnswering(provider);
+    // Past this point the request was sent: the provider may bill what it read (and wrote) before it ended.
+    const sent = (e: AgentError) => Object.assign(e, { sent: true });
+    if (signal?.aborted) throw sent(new AgentError('Stopped.', 'aborted'));
+    if (why === 'idle') throw sent(stoppedAnswering(provider));
+    if (why === 'whole') throw sent(new AgentError(`${provider} took longer than ${seconds(timing.wholeMs)} to answer. Try again, or ask for something smaller.`, 'network'));
+    if (began) throw sent(lostWhileAnswering(provider));
     throw new AgentError(`Can’t reach ${provider}${err instanceof Error && err.cause instanceof Error ? ` (${err.cause.message})` : ''}. Check the address and your connection.`, 'network');
   } finally {
     clearTimeout(timer);
@@ -207,6 +213,18 @@ async function send(provider: string, url: string, headers: Record<string, strin
     ctl.abort();
   }
 }
+
+/** A token count from a provider, which may send text, a negative or nothing at all: a finite count, or 0. */
+export const count = (v: unknown): number => {
+  const n = typeof v === 'number' || typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
+/** A cost a provider reported, in dollars: kept only when it is a real amount. */
+export const amount = (v: unknown): number | undefined => {
+  const n = typeof v === 'number' || typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+};
 
 const parseJson = (provider: string, text: string): unknown => {
   try {

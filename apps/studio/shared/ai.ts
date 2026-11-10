@@ -157,6 +157,10 @@ export interface UsageSummary {
   status: BudgetStatus;
   /** Prompt-cache savings this month, in USD. */
   savedUsd: number;
+  /** Calls this month counted at the studio's estimate (the provider didn't say what they used). */
+  estimated?: number;
+  /** Something the person should know about the budget itself (its file was damaged). */
+  notice?: string;
 }
 
 /** The features that spend tokens, for the usage breakdown. */

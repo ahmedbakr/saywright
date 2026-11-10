@@ -149,6 +149,20 @@ export function modelInfo(kind: ProviderKind, id: string): ModelInfo | null {
   return price ? { id, label: id, price } : null;
 }
 
+/**
+ * The dearest rates Saywright knows for a provider (its catalog, and the prices its connection lists), for a model
+ * whose own price isn't known: such a model is counted at these under a budget, as an estimate, so a limit can't be
+ * passed by picking an unlisted model. With no price known for that provider, the dearest in every table.
+ */
+export function dearestKnown(kind: ProviderKind, listed: (Price | undefined)[] = []): Price {
+  const own = [...(CATALOG[kind] ?? []).map((m) => m.price), ...listed].filter((p): p is Price => !!p && p.input >= 0 && p.output >= 0);
+  const all = own.length ? own : [...Object.values(CATALOG).flatMap((l) => (l ?? []).map((m) => m.price)), ...Object.values(COMPATIBLE_PRICES)].filter((p): p is Price => !!p);
+  const rates = all.flatMap((p) => [p, ...(p.long ? [p.long] : [])]);
+  const max = (f: (p: Price) => number) => Math.max(...rates.map(f));
+  const input = max((p) => p.input);
+  return { input, output: max((p) => p.output), cacheRead: input, cacheWrite: max((p) => p.cacheWrite ?? p.input) };
+}
+
 /** Dollars for one call at list price (prompt caching included). */
 export function costOf(price: Price | undefined, u: Usage): number | null {
   if (!price) return null;

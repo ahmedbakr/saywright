@@ -122,7 +122,7 @@ export class ModelAgent implements AgentProvider {
       try {
         res = await this.chat.chat({ system, messages, tools: TOOLS, maxTokens: ticket.maxTokens, effort: this.effort, signal, cacheKey: `saywright-${hash(project.root)}`, cache: 'conversation', fallback: ticket.fallback });
       } catch (err) {
-        ticket.settle(null);
+        ticket.settle(null, Date.now() - started, err);
         throw err;
       }
       ticket.settle(res, Date.now() - started);
