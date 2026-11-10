@@ -43,6 +43,9 @@ async function cuttable(page: Page): Promise<void> {
   });
 }
 
+/** A message as the island shows it (a screen reader hears the same words from a live region beside it). */
+const shown = (page: Page, text: string) => page.getByText(text).and(page.locator(':not([data-announce])'));
+
 /** The studio's live connection to its server drops, and stays down. */
 async function cut(page: Page): Promise<void> {
   await page.route('**/api/events', (route) => route.abort());
@@ -55,7 +58,7 @@ test('a new session starts right after the last one, without waiting for or open
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   // Straight away, while the report is being written (or just after); it's announced when it's ready either way.
   await record(page, 'Second');
-  await expect(page.getByText('Report ready: First')).toBeVisible({ timeout: 30_000 });
+  await expect(shown(page, 'Report ready: First')).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   // Its report is ready: the next session still starts from the bar.
   await expect(page.getByRole('button', { name: 'Report ready' })).toBeVisible({ timeout: 60_000 });
@@ -76,7 +79,7 @@ test('a report already written when the next session starts is announced once th
   await expect(page.getByRole('button', { name: 'Report ready' })).toBeVisible({ timeout: 60_000 });
   // Not opened: starting the next session takes its place in the bar, so it is announced instead.
   await record(page, 'Next');
-  await expect(page.getByText('Report ready: Quick')).toBeVisible({ timeout: 15_000 });
+  await expect(shown(page, 'Report ready: Quick')).toBeVisible({ timeout: 15_000 });
   // The new recording goes on.
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
 });
@@ -90,7 +93,7 @@ test('a report that finishes while the next session records is announced, even w
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   await record(page, 'Later');
   await expect.poll(statuses('Earlier'), { timeout: 60_000 }).toEqual({ Earlier: 'ready' });
-  await expect(page.getByText('Report ready: Earlier')).toBeVisible({ timeout: 15_000 });
+  await expect(shown(page, 'Report ready: Earlier')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
 });
 
