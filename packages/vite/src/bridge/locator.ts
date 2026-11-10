@@ -6,10 +6,25 @@
 import { jsString as q, type LocatorInfo } from '../protocol';
 import { accessibleName, collapse, deepAll, deepLists, editableOf, inPrivate, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
 
-/** Values like "$78.40", "12", "−$19.60" change when the code changes, so they make poor locators. */
-function looksVolatile(s: string): boolean {
-  return /^[\s$€£¥+\-−–.,:%0-9()]*$/.test(s) || /\d/.test(s) && s.length <= 12;
+/**
+ * A number that changes with the code or between loads: an amount, a share, a decimal, a count in brackets, a
+ * number after #, or a long one (an id). A short label's number ("Row 3000", "Step 2", "Load in 2 s") is none of those:
+ * it is part of the name.
+ */
+function changingNumber(s: string): boolean {
+  return /[$€£¥%]/.test(s) || /\d[.,]\d/.test(s) || /\(\s*[+\-−]?\d+\s*\)/.test(s) || /#\s?\d/.test(s) || /\d{5,}/.test(s);
 }
+
+/** Values like "$78.40", "12", "−$19.60", "(3)" change when the code changes, so they make poor locators. */
+function looksVolatile(s: string): boolean {
+  return /^[\s$€£¥+\-−–.,:%0-9()#]*$/.test(s) || (/\d/.test(s) && s.length <= 12 && changingNumber(s));
+}
+
+/**
+ * Words to find an element by with their numbers left open only when the numbers are of the kind that changes: a
+ * label's own number is found exactly (the 3,000th row of a list is not its first).
+ */
+const openNumbers = (s: string): Pattern | null => (changingNumber(s) ? numbersOpen(s) : null);
 
 const squash = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '').toLowerCase();
 
@@ -61,13 +76,13 @@ function keeper(el: Element, expected: string): Keep {
 const namedByText = (el: Element) => !el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby') && !isField(el) && !(el instanceof HTMLImageElement);
 
 export const ROLE_SELECTORS: Record<string, string> = {
-  button: 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]',
+  button: 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"], input[type="image"]',
   link: 'a[href], [role="link"]',
   heading: 'h1, h2, h3, h4, h5, h6, [role="heading"]',
   textbox: 'input:not([type]), input[type="text"], input[type="email"], input[type="url"], input[type="tel"], textarea, [role="textbox"]',
   checkbox: 'input[type="checkbox"], [role="checkbox"]',
   radio: 'input[type="radio"], [role="radio"]',
-  combobox: 'select, [role="combobox"]',
+  combobox: 'select, input[list], [role="combobox"]',
   listbox: 'select, [role="listbox"]',
   tab: '[role="tab"]',
   menuitem: '[role="menuitem"]',
@@ -196,7 +211,7 @@ function inners(el: Element, keep: Keep): Inner[] {
   const name = named(role) ? accessibleName(el) : '';
   const byName = !namedByText(el) || keep === always;
   if (role && name && name.length <= 60) {
-    const open = numbersOpen(name);
+    const open = openNumbers(name);
     if (open && (byName || keep(open))) out.push({ code: `getByRole(${q(role)}, { name: ${open.code} })`, words: `“${name}”`, count: (s) => byRole(s, role, open, false, 2).length });
     if (!looksVolatile(name) && (byName || keep(name))) {
       out.push({ code: `getByRole(${q(role)}, { name: ${q(name)} })`, words: `“${name}”`, count: (s) => byRole(s, role, name, false, 2).length });
@@ -211,7 +226,7 @@ function inners(el: Element, keep: Keep): Inner[] {
   }
   const text = visibleText(el);
   if (!isField(el) && !editableOf(el) && text && text.length <= 40) {
-    const open = numbersOpen(text);
+    const open = openNumbers(text);
     if (open && keep(open)) out.push({ code: `getByText(${open.code})`, words: `“${text}”`, count: (s) => byText(s, open).length });
     if (!looksVolatile(text) && keep(text)) out.push({ code: `getByText(${q(text)}, { exact: true })`, words: `“${text}”`, count: (s) => byText(s, text).length });
   }
@@ -292,6 +307,56 @@ function scoped(el: Element, keep: Keep): LocatorInfo | null {
   return null;
 }
 
+/**
+ * A table cell by its row's own words and its column: `getByRole('row').filter({ hasText: 'Bao Nguyen' })
+ * .locator('td').nth(2)`, the “Status” cell for “Bao Nguyen”. Its own words aren't used (they are what a check reads,
+ * or what changes); which column it is doesn't change with them.
+ */
+function cellInRow(el: Element, keep: Keep): LocatorInfo | null {
+  const tag = el.tagName.toLowerCase();
+  if (tag !== 'td' && tag !== 'th') return null;
+  const row = el.parentElement;
+  if (!row || row.tagName !== 'TR') return null;
+  const title = titleOf(row, el);
+  if (!title || !keep(title)) return null;
+  const rows = deepAll(document, 'tr').filter((r) => matchesText(r, title));
+  if (rows.length !== 1 || rows[0] !== row) return null;
+  const cells = Array.from(row.children).filter((c) => c.tagName === el.tagName);
+  const i = cells.indexOf(el);
+  // The column's heading, as a person names the cell.
+  const table = row.closest('table');
+  const column = Array.from(row.children).indexOf(el);
+  const head = table?.querySelector('thead tr, tr:first-child');
+  const heading = head && head !== row ? collapse((head.children[column] as HTMLElement | undefined)?.innerText ?? '', 40) : '';
+  const words = heading && !looksVolatile(heading) ? `the “${heading}” cell` : `the ${ordinal(i + 1)} cell`;
+  return { code: `page.getByRole('row').filter({ hasText: ${q(title)} }).locator(${q(tag)}).nth(${i})`, description: `${words} for “${title}”`, text: visibleText(el), within: title };
+}
+
+/**
+ * An element told apart by the heading of the part of the page it is in (“Billing”): the part found by that heading,
+ * then the element in it, when nothing else in any part so found is found the same way.
+ */
+function underHeading(el: Element, keep: Keep): LocatorInfo | null {
+  const ways = inners(el, keep);
+  for (let node = el.parentElement, level = 0; node && node !== document.body && level < SCOPE_LEVELS; node = node.parentElement, level++) {
+    const heading = Array.from(node.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]')).find((h) => !h.contains(el) && !el.contains(h));
+    if (!heading) continue;
+    const name = accessibleName(heading);
+    if (!name || name.length > 60 || looksVolatile(name) || inPrivate(heading) || !keep(name)) continue;
+    if (byRole(document, 'heading', name, true, 2).length !== 1) continue;
+    const tag = node.tagName.toLowerCase();
+    const cls = namingClass(node);
+    const css = cls ? `${tag}.${cls}` : tag;
+    // Every part this finds (one inside another, too) must hold the element, and it alone found that way.
+    const parts = deepAll(document, cls ? `${tag}.${CSS.escape(cls)}` : tag).filter((c) => c.contains(heading));
+    if (!parts.every((c) => c.contains(el))) continue;
+    const way = ways.find((w) => parts.every((c) => w.count(c) === 1));
+    if (!way) continue;
+    return { code: `page.locator(${q(css)}).filter({ has: page.getByRole('heading', { name: ${q(name)}, exact: true }) }).${way.code}`, description: `${way.words} under “${name}”`, text: visibleText(el), within: name };
+  }
+  return null;
+}
+
 /** Playwright's hasText: the text somewhere inside, ignoring case and spacing. */
 function matchesText(el: Element, text: string): boolean {
   return collapse(el.textContent, 100_000).toLowerCase().includes(collapse(text, 200).toLowerCase());
@@ -352,7 +417,7 @@ export function buildLocator(el: Element, opts: { cheap?: boolean; check?: strin
     const name = accessibleName(el);
     if (name && name.length <= 60) {
       // A price or a count in its name is left open: it still finds it once they change.
-      const open = numbersOpen(name);
+      const open = openNumbers(name);
       if (open && (byName || keep(open)) && countByRoleAndName(role, open, true) === 1) {
         return { code: `page.getByRole(${q(role)}, { name: ${open.code} })`, description: describeRole(role, name), text };
       }
@@ -396,10 +461,11 @@ export function buildLocator(el: Element, opts: { cheap?: boolean; check?: strin
   // Counting matches by text walks the whole page: skipped when the caller can't afford it on a large page.
   const affordable = !opts.cheap || document.getElementsByTagName('*').length < 2500;
   if (affordable && text && text.length <= 40 && !isField(el) && !editable) {
-    const open = numbersOpen(text);
+    const open = openNumbers(text);
     if (open && keep(open) && byText(document.body, open).length === 1) return { code: `page.getByText(${open.code})`, description: `“${text}”`, text };
     if (!looksVolatile(text) && keep(text) && byText(document.body, text).length === 1) return { code: `page.getByText(${q(text)}, { exact: true })`, description: `“${text}”`, text };
   }
 
-  return scoped(el, keep) ?? nth(el, keep);
+  // Which of the same it is comes last: before it, the row or the part of the page around it.
+  return scoped(el, keep) ?? cellInRow(el, keep) ?? (affordable ? underHeading(el, keep) : null) ?? nth(el, keep);
 }

@@ -268,3 +268,42 @@ test('what Playwright can do again is recorded as it does it, and what it can’
     ]);
   await expect(page.getByText('Not recorded: something you did inside an embedded frame')).toBeVisible();
 });
+
+test('steps find what was used by words a person reads, and by its row or its part of the page before its position', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => {
+    const box = document.createElement('div');
+    box.innerHTML = `${Array.from({ length: 12 }, (_, i) => `<button class="vrow">Row ${i === 11 ? 3000 : i + 1}</button>`).join('')}
+      <button>Load in 2 s</button>
+      <form onsubmit="return false"><input type="submit" value="Send it"> <input type="image" alt="Search" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="20" height="20"></form>
+      <label>Fruit <input list="fruits"></label><datalist id="fruits"><option value="Apple"></option></datalist>
+      <table><thead><tr><th>Name</th><th>Price</th></tr></thead><tbody><tr><td>Ada Lovelace</td><td>$12.00</td></tr><tr><td>Bao Nguyen</td><td>$12.00</td></tr></tbody></table>
+      <section><h3>Billing</h3><p>Nothing here</p></section><section><h3>Shipping</h3><p>Nothing here</p></section>`;
+    document.querySelector('main')!.prepend(box);
+  });
+  await app.getByRole('button', { name: 'Row 3000' }).click();
+  await app.getByRole('button', { name: 'Load in 2 s' }).click();
+  await app.getByRole('button', { name: 'Send it' }).click();
+  await app.getByRole('button', { name: 'Search' }).click();
+  await app.getByRole('combobox', { name: 'Fruit' }).fill('Apple');
+  await app.getByRole('row', { name: /Bao/ }).getByText('$12.00').click();
+  await app.locator('section').filter({ hasText: 'Shipping' }).getByText('Nothing here').click();
+  const want = [
+    "page.getByRole('button', { name: 'Row 3000' })",
+    "page.getByRole('button', { name: 'Load in 2 s' })",
+    "page.getByRole('button', { name: 'Send it' })",
+    "page.getByRole('button', { name: 'Search' })",
+    "page.getByRole('combobox', { name: 'Fruit' })",
+    "page.getByRole('row').filter({ hasText: 'Bao Nguyen' }).locator('td').nth(1)",
+    "page.locator('section').filter({ has: page.getByRole('heading', { name: 'Shipping', exact: true }) }).getByText('Nothing here', { exact: true })",
+  ];
+  await expect.poll(async () => (await store<{ locator: string }[]>(page, 's.recorder.steps')).map((s) => s.locator)).toEqual(want);
+  const described = (await store<{ description: string }[]>(page, 's.recorder.steps')).map((s) => s.description);
+  expect(described[5]).toBe('Click the “Price” cell for “Bao Nguyen”');
+  // Each finds the one that was used, as Playwright finds it.
+  for (const code of want) {
+    const found = new Function('page', `return ${code}`)(app) as ReturnType<typeof app.locator>;
+    await expect(found, code).toHaveCount(1);
+  }
+});

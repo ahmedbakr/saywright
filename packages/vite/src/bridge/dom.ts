@@ -165,7 +165,10 @@ const INPUT_ROLES: Record<string, string> = {
   range: 'slider',
   number: 'spinbutton',
   search: 'searchbox',
+  image: 'button',
 };
+/** Inputs typed into: with a list of suggestions (a datalist), a combobox. */
+const TYPED_INPUTS = new Set(['text', 'search', 'email', 'tel', 'url']);
 
 export function roleOf(el: Element): string | null {
   const explicit = el.getAttribute('role');
@@ -180,6 +183,8 @@ export function roleOf(el: Element): string | null {
       const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
       // A password field has no role (as Playwright and screen readers see it): getByRole('textbox') never finds it.
       if (type === 'hidden' || type === 'password') return null;
+      // A field that suggests from a datalist is a combobox, as Playwright finds it (getByRole('textbox') never does).
+      if (TYPED_INPUTS.has(type) && el.hasAttribute('list')) return 'combobox';
       return INPUT_ROLES[type] ?? 'textbox';
     }
     case 'textarea':
@@ -392,6 +397,11 @@ export function accessibleName(el: Element): string {
   if (aria) return collapse(aria, NAME_MAX);
   const labelledBy = el.getAttribute('aria-labelledby');
   if (labelledBy) return collapse(textOfIds(el, labelledBy), NAME_MAX);
+  // A button made of an input is named by its words (value), an image button by its alt, as Playwright names them.
+  if (el instanceof HTMLInputElement && /^(submit|button|reset)$/i.test(el.type)) {
+    return collapse(el.value, NAME_MAX) || (el.type === 'submit' ? 'Submit' : el.type === 'reset' ? 'Reset' : '') || collapse(el.getAttribute('title'), NAME_MAX);
+  }
+  if (el instanceof HTMLInputElement && el.type === 'image') return collapse(el.alt || el.value, NAME_MAX) || collapse(el.getAttribute('title'), NAME_MAX) || 'Submit';
   if (isField(el)) return labelText(el) || collapse(el.getAttribute('title'), NAME_MAX);
   // A text box (a rich text editor) isn't named by what is typed into it.
   if (editableOf(el) === el || el.getAttribute('role') === 'textbox') return collapse(el.getAttribute('title'), NAME_MAX);
