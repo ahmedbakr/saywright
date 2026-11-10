@@ -45,5 +45,7 @@ export class AgentError extends Error {
 export interface AgentProvider {
   readonly source: 'ai' | 'claude' | 'fake';
   readonly model: string;
+  /** The model that answered the last request, when the provider said and it may differ from the one asked. */
+  readonly answeredBy?: string | null;
   run(input: AgentInput, ctx: AgentContext): Promise<AgentOutput>;
 }

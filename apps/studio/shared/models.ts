@@ -1,10 +1,18 @@
 /**
- * The models Saywright knows by name, with list prices (USD per million
- * tokens, as published in October 2026), and the presets for OpenAI-compatible
- * providers. Models a provider lists that aren't here still work; their cost
- * is unknown unless the provider reports it (OpenRouter does).
+ * The models Saywright knows by name, with list prices (USD per million tokens) and the presets for
+ * OpenAI-compatible providers. This table is dated data, not the list of what can be used: the studio also loads
+ * each connected provider's own model list (see server/ai/connections.ts), so a model released after this table can
+ * be picked, or typed, the day it appears. A model with no price here is shown as "price unknown" and, under a
+ * budget, counted at its provider's dearest rates here, as an estimate.
+ *
+ * Sources: Claude models and prices from Anthropic's model reference (November 2026). OpenAI and Gemini prices are
+ * as published in October 2026 and could not be checked again for this release: confirm them against the providers'
+ * pricing pages before changing or adding any (a model whose price can't be confirmed is listed without one).
  */
 import type { CompatiblePreset, ModelInfo, Price, ProviderKind, Usage } from './ai.ts';
+
+/** When each provider's prices here were last checked, shown in Settings → AI as "prices as of …". */
+export const PRICES_AS_OF: Partial<Record<ProviderKind, string>> = { anthropic: 'November 2026', 'claude-code': 'November 2026', openai: 'October 2026', codex: 'October 2026', gemini: 'October 2026', 'gemini-cli': 'October 2026' };
 
 export const CATALOG: Partial<Record<ProviderKind, ModelInfo[]>> = {
   anthropic: [
@@ -36,7 +44,7 @@ export const CATALOG: Partial<Record<ProviderKind, ModelInfo[]>> = {
   // Subscriptions: the plan pays; prices are the API equivalent, shown for comparison.
   'claude-code': [
     { id: 'opus', label: 'Opus (latest)', tier: 'top', vision: true, tools: true, price: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 } },
-    { id: 'sonnet', label: 'Sonnet (latest)', tier: 'balanced', vision: true, tools: true, price: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 } },
+    { id: 'sonnet', label: 'Sonnet (latest)', tier: 'balanced', vision: true, tools: true, price: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 } },
     { id: 'haiku', label: 'Haiku (latest)', tier: 'fast', vision: true, tools: true, price: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 } },
   ],
   codex: [
@@ -118,6 +126,8 @@ export const PRESETS: CompatiblePreset[] = [
  */
 const SERVED_PRICES: Record<string, Price> = {
   'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  // Still served and selectable by id; prices from Anthropic's model reference.
+  'claude-fable-5': { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   'claude-sonnet-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 };
@@ -129,9 +139,8 @@ const SERVED_PRICES: Record<string, Price> = {
  * is not.
  */
 export function sameModel(asked: string, answered: string): boolean {
-  const bare = (m: string) => m.slice(m.lastIndexOf('/') + 1).toLowerCase();
-  const a = bare(asked);
-  const b = bare(answered);
+  const a = normalId(asked);
+  const b = normalId(answered);
   return a === b || (b.startsWith(`${a}-`) && /^(\d{8}|\d{4}-\d{2}-\d{2}|\d{2}-\d{2}|\d{3})$/.test(b.slice(a.length + 1)));
 }
 
@@ -139,14 +148,30 @@ export function sameModel(asked: string, answered: string): boolean {
 export function modelInfo(kind: ProviderKind, id: string): ModelInfo | null {
   const known = CATALOG[kind]?.find((m) => m.id === id);
   if (known) return known;
-  // Anything the catalog names under another provider (OpenRouter's "anthropic/claude-sonnet-5-5").
+  // Anything the catalog names under another provider or spelling: OpenRouter's "anthropic/claude-sonnet-5.5" is
+  // "claude-sonnet-5-5", "openai/gpt-6.1-sol" is "gpt-6.1-sol". Compared without the maker, case, dots or dashes.
   const bare = id.includes('/') ? id.slice(id.lastIndexOf('/') + 1) : id;
-  for (const list of Object.values(CATALOG)) {
-    const m = list?.find((x) => x.id === bare || x.id === id);
+  const norm = normalId(id);
+  for (const [k, list] of Object.entries(CATALOG)) {
+    // Subscriptions' own short names ("opus", "sonnet") name no single model.
+    if (k === 'claude-code' || k === 'codex' || k === 'gemini-cli') continue;
+    const m = list?.find((x) => x.id === bare || x.id === id || normalId(x.id) === norm);
     if (m) return { ...m, id };
   }
-  const price = COMPATIBLE_PRICES[id] ?? COMPATIBLE_PRICES[bare] ?? SERVED_PRICES[bare];
+  const price =
+    COMPATIBLE_PRICES[id] ??
+    COMPATIBLE_PRICES[bare] ??
+    SERVED_PRICES[bare] ??
+    Object.entries({ ...COMPATIBLE_PRICES, ...SERVED_PRICES }).find(([k]) => normalId(k) === norm)?.[1];
   return price ? { id, label: id, price } : null;
+}
+
+/** A model id compared loosely: no maker before it, lower case, "." and "_" as "-". */
+export function normalId(id: string): string {
+  return id
+    .slice(id.lastIndexOf('/') + 1)
+    .toLowerCase()
+    .replace(/[._:]/g, '-');
 }
 
 /**

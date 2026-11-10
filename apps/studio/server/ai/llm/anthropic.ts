@@ -5,9 +5,9 @@
  * turn) is cached explicitly, and the agent's conversation is cached as it
  * grows (each step re-reads the steps before it at a tenth of the price or
  * less). One-off requests (reports, reviews, translations) cache nothing:
- * writing a cache costs a quarter more than reading the prompt once. Opus and
- * Sonnet get the server-side fallback, so a declined request is retried on
- * another model instead of failing.
+ * writing a cache costs a quarter more than reading the prompt once. Every model
+ * that can decline gets the server-side fallback (see FALLBACK), so a declined
+ * request is retried on another model instead of failing.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
@@ -18,7 +18,12 @@ import { count, lostWhileAnswering, stoppedAnswering, timing, type ChatModel, ty
 
 type Client = Pick<Anthropic, 'beta'>;
 
-const FALLBACK = new Set(['claude-opus-5-5', 'claude-sonnet-5-5']);
+/**
+ * Models whose safety classifiers can decline a request (`stop_reason: "refusal"`) and that the server-side fallback
+ * can run again on another model, per Anthropic's model reference. Claude Haiku 5.5 can decline too but has no
+ * server-side fallback; Claude Mythos 5 runs no classifiers.
+ */
+const FALLBACK = new Set(['claude-fable-5-1', 'claude-fable-5', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5']);
 
 function anthropicError(err: unknown): AgentError {
   if (err instanceof AgentError) return err;

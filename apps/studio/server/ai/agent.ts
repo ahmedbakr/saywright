@@ -107,7 +107,11 @@ export class ModelAgent implements AgentProvider {
     this.model = chat.model;
   }
 
+  /** The model that answered the last request, as its provider named it (a fallback can answer for the one asked). */
+  answeredBy: string | null = null;
+
   async run(input: AgentInput, ctx: AgentContext): Promise<AgentOutput> {
+    this.answeredBy = null;
     const { project, progress, signal } = ctx;
     const system = systemPrompt(project);
     const messages: Msg[] = [{ role: 'user', parts: [{ type: 'text', text: userMessage(input, project) }] }];
@@ -126,6 +130,7 @@ export class ModelAgent implements AgentProvider {
         throw err;
       }
       ticket.settle(res, Date.now() - started);
+      if (res.model) this.answeredBy = res.model;
       if (res.stop === 'refusal') throw new AgentError(`${this.name} declined this request. Try rephrasing it.${noFallback(this.chat, ticket)}`, 'refused');
       /** The budget left this turn less room than a turn gets: then that, not the request's size, is why it was cut. */
       const tight = ticket.maxTokens < MAX_ANSWER;

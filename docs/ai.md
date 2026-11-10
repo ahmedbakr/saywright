@@ -52,6 +52,8 @@ Work comes in three kinds, and each can use a different AI:
 
 **Automatic** picks, for each kind, the first that is ready in this order: your plans, then API keys, then other providers, then models on your computer. To choose a connection and model per kind of work, open **Settings → AI → Advanced → Who does what**; the line under each says what is used now. **Effort** (low, medium or high), in the same place, trades speed and cost against thoroughness for every request.
 
+**Models.** Each API key's list starts with the models Saywright has prices for (Settings → AI says when the prices were last checked), and adds the models the provider itself lists: they are asked when you save or test a key and when the studio starts, in the background, and the answer is kept in the studio's data folder. A model released after this version of Saywright can be picked the day it appears, or typed by its id under the key. A model with no known price is shown as “price unknown” (never $0), and a budget counts it at the dearest rates Saywright knows for that provider, as an estimate. Models an OpenAI-compatible provider lists under its own spelling (OpenRouter's `anthropic/claude-opus-5.5`) are recognised, with their tier and price. When another model answers for the one you picked (Claude's fallback for a declined request), the answer names the model that answered, and its use is counted under it.
+
 ## Typical costs
 
 Measured on the sample shop in October 2026, with an Anthropic API key and automatic routing (Claude Opus 5.5 for changes and questions, Claude Sonnet 5.5 for reports, reviews and Autopilot), at medium effort. The machine was busy, so the times are on the slow side.

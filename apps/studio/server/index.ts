@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Plugin } from 'vite';
 import { AI_TASKS, type AiEffort, type AiTask, type Budget } from '../shared/ai.ts';
+import { sameModel } from '../shared/models.ts';
 import type { Change, IntentResult, NextStep, RefInfo, StatusResponse } from '../shared/api.ts';
 import { AppManager, appAddress } from './apps/manager.ts';
 import { envFor } from './apps/registry.ts';
@@ -13,7 +14,7 @@ import { probeFolder } from './apps/detect.ts';
 import { connectedTargets } from './apps/connected.ts';
 import { FakeProvider, fakeAutopilotAsk, fakeExpertAsk } from './ai/fake.ts';
 import { AiService } from './ai/service.ts';
-import { AgentError } from './ai/types.ts';
+import { AgentError, type AgentProvider } from './ai/types.ts';
 import { ChangeStore } from './changes.ts';
 import { editorRoute } from './editor.ts';
 import { keyHint, loadEnvFiles, saveSecret } from './env.ts';
@@ -150,6 +151,12 @@ export async function createStudioApi(layout: StudioLayout) {
   const aiLabel = () => {
     const w = ai.who('code');
     return w ? (w.plan ? `${w.model} · ${w.label.replace(/ \(.*$/, '')} plan` : w.model) : undefined;
+  };
+  /** The model to name on an answer or change: the one that answered, when it isn't the one asked (a fallback). */
+  const answeredLabel = (agent: AgentProvider, label: string | undefined): string | undefined => {
+    const by = agent.answeredBy;
+    const asked = ai.connections.route('code')?.model;
+    return by && asked && !sameModel(asked, by) ? by : label;
   };
   const noAi = 'That request needs an AI. Connect one in Settings → AI: your Claude, ChatGPT or Gemini plan, an API key, or a model on this computer.';
   /** An app linked by its address alone: the studio can test and review it, but has no code to change. */
@@ -383,13 +390,14 @@ export async function createStudioApi(layout: StudioLayout) {
       const options = describeOptions(project, refs[0]);
       return { kind: 'needs-key', text: `${noAi}${options ? ` Without one, quick edits still work: ${options}` : ''}` };
     }
-    const model = fake ? agent.model : aiLabel();
+    let model = fake ? agent.model : aiLabel();
 
     const ctl = hangupAborts(res);
     inflight.set(requestId, ctl);
     try {
       // The page at the app's own address (not the studio proxy's it is shown through).
       const out = await agent.run({ text, refs, mode: 'edit', pageUrl: pageUrl ? appAddress(current, pageUrl) : undefined, brief }, { project, progress, signal: ctl.signal });
+      model = answeredLabel(agent, model);
       const latencyMs = Date.now() - started;
       if (out.kind === 'change') {
         const change = await changes.preview({ title: out.title, summary: out.summary, said: text, refs, source: agent.source, model, edits: out.edits, latencyMs });
@@ -555,7 +563,7 @@ export async function createStudioApi(layout: StudioLayout) {
     if (!project.hasCode) return addressOnly(current.app.name);
     const agent = ai.agent('fix');
     if (!agent) return { kind: 'needs-key', text: noAi };
-    const model = fake ? agent.model : aiLabel();
+    let model = fake ? agent.model : aiLabel();
     const requestId = typeof body.requestId === 'string' ? body.requestId.slice(0, 40) : String(Date.now());
     const progress = (step: string, detail?: string) => hub.emit('progress', { requestId, step, detail });
     const ctl = hangupAborts(res);
@@ -567,6 +575,7 @@ export async function createStudioApi(layout: StudioLayout) {
         { text: text || 'Fix the bug this test shows.', refs: await mapRefs(body.refs), mode: 'fix', test: { path: rel, code: testCode, failure } },
         { project, progress, signal: ctl.signal },
       );
+      model = answeredLabel(agent, model);
       const latencyMs = Date.now() - started;
       if (out.kind === 'change') {
         // A fix is checked against the test as it was recorded: a change to that test is left out, or the test would prove nothing.

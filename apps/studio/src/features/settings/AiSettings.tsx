@@ -11,7 +11,7 @@ import { cn } from '@/lib/cn';
 import { compact, usd } from '@/lib/format';
 import { PrivacyNote } from '../Privacy';
 import { AI_TASKS, type AiEffort, type AiState, type ConnectionView, type ModelInfo, type UsageRow, type UsageTotals } from '@shared/ai';
-import { PRESETS } from '@shared/models';
+import { PRESETS, PRICES_AS_OF } from '@shared/models';
 
 export function Title({ children, sub }: { children: ReactNode; sub?: ReactNode }) {
   return (
@@ -67,7 +67,8 @@ function StatusBadge({ c }: { c: ConnectionView }) {
 function priceNote(c: ConnectionView, m: ModelInfo): string {
   if (c.auth === 'subscription') return 'Included in your plan';
   if (c.auth === 'local' && c.preset !== 'custom') return 'Free, on this computer';
-  if (!m.price) return m.note ?? '';
+  // Never "$0" for a model nobody has priced: under a budget it is counted at its provider's dearest known rates.
+  if (!m.price) return [m.note, c.auth === 'key' ? 'price unknown' : ''].filter(Boolean).join(' · ');
   return `$${m.price.input} in · $${m.price.output} out per 1M tokens`;
 }
 
@@ -213,6 +214,7 @@ function PlanRow({ c }: { c: ConnectionView }) {
 
 function KeyRow({ c, file }: { c: ConnectionView; file?: string }) {
   const [key, setKey] = useState('');
+  const [model, setModel] = useState('');
   const [show, setShow] = useState(false);
   const busy = useAi((s) => !!s.busy[c.id]);
   const result = useAi((s) => s.results[c.id]);
@@ -275,7 +277,22 @@ function KeyRow({ c, file }: { c: ConnectionView; file?: string }) {
       {result && <p className={cn('mt-1.5 text-[12px]', result.ok ? 'text-ok' : 'text-bad')}>{result.message}</p>}
       <p className="mt-1.5 text-[11.5px] text-fg-3">
         Saved in <span className="font-mono">{file ?? '.env.local'}</span>, readable only by you, never sent anywhere but {c.label.replace(/ API$/, '')}.
+        {PRICES_AS_OF[c.kind] ? ` Prices as of ${PRICES_AS_OF[c.kind]}; a model released since shows “price unknown”.` : ''}
       </p>
+      {hasKey && (
+        <form
+          className="mt-2 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (model.trim()) void ai.addModel(c.id, model.trim()).then(() => setModel(''));
+          }}
+        >
+          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Add a model by its id, if it isn’t listed" className={cn(input, 'flex-1 font-mono')} aria-label={`Model for ${c.label}`} />
+          <Button type="submit" size="md" disabled={!model.trim()}>
+            Add model
+          </Button>
+        </form>
+      )}
     </div>
   );
 }

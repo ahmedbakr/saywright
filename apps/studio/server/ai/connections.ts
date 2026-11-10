@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AiEffort, AiTask, ConnectionStatus, ConnectionView, ModelInfo, ProviderKind, Route } from '../../shared/ai.ts';
-import { CATALOG, PRESETS, modelInfo } from '../../shared/models.ts';
+import { CATALOG, PRESETS, modelInfo, sameModel } from '../../shared/models.ts';
 import { credentialSource, keyHint, saveSecret } from '../env.ts';
 import { readJson, writeJson } from '../fsx.ts';
 import { runQuiet } from '../program.ts';
@@ -34,8 +34,12 @@ interface CustomConnection {
   models?: string[];
 }
 
+type Builtin = 'anthropic' | 'openai' | 'gemini';
+
 interface AiConfig {
   custom: CustomConnection[];
+  /** Model ids the person typed for a built-in provider (a model newer than any list the studio has). */
+  typed?: Partial<Record<Builtin, string[]>>;
   routes: Partial<Record<AiTask, Route>>;
   effort: AiEffort;
   /** Connections turned off: kept, never used. */
@@ -106,8 +110,43 @@ interface Detected {
   bin?: string;
 }
 
+/** Ids a provider lists that are not models to chat with. */
+const NOT_CHAT = /embed|whisper|tts|transcribe|moderation|dall-e|image|audio|realtime|search|computer-use|davinci|babbage|aqa|imagen|veo|lyria|guard/i;
+
+/** A provider's own list of its models, as it last answered, with when. */
+interface Listed {
+  at: number;
+  models: { id: string; label: string }[];
+}
+
+/** Ask a provider which models it has: [] when it can't be asked (no key) or doesn't answer. Never throws. */
+async function providerModels(kind: Builtin): Promise<{ id: string; label: string }[] | null> {
+  const key = keyOf(kind);
+  if (!key) return null;
+  try {
+    if (kind === 'anthropic') {
+      const base = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
+      const auth: Record<string, string> = process.env.ANTHROPIC_API_KEY ? { 'x-api-key': key } : { Authorization: `Bearer ${key}` };
+      const j = (await getJson(`${base}/v1/models?limit=1000`, { ...auth, 'anthropic-version': '2023-06-01' }, 8000)) as { data?: { id?: string; display_name?: string }[] };
+      return (j.data ?? []).filter((m): m is { id: string; display_name?: string } => typeof m.id === 'string').map((m) => ({ id: m.id, label: m.display_name || m.id }));
+    }
+    if (kind === 'openai') {
+      const j = (await getJson('https://api.openai.com/v1/models', { Authorization: `Bearer ${key}` }, 8000)) as { data?: { id?: string }[] };
+      return (j.data ?? []).filter((m): m is { id: string } => typeof m.id === 'string' && /^(gpt|o\d|chatgpt|codex)/i.test(m.id) && !NOT_CHAT.test(m.id)).map((m) => ({ id: m.id, label: m.id }));
+    }
+    const j = (await getJson('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', { 'x-goog-api-key': key }, 8000)) as { models?: { name?: string; displayName?: string; supportedGenerationMethods?: string[] }[] };
+    return (j.models ?? [])
+      .filter((m) => typeof m.name === 'string' && m.supportedGenerationMethods?.includes('generateContent') && !NOT_CHAT.test(m.name))
+      .map((m) => ({ id: m.name!.replace(/^models\//, ''), label: m.displayName || m.name!.replace(/^models\//, '') }));
+  } catch {
+    return null;
+  }
+}
+
 export class Connections {
   config: AiConfig;
+  /** Each built-in provider's own model list, kept in the data folder so a restart shows it at once. */
+  private listed: Partial<Record<Builtin, Listed>> = {};
   private detected = new Map<string, Detected>();
   private detectedAt = 0;
   private detecting: Promise<void> | null = null;
@@ -117,6 +156,43 @@ export class Connections {
     private envDir: string,
   ) {
     this.config = this.load();
+    const cached = readJson<Partial<Record<Builtin, Listed>>>(this.listFile);
+    if (cached && typeof cached === 'object') this.listed = cached;
+  }
+
+  private get listFile(): string {
+    return path.join(path.dirname(this.file), 'models.json');
+  }
+
+  /**
+   * Ask the built-in providers with a key which models they have, in the background (at start, and when a key is
+   * saved or tested): a model released today can be picked today. What they answer is kept with its time; a provider
+   * that doesn't answer keeps its last list. Never throws, never holds anything up.
+   */
+  async loadModelLists(only?: Builtin): Promise<void> {
+    await Promise.all(
+      (['anthropic', 'openai', 'gemini'] as const)
+        .filter((k) => !only || k === only)
+        .map(async (kind) => {
+          const models = await providerModels(kind);
+          if (!models?.length) return;
+          this.listed[kind] = { at: Date.now(), models: models.slice(0, 300) };
+          try {
+            writeJson(this.listFile, this.listed);
+          } catch {
+            /* kept in memory */
+          }
+        }),
+    );
+  }
+
+  /** A built-in provider's models: Saywright's table (with prices), then what the provider lists, then what was typed. */
+  private modelsOf(kind: Builtin): ModelInfo[] {
+    const out: ModelInfo[] = [...(CATALOG[kind] ?? [])];
+    const known = (id: string) => out.some((m) => m.id === id || sameModel(m.id, id));
+    for (const m of this.listed[kind]?.models ?? []) if (!known(m.id)) out.push({ ...modelInfo(kind, m.id), id: m.id, label: m.label, tools: true, vision: true });
+    for (const id of this.config.typed?.[kind] ?? []) if (!known(id)) out.push({ ...modelInfo(kind, id), id, label: id, tools: true, vision: true });
+    return out;
   }
 
   private load(): AiConfig {
@@ -249,7 +325,7 @@ export class Connections {
       auth: 'key',
       status: anthropicSource ? 'ready' : 'needs-key',
       detail: anthropicKey ? `Key ${keyHint(anthropicKey)}${anthropicSource === 'env' ? ' (from the environment)' : ''}` : anthropicSource === 'profile' ? 'Signed in with the Anthropic CLI profile.' : undefined,
-      models: CATALOG.anthropic ?? [],
+      models: this.modelsOf('anthropic'),
       detected: !!anthropicSource,
     });
     const saved = this.savedKeys();
@@ -263,7 +339,7 @@ export class Connections {
         auth: 'key',
         status: key ? 'ready' : 'needs-key',
         detail: key ? `Key ${keyHint(key)}${fromEnv ? ' (from the environment)' : ''}` : undefined,
-        models: CATALOG[kind] ?? [],
+        models: this.modelsOf(kind),
         detected: !!key,
       });
     }
@@ -372,6 +448,7 @@ export class Connections {
     if (!name) throw new Error('This connection has no key.');
     saveSecret(this.envDir, name, key);
     this.detectedAt = 0;
+    if (key && (connectionId === 'anthropic' || connectionId === 'openai' || connectionId === 'gemini')) void this.loadModelLists(connectionId);
   }
 
   /** Add an OpenAI-compatible provider (from a preset or any address). */
@@ -417,6 +494,12 @@ export class Connections {
   }
 
   addModel(id: string, model: string): void {
+    if (id === 'anthropic' || id === 'openai' || id === 'gemini') {
+      const typed = (this.config.typed ??= {});
+      typed[id] = [...new Set([model, ...(typed[id] ?? [])])].slice(0, 20);
+      this.save();
+      return;
+    }
     const c = this.config.custom.find((x) => x.id === id);
     if (!c) return;
     c.models = [...new Set([model, ...(c.models ?? [])])].slice(0, 20);

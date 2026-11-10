@@ -75,6 +75,8 @@ export class AiService {
   constructor(private deps: AiDeps) {
     this.connections = new Connections(path.join(deps.dataDir, 'ai.json'), deps.envDir);
     this.usage = new UsageLedger(path.join(deps.dataDir, 'usage'));
+    // The providers' own model lists, in the background: nothing waits for them.
+    if (!deps.fake) void this.connections.loadModelLists();
   }
 
   get effort(): AiEffort {
@@ -101,7 +103,7 @@ export class AiService {
     const priced = model === 'default' ? (c.models.find((m) => m.id !== 'default' && m.price)?.id ?? model) : model;
     // A dated name ("claude-opus-5-5-20261015", "gpt-6.1-sol-2026-09-30") is priced as the model it names.
     const undated = priced.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, '');
-    return usablePrice((c.models.find((m) => m.id === priced || m.id === undated) ?? modelInfo(c.kind, priced) ?? modelInfo(c.kind, undated))?.price);
+    return usablePrice(c.models.find((m) => m.id === priced || m.id === undated)?.price ?? modelInfo(c.kind, priced)?.price ?? modelInfo(c.kind, undated)?.price);
   }
 
   /**
@@ -259,6 +261,7 @@ export class AiService {
     if (!c) return { ok: false, message: 'Unknown connection.' };
     if (c.status !== 'ready') return { ok: false, message: c.detail ?? 'Not ready.' };
     if (CLI_KINDS.has(c.kind)) return { ok: true, message: c.detail ?? 'Ready.' };
+    if (c.id === 'anthropic' || c.id === 'openai' || c.id === 'gemini') void this.connections.loadModelLists(c.id);
     const model = c.models.find((m) => m.tier === 'fast')?.id ?? c.models[0]?.id;
     if (!model) return { ok: false, message: 'It lists no models.' };
     const chat = this.connections.chatModel(c.id, model);
