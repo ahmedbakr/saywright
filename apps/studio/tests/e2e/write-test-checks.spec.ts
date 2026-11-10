@@ -235,3 +235,21 @@ test('a check that held as it was said and fails in the run is a test that doesn
   expect(await store<string>(page, 's.recorder.run.failedAt')).toBe('replay');
   await expect(page.getByRole('button', { name: /^Fix with/ })).toHaveCount(0);
 });
+
+test('a check typed in the command bar is about what the pointer rested on when the bar took the focus, however long the typing takes', async ({ page }) => {
+  await openStudio(page);
+  await page.keyboard.press('r');
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('record');
+  const app = page.frameLocator('iframe');
+  const total = await app.getByTestId('summary-total').boundingBox();
+  await page.mouse.move(total!.x + total!.width / 2, total!.y + total!.height / 2, { steps: 4 });
+  await page.waitForTimeout(800);
+  const bar = page.getByRole('textbox', { name: 'Describe a change' });
+  await bar.click();
+  await expect(bar).toHaveAttribute('placeholder', /^About: .*\$\d+\.\d\d/);
+  // Typed slowly, well past five seconds.
+  await bar.pressSequentially('this should show $80.80', { delay: 300 });
+  await page.keyboard.press('Enter');
+  await expectIsland(page, /Check added/);
+  expect(await store<string>(page, 's.recorder.expectations[0].locator')).toBe("page.getByTestId('summary-total')");
+});

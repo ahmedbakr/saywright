@@ -123,15 +123,17 @@ export function TestTab() {
               const passed = ran ? ran.ok : rec.run?.status === 'passed';
               const failed = ran ? !ran.ok : false;
               const skipped = !!rec.run && rec.run.status !== 'passed' && !ran && !!rec.run.steps?.length;
-              const what = shouldBe(e, (x) => x);
+              const what = shouldBe(e);
+              // The value shown on its own: built from the parts, never cut out of the sentence.
+              const verb = e.field === 'select' ? 'have' : e.field === 'name' ? 'be named' : 'show';
               return (
                 <div key={i} className="group flex items-start gap-2 rounded-[8px] bg-raised px-2 py-1.5 text-[12.5px] ring-1 ring-inset ring-line">
                   <span className="mt-0.5 [&_svg]:size-[14px]" title={skipped ? 'The last run didn’t get to this check.' : undefined}>
                     {passed ? <CircleCheck className="text-ok" /> : failed ? <CircleX className="text-bad" /> : <CircleCheck className="text-fg-3" />}
                   </span>
                   <span className="min-w-0 flex-1 text-fg-2">
-                    <span className="text-fg">{e.description}</span> {e.field === 'checked' ? what : <>{what.replace(/“.*”.*$/, '')}<span className="font-mono text-human-fg">“{e.expected}”</span>{e.field === 'select' ? ' chosen' : ''}</>}
-                    {e.actual && <span className="block truncate text-[11.5px] text-fg-3">{e.field === 'checked' ? `It was ${e.actual}` : e.field === 'select' ? `Chosen: ${e.actual}` : `It showed “${focusOn(e.actual, e.expected)}”`}</span>}
+                    <span className="text-fg">{e.description}</span> {e.field === 'checked' || e.field === 'state' ? what : <>should {e.not ? 'not ' : ''}{verb} <span className="font-mono text-human-fg">“{e.expected}”</span>{e.field === 'select' ? ' chosen' : ''}</>}
+                    {e.actual && <span className="block truncate text-[11.5px] text-fg-3">{e.field === 'checked' || e.field === 'state' ? `It was ${e.actual}` : e.field === 'select' ? `Chosen: ${e.actual}` : `It showed “${focusOn(e.actual, e.expected)}”`}</span>}
                     {skipped && <span className="block text-[11.5px] text-fg-3">The last run didn’t get to it.</span>}
                   </span>
                   <button className="rounded p-0.5 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100" onClick={() => controller.removeExpectation(i)} aria-label="Remove check">

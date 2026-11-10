@@ -56,6 +56,7 @@ export function Dock() {
   const inspect = useStudio((s) => s.inspect);
   const voice = useStudio((s) => s.voice);
   const focusInput = useStudio((s) => s.focusInput);
+  const about = useStudio((s) => s.typingAbout);
   const draft = useStudio((s) => s.draft);
   const history = useStudio((s) => s.history);
   const busy = useStudio((s) => !!s.request);
@@ -126,7 +127,9 @@ export function Dock() {
   const placeholder = busy
     ? 'Ask the next thing: it runs when this one is done'
     : mode === 'record'
-      ? 'Say what’s wrong: “this should show $80.80”'
+      ? about
+        ? `About: ${aboutName(about)}. Say what it should show: “this should show $80.80”`
+        : 'Say what’s wrong: “this should show $80.80”'
       : pins.length
         ? `Say what to do with these ${pins.length}: “make this look like that”…`
         : selection
@@ -242,6 +245,8 @@ export function Dock() {
               }
             }}
             placeholder={placeholder}
+            onFocus={() => controller.barFocused()}
+            onBlur={() => controller.barBlurred()}
             className="h-[34px] min-w-0 flex-1 bg-transparent px-1.5 text-[13.5px] text-fg outline-none placeholder:text-fg-3"
             aria-label="Describe a change"
             spellCheck={false}
@@ -275,4 +280,12 @@ export function Dock() {
       </div>
     </div>
   );
+}
+
+/** An element as the command bar names it: its label's words and what it shows (“Total” $78.40). */
+function aboutName(el: { label: string; text: string; name: string }): string {
+  const label = el.label.split(' · ').slice(1).join(' · ');
+  const text = el.text.length > 30 ? `${el.text.slice(0, 30)}…` : el.text;
+  if (label && text && !text.includes(label)) return `“${label}” ${text}`;
+  return text ? `“${text}”` : label ? `“${label}”` : el.name;
 }

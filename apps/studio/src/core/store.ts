@@ -116,6 +116,8 @@ interface StudioState {
   app: { connected: boolean; url: string; title: string; reloadKey: number; outdated?: 'plugin' | 'studio' };
   pointer: 'mouse' | null;
   hover: ElementInfo | null;
+  /** In Write test, what a check typed in the command bar is about: what the pointer rested on when the bar took the focus. */
+  typingAbout: ElementInfo | null;
   snapped: boolean;
   selection: ElementInfo | null;
   pins: ElementInfo[];
@@ -162,6 +164,7 @@ export const useStudio = create<StudioState>()(() => ({
   app: { connected: false, url: '', title: '', reloadKey: 0 },
   pointer: null,
   hover: null,
+  typingAbout: null,
   snapped: false,
   selection: null,
   pins: [],

@@ -392,6 +392,8 @@ class Controller {
     };
     b.onProbe = (m) => {
       const s = get();
+      // Typing a check: what it is about stays outlined, wherever the mouse goes on the way to the keyboard.
+      if (s.typingAbout && s.mode === 'record') return;
       if (!sameEl(s.hover, m.hit) || s.snapped !== m.snapped) set({ hover: m.hit, snapped: m.snapped });
       if (s.hover?.id !== m.hit?.id) sessions.pointed(m.hit, 'mouse');
       // “This” binds to what the mouse was on while it was said.
@@ -1222,8 +1224,10 @@ class Controller {
       if (dwell) return dwell;
     }
     // Write test boxes what the pointer is on (a click there acts in the app, it doesn't select): a check typed is
-    // about that, or what the mouse rested on just before, not a selection left from Edit mode.
+    // about what it rested on when the command bar took the focus, else that, or what the mouse rested on just
+    // before, not a selection left from Edit mode.
     if (s.mode === 'record') {
+      if (s.typingAbout && !spoken?.words.length) return s.typingAbout;
       if (s.hover) return s.hover;
       const recent = this.track.dwellWinner(performance.now() - 5000, performance.now());
       if (recent) return recent;
@@ -1553,6 +1557,21 @@ class Controller {
   }
 
   // ───────────────────────────── narrate a bug → test ─────────────────────────────
+
+  /**
+   * The command bar took the focus (clicked, or “/”): in Write test, what the pointer rests on (or rested on just
+   * before) is what a check typed there is about, however long the typing takes. It stays until the bar loses focus.
+   */
+  barFocused(): void {
+    const s = get();
+    if (s.mode !== 'record') return;
+    const about = s.hover ?? this.track.dwellWinner(performance.now() - 5000, performance.now());
+    set({ typingAbout: about ?? null, ...(about ? { hover: about } : {}) });
+  }
+
+  barBlurred(): void {
+    if (get().typingAbout) set({ typingAbout: null });
+  }
 
   /** When the last step was recorded (or Write test began): how long a tester waited before saying a check. */
   private stepAt = 0;
