@@ -16,7 +16,7 @@ import path from 'node:path';
 import net from 'node:net';
 import zlib from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AppProxy, corsAllows, fromPage, PageRewriter, preflightAllows, preflightFor, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaRequest, viaUrl } from '../../server/apps/proxy';
+import { AppProxy, corsAllows, readableRequest, fromPage, PageRewriter, preflightAllows, preflightFor, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaRequest, viaUrl } from '../../server/apps/proxy';
 import { probeUrl } from '../../server/apps/detect';
 import { certificateProblem, tlsFor } from '../../server/apps/local-tls';
 
@@ -311,7 +311,8 @@ describe('the app’s API on another port of this computer', () => {
   const route = (rest: string, port = apiPort) => `/__saywright/http/127.0.0.1:${port}${rest}`;
   /** A request the page sent with its credentials (fetch's credentials: 'include'). */
   const withCredentials = (rest: string, port = apiPort) => `/__saywright/http+cred/127.0.0.1:${port}${rest}`;
-  const fromThePage = { 'sec-fetch-site': 'same-origin' };
+  /** A script's fetch or XHR, as the browser sends it. */
+  const fromThePage = { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' };
 
   it('passes the page’s requests on from the site’s own address, with the site’s cookies when it sent its credentials', async () => {
     const proxyOrigin = new URL(frame).origin;
@@ -351,6 +352,40 @@ describe('the app’s API on another port of this computer', () => {
       const post = await send('POST', withCredentials('/admin/users', port), { ...fromThePage, 'content-type': 'application/json' }, '{"role":"admin"}');
       expect(post.status).toBe(403);
       expect(asked).toEqual(['GET /admin', 'OPTIONS /admin/users']);
+    } finally {
+      internal.close();
+    }
+  });
+
+  it('never answers a request whose answer the browser would keep from the page: no-cors, a navigation, a script, an image, a style', async () => {
+    const asked: string[] = [];
+    // A private service of this computer with no CORS headers.
+    const internal = http.createServer((req, res) => {
+      asked.push(`${req.method} ${req.url}`);
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      res.end('window.leaked = "TOP-SECRET"');
+    });
+    await new Promise<void>((r) => internal.listen(0, '127.0.0.1', () => r()));
+    const port = (internal.address() as net.AddressInfo).port;
+    try {
+      const kinds: Record<string, string>[] = [
+        { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'empty' },
+        { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'script' },
+        { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' },
+        { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'style' },
+        { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'script' },
+        { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' },
+        { 'sec-fetch-site': 'same-origin' },
+      ];
+      for (const headers of kinds) {
+        for (const path of [route('/secret.js', port), withCredentials('/secret.js', port)]) {
+          const r = await send('GET', path, headers);
+          expect(r.status, JSON.stringify(headers)).toBe(403);
+          expect(r.body).toBe('');
+        }
+      }
+      expect(asked).toEqual([]);
+      expect(readableRequest(fromThePage)).toBe(true);
     } finally {
       internal.close();
     }

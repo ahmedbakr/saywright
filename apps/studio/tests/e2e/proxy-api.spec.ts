@@ -46,6 +46,9 @@ document.querySelector('[data-testid="me"]').onclick = () => {
 
 let app: http.Server;
 let api: http.Server;
+/** A private service of this computer that sends no CORS headers: no other page may read it. */
+let secret: http.Server;
+let secretPort = 0;
 let appOrigin = '';
 let linked = '';
 /** What reached the API: method, path and the origin it came from. */
@@ -75,6 +78,15 @@ test.beforeAll(async () => {
     res.end();
   });
   const apiPort = await listen(api);
+  secret = http.createServer((req, res) => {
+    if (req.url === '/secret.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript' });
+      return res.end('window.leaked = "TOP-SECRET-JS";');
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"secret":"TOP-SECRET"}');
+  });
+  secretPort = await listen(secret);
   app = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(page(`http://localhost:${apiPort}`));
@@ -85,6 +97,7 @@ test.beforeAll(async () => {
 test.afterAll(() => {
   app.close();
   api.close();
+  secret.close();
 });
 
 test.beforeEach(() => resetAll());
@@ -124,5 +137,51 @@ test('an app shown through the proxy reaches its own API on another port, from i
   // The API saw what it sees from the app's own tab: the app's own address, never the proxy's.
   expect(seen).toEqual(ownTab);
   expect(seen).toContain(`POST /v1/auth/login from ${appOrigin}`);
+  await studio.close();
+});
+
+test('a page shown through the proxy can’t read another service of this computer that doesn’t allow it', async ({ browser }) => {
+  const { probe } = await call<{ probe: unknown }>('POST', '/apps/probe', { url: `${appOrigin}/` });
+  linked = (await call<{ app: { id: string } }>('POST', '/apps', { probe, url: `${appOrigin}/` })).app.id;
+  const studio = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await openStudio(studio);
+  await studio.waitForFunction(() => (window as any).__saywrightStore.get().app.connected);
+  const frameUrl = await studio.evaluate(() => (window as any).__saywrightStore.get().status.target.frameUrl as string);
+  const shown = studio.frames().find((f) => f.url().startsWith(new URL(frameUrl).origin));
+  expect(shown).toBeTruthy();
+  const tried = await shown!.evaluate(async (port) => {
+    const text = (r: Promise<Response>) =>
+      r.then(
+        (res) => res.text(),
+        (e: Error) => `failed: ${e.message}`,
+      );
+    const script = (src: string) =>
+      new Promise<string>((resolve) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = () => resolve(`loaded: ${String((window as any).leaked)}`);
+        s.onerror = () => resolve('refused');
+        document.head.append(s);
+      });
+    return {
+      noCors: await text(fetch(`http://localhost:${port}/secret`, { mode: 'no-cors' })),
+      // Sent by the browser itself, as outside the studio: an opaque answer.
+      noCorsType: (await fetch(`http://localhost:${port}/secret`, { mode: 'no-cors' })).type,
+      noCorsWithCookies: await text(fetch(`http://localhost:${port}/secret`, { mode: 'no-cors', credentials: 'include' })),
+      cors: await text(fetch(`http://localhost:${port}/secret`)),
+      proxyPath: await text(fetch(`/__saywright/http/localhost:${port}/secret`, { mode: 'no-cors' })),
+      proxyPathWithCookies: await text(fetch(`/__saywright/http+cred/localhost:${port}/secret`, { mode: 'no-cors', credentials: 'include' })),
+      proxyPathCors: await text(fetch(`/__saywright/http/localhost:${port}/secret`)),
+      script: await script(`/__saywright/http/localhost:${port}/secret.js`),
+    };
+  }, secretPort);
+  for (const [how, got] of Object.entries(tried)) expect(got, how).not.toContain('TOP-SECRET');
+  expect(tried.noCors).toBe('');
+  expect(tried.noCorsType).toBe('opaque');
+  expect(tried.script).toBe('refused');
+  // The app's own API, which allows the app's address, still answers it.
+  await studio.keyboard.press('u');
+  await studio.frameLocator('iframe').getByTestId('login').click();
+  await expect(studio.frameLocator('iframe').getByTestId('out')).toHaveText('Signed in: admin');
   await studio.close();
 });

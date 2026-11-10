@@ -6,7 +6,10 @@
  * port of it (its API at http://localhost:5010) has those requests go through
  * the proxy too: from the proxy's address they would meet the API's CORS
  * rules as a stranger. The proxy applies those rules as the browser would
- * (each request says whether it carries the page's credentials). Cookies are kept under the site's own prefix in the
+ * (each request says whether it carries the page's credentials). A request whose
+ * answer the page can't read anyway (a no-cors fetch, a simple beacon) isn't
+ * rerouted: the browser sends it itself and keeps its answer opaque, as
+ * outside the studio, and the proxy never answers one. Cookies are kept under the site's own prefix in the
  * browser (cookies ignore ports, and other apps share localhost): the site's
  * scripts see their own names. Service workers are kept off, so an old cached
  * page never hides the studio.
@@ -86,11 +89,14 @@ export function installProxyRewrites(c: ProxyConfig): void {
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     // Cookies go to another origin only with credentials: 'include', as outside the studio.
     const credentials = (init?.credentials ?? (input instanceof Request ? input.credentials : 'same-origin')) === 'include';
+    // A no-cors request to another port is the browser's to send: its answer stays opaque to the page.
+    const opaque = (init?.mode ?? (input instanceof Request ? input.mode : 'cors')) === 'no-cors';
+    const route = (u: string) => (opaque ? to(u) : toRequest(u, credentials));
     if (input instanceof Request) {
-      const next = toRequest(input.url, credentials);
+      const next = route(input.url);
       return nativeFetch(next === input.url ? input : new Request(next, input), init);
     }
-    const url = typeof input === 'string' ? toRequest(input, credentials) : new URL(toRequest(input.href, credentials));
+    const url = typeof input === 'string' ? route(input) : new URL(route(input.href));
     return nativeFetch(url, init);
   };
 
@@ -132,7 +138,10 @@ export function installProxyRewrites(c: ProxyConfig): void {
   }
   if (navigator.sendBeacon) {
     const beacon = navigator.sendBeacon.bind(navigator);
-    navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => beacon(requestWithCredentials(url), data);
+    // A beacon is a cors request only with a body of another type than a form's or text (JSON in a Blob): the others
+    // are no-cors, sent by the browser itself.
+    const cors = (data?: BodyInit | null) => data instanceof Blob && !!data.type && !/^(?:text\/plain|application\/x-www-form-urlencoded|multipart\/form-data)\b/i.test(data.type);
+    navigator.sendBeacon = (url: string | URL, data?: BodyInit | null) => beacon(cors(data) ? requestWithCredentials(url) : toAny(url), data);
   }
 
   for (const name of ['pushState', 'replaceState'] as const) {

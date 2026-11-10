@@ -348,6 +348,17 @@ export function fromPage(headers: IncomingHttpHeaders, proxyOrigin: string): boo
   return (site === undefined || site === 'same-origin') && (origin === undefined || origin === proxyOrigin);
 }
 
+/**
+ * Whether the browser would let the page read the answer to this request if it went to the other port itself: only a
+ * script's `cors` request (fetch, XHR, an event stream). A `no-cors` fetch, a navigation, or a script, image, style or
+ * font loaded from the proxy's path would get the answer as the page's own (same-origin), readable whatever the other
+ * service's CORS rules say, so they are never answered. A browser that doesn't say (no Sec-Fetch-Mode) isn't either.
+ */
+export function readableRequest(headers: IncomingHttpHeaders): boolean {
+  const dest = headers['sec-fetch-dest'];
+  return headers['sec-fetch-mode'] === 'cors' && (dest === undefined || dest === 'empty');
+}
+
 /** Where a request to the API on another port lands in the proxy, for the cookies it sets and its redirects. */
 const viaPrefix = (url: URL) => `/__saywright/${url.protocol.slice(0, -1)}/${url.host}`;
 
@@ -545,6 +556,13 @@ export class AppProxy {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
       return void res.end('This proxy passes requests on to another port of this computer for the page it shows, and only for it.');
     }
+    // Anything but a script's cors request would hand the page another service's answer as its own: an empty answer,
+    // and nothing is sent. (The bridge lets the browser send a no-cors request to the other port itself.)
+    if (!readableRequest(req.headers)) {
+      req.resume();
+      res.writeHead(403, { 'X-Saywright-Blocked': 'no-cors', 'Cache-Control': 'no-store' });
+      return void res.end();
+    }
     const { url } = found;
     const credentials = found.credentials || req.headers[CREDENTIALS_HEADER] === 'include';
     const origin = target.upstream.origin;
@@ -570,13 +588,11 @@ export class AppProxy {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'X-Saywright-Blocked': 'cors' });
       res.end(`Blocked as the browser blocks it outside the studio: ${why}`);
     };
-    // A beacon (no-cors): its answer is never read by the page, so it isn't held back.
-    const opaque = req.headers['sec-fetch-mode'] === 'no-cors';
     const send = () => {
       if (res.destroyed) return;
       const upstreamReq = lib.request(url, { method: req.method, headers, timeout: 30_000, ...tlsOptions }, (up) =>
         this.answer(up, res, () => {
-          if (!opaque && !corsAllows(up.headers, origin, credentials)) {
+          if (!corsAllows(up.headers, origin, credentials)) {
             up.resume();
             return blocked(`${url.host} doesn’t let pages of ${origin} read what it answers${credentials ? ' with their cookies' : ''} (CORS).`);
           }
@@ -596,7 +612,7 @@ export class AppProxy {
       upstreamReq.on('error', () => res.destroy());
       req.pipe(upstreamReq);
     };
-    const want = opaque ? null : preflightFor(req.method ?? 'GET', req.headers);
+    const want = preflightFor(req.method ?? 'GET', req.headers);
     if (!want) return send();
     // Asked first, as the browser asks: the request is sent only if the API allows it.
     const ask: IncomingHttpHeaders = { host: url.host, origin, 'access-control-request-method': want.method, 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-site' };
