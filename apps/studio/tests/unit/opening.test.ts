@@ -187,3 +187,101 @@ describe('a studio that restarts while an app records', () => {
     }
   });
 });
+
+/** A studio whose apps open for real (their changes, sessions and the rest aren't looked at here). */
+function opening(startMs = 20_000) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-opening-'));
+  const events: { kind: string; step?: string; id?: string }[] = [];
+  const manager = new AppManager({
+    dataDir,
+    emit: (_event, data) => void events.push(data as { kind: string }),
+    studio: () => 'http://localhost:7357',
+    build: () => ({ sessions: { active: () => null, close: () => undefined }, changes: { previews: () => [] } }) as never,
+    startMs,
+  });
+  return { manager, events, dataDir };
+}
+
+/** A small server that answers every page, as any other program on a port would. */
+async function otherProgram(): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    res.statusCode = req.url?.startsWith('/__saywright/') ? 404 : 200;
+    res.setHeader('Content-Type', 'text/html');
+    res.end('<h1>Some other program on this port</h1>');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  return { port: (server.address() as AddressInfo).port, close: () => new Promise((resolve) => (server.closeAllConnections(), server.close(() => resolve()))) };
+}
+
+/** A stand-in for a dev server with the plugin: it serves a page, says which folder it serves, and prints its address. */
+const DEV_SERVER = `
+const http = require('http');
+const server = http.createServer((req, res) => {
+  if (req.url === '/__saywright/info') return res.setHeader('Content-Type', 'application/json'), res.end(JSON.stringify({ root: process.cwd(), version: 1 }));
+  res.setHeader('Content-Type', 'text/html');
+  res.end('<h1>The app</h1>');
+});
+server.listen(Number(process.env.FIXED_PORT) || 0, '127.0.0.1', () => console.log('  ➜  Local:   http://localhost:' + server.address().port + '/'));
+`;
+
+/** An app folder whose Vite config loads the plugin, with `dev.cjs` as its dev server. */
+function pluginApp(name: string, installed = true): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `saywright-${name}-`));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name, scripts: { dev: 'node dev.cjs' } }));
+  fs.writeFileSync(path.join(root, 'vite.config.js'), "import saywright from '@saywright/vite';\nexport default { plugins: [saywright()] };\n");
+  fs.writeFileSync(path.join(root, 'dev.cjs'), DEV_SERVER);
+  if (installed) fs.mkdirSync(path.join(root, 'node_modules'));
+  return root;
+}
+
+describe('an app whose usual port is held by another program', { timeout: 60_000 }, () => {
+  it('is started beside it, and never shown as that program', async () => {
+    const other = await otherProgram();
+    const { manager } = opening();
+    try {
+      const root = pluginApp('shop');
+      const app = manager.link({ name: 'shop', root, framework: 'vite', packageManager: 'npm', start: `"${process.execPath}" dev.cjs`, url: `http://localhost:${other.port}`, connection: 'plugin', notes: [] });
+      const ws = await manager.open(app.id);
+      expect(new URL(ws.project.url).port).not.toBe(String(other.port));
+      expect(await (await fetch(ws.project.url)).text()).toBe('<h1>The app</h1>');
+      // Where it runs now is remembered, so the next open goes straight there.
+      expect(manager.registry.get(app.id)!.envs[0].url).toBe(new URL(ws.project.url).origin);
+    } finally {
+      manager.close();
+      await other.close();
+    }
+  });
+
+  it('is still taken for the app when it is the app: its own dev server, started by its owner', async () => {
+    const { manager } = opening();
+    const root = pluginApp('mine');
+    const { spawn } = await import('node:child_process');
+    const own = spawn(process.execPath, ['dev.cjs'], { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] });
+    try {
+      const port = await new Promise<string>((resolve) => own.stdout.on('data', (d: Buffer) => /localhost:(\d+)/.test(String(d)) && resolve(/localhost:(\d+)/.exec(String(d))![1])));
+      const app = manager.link({ name: 'mine', root, framework: 'vite', packageManager: 'npm', start: `"${process.execPath}" dev.cjs`, url: `http://localhost:${port}`, connection: 'plugin', notes: [] });
+      const ws = await manager.open(app.id);
+      expect(new URL(ws.project.url).port).toBe(port);
+      expect(manager.runner.running(app.id)).toBe(false);
+    } finally {
+      own.kill();
+      manager.close();
+    }
+  });
+
+  it('is left as it was for an app the plugin doesn’t connect: nothing says whose server that is', async () => {
+    const other = await otherProgram();
+    const { manager } = opening();
+    try {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-plain-'));
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'plain', scripts: { dev: 'node never.cjs' } }));
+      fs.mkdirSync(path.join(root, 'node_modules'));
+      const app = manager.link({ name: 'plain', root, framework: 'vite', packageManager: 'npm', start: 'node never.cjs', url: `http://localhost:${other.port}`, connection: 'proxy', notes: [] });
+      const ws = await manager.open(app.id);
+      expect(new URL(ws.project.url).port).toBe(String(other.port));
+    } finally {
+      manager.close();
+      await other.close();
+    }
+  });
+});

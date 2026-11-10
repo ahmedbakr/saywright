@@ -194,7 +194,11 @@ export const apps = {
       setA({ opening: null, launcher: false });
       switched(getA().active);
     } catch (err) {
-      setA({ opening: { id: 'sample', env: '', step: 'Failed', error: err instanceof Error ? err.message : String(err), code: err instanceof ApiError ? err.code : undefined } });
+      // Linked by now, unless the sample itself is missing: named by its own id, so what can be done next (install,
+      // try again) is offered as for any other app.
+      await this.refresh();
+      const id = getA().apps.find((a) => a.sample)?.id ?? 'sample';
+      setA({ opening: { id, env: '', step: 'Failed', error: err instanceof Error ? err.message : String(err), code: err instanceof ApiError ? err.code : undefined } });
     }
   },
 
@@ -230,8 +234,14 @@ export const apps = {
     apply((await api.delete<{ state: AppsResponse }>(`/apps/${id}/envs/${env}`)).state);
   },
 
-  async setLauncherPref(on: boolean): Promise<void> {
-    apply(await api.put<AppsResponse>('/apps/launcher', { on }));
+  /** Resolves with whether it was saved. */
+  async setLauncherPref(on: boolean): Promise<boolean> {
+    try {
+      apply(await api.put<AppsResponse>('/apps/launcher', { on }));
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   async setCloneDir(dir: string): Promise<void> {

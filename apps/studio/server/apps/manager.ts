@@ -55,6 +55,34 @@ const pluginAnswers = (url: string, ms = 5000) =>
     .then((r) => r.ok && /json/.test(r.headers.get('content-type') ?? ''))
     .catch(() => false);
 
+/**
+ * The folder the plugin at `url` says it serves: `null` when what answers there isn't a dev server with the plugin,
+ * `undefined` when nothing answered in time (a dev server busy with its first page can be slow).
+ */
+async function servedFolder(url: string, ms: number): Promise<string | null | undefined> {
+  try {
+    const res = await fetch(new URL('/__saywright/info', url), { signal: AbortSignal.timeout(ms) });
+    if (!res.ok || !/json/.test(res.headers.get('content-type') ?? '')) return null;
+    const root = ((await res.json()) as { root?: unknown }).root;
+    return typeof root === 'string' ? root : null;
+  } catch (err) {
+    return err instanceof Error && err.name === 'TimeoutError' ? undefined : null;
+  }
+}
+
+/** The same folder, however it is spelled (a link to it, another letter case where the disk doesn't mind). */
+function sameFolder(a: string, b: string): boolean {
+  const real = (p: string) => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const [x, y] = [real(a), real(b)];
+  return x === y || (process.platform === 'win32' && x.toLowerCase() === y.toLowerCase());
+}
+
 export class AppManager {
   readonly registry: AppRegistry;
   readonly runner: AppRunner;
@@ -205,13 +233,20 @@ export class AppManager {
     }
     // A folder the studio serves gets its address when it is served.
     const assigned = new URL(env.url).port === '0';
-    if (!assigned && (await answers(env.url))) return env.url;
+    // Another program can hold the app's usual port (a second dev server takes the next one up, and the sample shop's
+    // port is the one Vite gives a second app): what answers there is the app only when it says so.
+    let taken = false;
+    if (!assigned && (await answers(env.url))) {
+      if (!(await this.someoneElse(app, env))) return env.url;
+      taken = true;
+    }
     if (!app.root || (!app.start && app.framework !== 'static')) throw new HttpError(502, `${env.url} isn’t running. Start it, then open it again.`, 'not-running');
     if (app.framework !== 'static' && app.framework !== 'php' && fs.existsSync(`${app.root}/package.json`) && !dependenciesInstalled(app.root)) {
       throw new HttpError(409, `${app.name}’s dependencies aren’t installed yet.`, 'needs-install');
     }
     await this.runner.start(app);
-    const url = await this.runner.ready(app.id, assigned ? null : env.url, this.deps.startMs ?? 90_000);
+    // Its usual address counts only when nothing else is there: with another program on it, the app says where it is.
+    const url = await this.runner.ready(app.id, assigned || taken ? null : env.url, this.deps.startMs ?? 90_000);
     if (!url) {
       const why = await this.whyNotStarted(app, env);
       const log = this.runner.get(app.id).log.slice(-6).join('\n');
@@ -223,6 +258,21 @@ export class AppManager {
     const path = usual.pathname === '/' ? '' : usual.pathname;
     if (actual.origin !== usual.origin) this.registry.setEnv(app.id, { ...env, url: actual.origin + path });
     return actual.origin + path + usual.search;
+  }
+
+  /**
+   * Whether what answers at the app's address is another program. Only an app the plugin connects can say: its dev
+   * server names the folder it serves, so one that names another folder, or doesn't know the plugin at all, isn't
+   * it. The studio then starts the app itself, beside the other program. Anything else that answers is taken for
+   * the app, as before: a dev server its owner started, or one behind their own proxy, can't be told apart.
+   */
+  private async someoneElse(app: LinkedApp, env: AppEnv): Promise<boolean> {
+    if (this.runner.running(app.id) || !app.root || !app.start || env.connection !== 'plugin' || !hasPlugin(app.root)) return false;
+    let folder = await servedFolder(env.url, 2500);
+    if (folder === undefined) folder = await servedFolder(env.url, 8000);
+    // Still no answer: something is there and busy. Not proof of another program.
+    if (folder === undefined) return false;
+    return folder === null || !sameFolder(folder, app.root);
   }
 
   /** Why a dev server didn't come up, and what to do. One that is still running but never answered is stopped. */

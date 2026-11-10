@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Checks the packed packages the way a person gets them: installed into an empty project from the tarballs (npm
-// pack's output in <folder>). `saywright` prints its version, starts, serves its interface and API, and refuses
-// other hosts; `@saywright/vite` loads in Node, its protocol module too (with types), and a Vite dev server with
-// the plugin serves the bridge. Used by CI on Linux, macOS and Windows.
+// pack's output in <folder>). `saywright` prints its version, starts, serves its interface and API, refuses other
+// hosts, and opens the sample shop it ships; `@saywright/vite` loads in Node, its protocol module too (with types),
+// and a Vite dev server with the plugin serves the bridge. Used by CI on Linux, macOS and Windows.
 //
 //   node scripts/smoke-package.mjs <folder with saywright-studio-x.y.z.tgz and saywright-vite-x.y.z.tgz>
 import { spawn, spawnSync } from 'node:child_process';
@@ -95,6 +95,24 @@ await check('refuses requests for other hosts (DNS rebinding)', async () => {
 });
 await check('keeps its data where SAYWRIGHT_HOME says', async () => {
   if (!fs.existsSync(path.join(home, 'server.json'))) throw new Error(`nothing in ${home}`);
+});
+
+await check('opens the sample shop that comes in the package, on its own dev server with the plugin', async () => {
+  // The shop where “Try the sample shop” copies it, with this build's plugin (its version isn't on the registry until
+  // it is published): the studio then links and starts it as it does for a newcomer.
+  const shop = path.join(home, 'sample-shop');
+  fs.cpSync(path.join(project, 'node_modules', '@saywright', 'studio', 'dist', 'sample'), shop, { recursive: true });
+  const npm = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund', path.join(dir, pluginTarball)], { cwd: shop, stdio: 'inherit', shell: process.platform === 'win32' });
+  if (npm.status !== 0) throw new Error('npm install in the sample shop failed');
+  const res = await fetch(`${base}/api/apps/sample`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  const state = await res.json();
+  if (!res.ok) throw new Error(`${res.status}: ${state.error}`);
+  const app = state.apps.find((a) => a.sample);
+  if (!app || state.active !== app.id) throw new Error('the sample shop isn’t the open app');
+  const page = await (await fetch(app.envs[0].url)).text();
+  if (!page.includes('/__saywright/bridge.js')) throw new Error(`the shop’s page at ${app.envs[0].url} doesn’t load the bridge`);
+  const stopped = await fetch(`${base}/api/apps/${app.id}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  if (!stopped.ok) throw new Error(`stopping it answered ${stopped.status}`);
 });
 
 server.kill();

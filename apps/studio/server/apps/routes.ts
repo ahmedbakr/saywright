@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AppEnv, AppProbe, Connection } from '../../shared/apps.ts';
 import { HttpError, type Router } from '../http.ts';
-import { listFolders, probeFolder, probeUrl } from './detect.ts';
+import { dependenciesInstalled, listFolders, probeFolder, probeUrl } from './detect.ts';
 import { cloneRepo } from './github.ts';
 import type { AppManager, OpenDecision } from './manager.ts';
 import { envFor } from './registry.ts';
@@ -158,6 +158,15 @@ export function appRoutes(router: Router, deps: AppRouteDeps): void {
       if (!fs.existsSync(root)) throw new HttpError(404, 'The sample app isn’t here.');
       const probe = probeFolder(root);
       app = apps.link({ ...probe, name: 'Tidewell (sample shop)', connection: 'plugin' }, { url: 'http://localhost:5174', start: 'npm run dev', sample: true });
+    }
+    // The sample is the studio's own app and trying it is one click: what it needs is installed here, once, with its
+    // output on screen, rather than asked for.
+    if (app.root && fs.existsSync(path.join(app.root, 'package.json')) && !dependenciesInstalled(app.root)) {
+      deps.emit('apps', { kind: 'opening', id: app.id, env: app.env, step: 'Installing the sample shop (about a minute, once)' });
+      if (!(await apps.runner.install(app))) {
+        const last = apps.runner.get(app.id).log.slice(-3).join(' ');
+        throw new HttpError(502, `The sample shop’s dependencies couldn’t be installed (${app.packageManager ?? 'npm'} install). Check your connection and try again.${last ? `\n${last}` : ''}`, 'install-failed');
+      }
     }
     await apps.open(app.id);
     return apps.state();
