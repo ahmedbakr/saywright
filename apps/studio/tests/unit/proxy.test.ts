@@ -275,6 +275,12 @@ describe('the app proxy', () => {
     expect(got).toContain(`X-Seen-Origin: ${upstreamUrl}`);
   });
 
+  it('keeps a page’s own tag for the studio’s script from running beside the bridge', () => {
+    const out = transformHtml('<html><head><script src="http://localhost:7440/saywright.js" defer=""></script></head><body></body></html>', { upstream: new URL('http://localhost:3000'), proxyOrigin: 'http://localhost:5281', studio: 'http://localhost:7357', port: 5281 });
+    expect(out).toContain('<script data-saywright-src="http://localhost:7440/saywright.js" defer=""></script>');
+    expect(out.match(/\ssrc="[^"]*saywright\.js"/g)).toEqual([' src="http://localhost:7357/saywright.js"']);
+  });
+
   it('adds the bridge even to a page without a head', () => {
     const out = transformHtml('<p>bare</p>', { upstream: new URL('https://a.example'), proxyOrigin: 'http://localhost:5281', studio: 'http://localhost:5173', port: 5281 });
     expect(out).toMatch(/^<script>window\.__SAYWRIGHT_PROXY__=.*<\/script><script src="http:\/\/localhost:5173\/saywright\.js"><\/script><p>bare<\/p>$/);

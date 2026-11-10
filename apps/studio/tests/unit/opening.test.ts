@@ -285,3 +285,43 @@ describe('an app whose usual port is held by another program', { timeout: 60_000
     }
   });
 });
+
+describe('an app connected with a script tag', { timeout: 60_000 }, () => {
+  /** A Next.js app's folder whose layout loads the studio's script from `studio`, running at `port`. */
+  const tagged = (name: string, studio: string, port: number) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `saywright-${name}-`));
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name, scripts: { dev: 'next dev' } }));
+    fs.mkdirSync(path.join(root, 'app'));
+    fs.writeFileSync(path.join(root, 'app/layout.tsx'), `export default function Layout({ children }) {\n  return <html><head>{process.env.NODE_ENV === 'development' && <script src="${studio}/saywright.js" defer />}</head><body>{children}</body></html>;\n}\n`);
+    return { name, root, framework: 'next' as const, packageManager: 'npm' as const, start: 'next dev', url: `http://localhost:${port}`, connection: 'script' as const, notes: [] };
+  };
+
+  it('whose tag names another studio address is shown through the proxy, and its notes say why', async () => {
+    const running = await otherProgram();
+    const { manager } = opening();
+    try {
+      const app = manager.link(tagged('portfolio', 'http://localhost:7440', running.port));
+      const ws = await manager.open(app.id);
+      expect(ws.env.connection).toBe('proxy');
+      expect(new URL(ws.frameUrl).port).not.toBe(String(running.port));
+      expect(manager.runner.get(app.id).log.join('\n')).toMatch(/app\/layout\.tsx.*http:\/\/localhost:7440.*http:\/\/localhost:7357/);
+    } finally {
+      manager.close();
+      await running.close();
+    }
+  });
+
+  it('whose tag names this studio is shown as it is', async () => {
+    const running = await otherProgram();
+    const { manager } = opening();
+    try {
+      const app = manager.link(tagged('mine', 'http://localhost:7357', running.port));
+      const ws = await manager.open(app.id);
+      expect(ws.env.connection).toBe('script');
+      expect(ws.frameUrl).toBe(`http://localhost:${running.port}`);
+    } finally {
+      manager.close();
+      await running.close();
+    }
+  });
+});

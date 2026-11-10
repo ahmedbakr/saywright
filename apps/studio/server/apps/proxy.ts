@@ -150,6 +150,9 @@ function rewriteTags(html: string, ctx: PageContext): string {
   const bare = `//${ctx.upstream.host}`;
   const swap = (url: string) => (url.startsWith(origin) ? ctx.proxyOrigin + url.slice(origin.length) : url.startsWith(bare) ? ctx.proxyOrigin + url.slice(bare.length) : url.split(`${origin}/`).join(`${ctx.proxyOrigin}/`));
   let out = html.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy(?:-report-only)?["']?[^>]*>/gi, '');
+  // The page's own tag for the studio's script (from a script-tag connection, perhaps to another studio address) never
+  // runs: the proxy's bridge does. The element stays, without its address, so a framework hydrating the page finds it.
+  out = out.replace(/(<script\b[^>]*?\s)src(\s*=\s*["']?[^"'\s>]*\/saywright\.js\b)/gi, '$1data-saywright-src$2');
   out = out.replace(RESOURCE_ATTRS, (_m, head: string, url: string) => head + swap(url));
   out = out.replace(RESOURCE_LINKS, (_m, head: string, url: string) => head + swap(url));
   out = out.replace(FORM_ATTRS, (_m, head: string, url: string) => head + swap(url));

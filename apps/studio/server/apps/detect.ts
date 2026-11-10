@@ -37,7 +37,8 @@ const VITE_CONFIGS = ['vite.config.ts', 'vite.config.mts', 'vite.config.js', 'vi
 /** A tag that loads the studio's script, as a page or a layout writes it (`<script src="http://localhost:7357/saywright.js">`). */
 const BRIDGE_TAG = /<script\b[^>]*?\bsrc\s*=[^>]*?\/saywright\.js\b/i;
 /** Whether a page's or a layout's code loads the studio's script: a tag for it, not a mention of its address or a tag in a comment. */
-export const loadsBridge = (text: string) => BRIDGE_TAG.test(text.replace(/<!--[\s\S]*?-->|\{\s*\/\*[\s\S]*?\*\/\s*\}/g, ''));
+const uncommented = (text: string) => text.replace(/<!--[\s\S]*?-->|\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '');
+export const loadsBridge = (text: string) => BRIDGE_TAG.test(uncommented(text));
 const ASTRO_CONFIGS = ['astro.config.mjs', 'astro.config.ts', 'astro.config.mts', 'astro.config.js'];
 
 /** The app's Vite config file, if it has one. */
@@ -307,6 +308,52 @@ function safeDirs(dir: string): string[] {
 
 /** Where `connect` adds the studio's script tag (and where a person would): a root layout, a document, the page. */
 const SCRIPT_FILES = ['src/app/layout.tsx', 'app/layout.tsx', 'src/app/layout.jsx', 'app/layout.jsx', 'src/app/layout.js', 'app/layout.js', 'src/pages/_document.tsx', 'pages/_document.tsx', 'src/pages/_document.jsx', 'pages/_document.jsx', 'src/pages/_document.js', 'pages/_document.js', 'public/index.html', 'index.html', 'src/index.html'];
+
+/** The studio addresses (origins) a page's script tags load the studio's script from; a tag without one names none. */
+export function scriptTagStudios(text: string): string[] {
+  const out: string[] = [];
+  for (const m of uncommented(text).matchAll(/(https?:\/\/[^\s"'`<>()]+?)\/saywright\.js\b/g)) {
+    try {
+      const origin = new URL(m[1]).origin;
+      if (!out.includes(origin)) out.push(origin);
+    } catch {
+      /* a template, not an address */
+    }
+  }
+  return out;
+}
+
+/** The file of the app's that holds its script tag, and the studio addresses the tag names. */
+export function scriptTagIn(dir: string): { file: string; studios: string[] } | null {
+  for (const rel of SCRIPT_FILES) {
+    try {
+      const text = fs.readFileSync(path.join(dir, rel), 'utf8').slice(0, 200_000);
+      if (loadsBridge(text)) return { file: rel, studios: scriptTagStudios(text) };
+    } catch {
+      /* not there */
+    }
+  }
+  return null;
+}
+
+/**
+ * The studio address a script tag names when it isn't `studio`'s (written by `connect` when the studio ran on another
+ * port, or by a teammate): its pages would wait for a studio that isn't there. Null when it names this one, or none.
+ */
+export function otherStudio(studios: string[], studio: string): string | null {
+  let here: URL;
+  try {
+    here = new URL(studio);
+  } catch {
+    return null;
+  }
+  const loopback = (h: string) => /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(h);
+  const same = (o: string) => {
+    const u = new URL(o);
+    return u.origin === here.origin || (u.port === here.port && u.protocol === here.protocol && loopback(u.hostname) && loopback(here.hostname));
+  };
+  return studios.length && !studios.some(same) ? studios[0] : null;
+}
 
 /** Whether the app's own pages load the studio's script (connected with its script tag): no proxy needed. */
 export function hasScriptTag(dir: string): boolean {

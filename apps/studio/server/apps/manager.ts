@@ -13,7 +13,7 @@ import type { Metrics } from '../metrics.ts';
 import { Project } from '../project.ts';
 import type { Sessions } from '../sessions/index.ts';
 import type { SourceMapper } from '../sessions/sourcemap.ts';
-import { dependenciesInstalled, hasPlugin, hasScriptTag, probeFolder } from './detect.ts';
+import { dependenciesInstalled, hasPlugin, hasScriptTag, otherStudio, probeFolder, scriptTagIn, scriptTagStudios } from './detect.ts';
 import { appFetch } from './local-tls.ts';
 import { AppProxy } from './proxy.ts';
 import { AppRegistry, appStateDir, envFor } from './registry.ts';
@@ -293,6 +293,27 @@ export class AppManager {
   }
 
   /**
+   * Whether the app's script tag loads the studio's script from another address than this studio's; its notes then
+   * say so, and what to do. Read in its folder, or in its page for an app linked by its address.
+   */
+  private async tagElsewhere(app: LinkedApp, url: string): Promise<boolean> {
+    const found = app.root ? scriptTagIn(app.root) : null;
+    let studios = found?.studios ?? [];
+    if (!app.root) {
+      const page = await appFetch(url, { signal: AbortSignal.timeout(5000) })
+        .then((r) => r.text())
+        .catch(() => '');
+      studios = scriptTagStudios(page.slice(0, 400_000));
+    }
+    const studio = this.deps.studio();
+    const other = otherStudio(studios, studio);
+    if (!other) return false;
+    const where = found ? `Its script tag (${found.file})` : 'Its pages’ script tag';
+    this.runner.note(app.id, `${where} loads the studio from ${other}, but this studio is at ${studio}: it is shown through the studio’s proxy instead. To use the tag, run “npx @saywright/studio connect” in its folder again (it points the tag here), or remove the tag.`);
+    return true;
+  }
+
+  /**
    * Whether what answers at the app's address is another program. Only an app the plugin connects can say: its dev
    * server names the folder it serves, so one that names another folder, or doesn't know the plugin at all, isn't
    * it. The studio then starts the app itself, beside the other program. Anything else that answers is taken for
@@ -345,6 +366,8 @@ export class AppManager {
       else if (app.root && hasScriptTag(app.root)) connection = 'script';
       // Its folder no longer loads it (or never did): the proxy adds it. Without a folder, its pages said so when linked.
       else if (connection === 'plugin' || (connection === 'script' && app.root)) connection = 'proxy';
+      // A tag that loads the script from another studio address would leave it waiting for ever: the proxy shows it.
+      if (connection === 'script' && (await this.tagElsewhere(app, url))) connection = 'proxy';
       if (connection !== latest.connection) this.registry.setEnv(app.id, { ...latest, connection });
     }
     // One proxy per app address: when the app's port moves, it keeps its proxy, and with it its cookies and storage.

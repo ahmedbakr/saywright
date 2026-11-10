@@ -57,7 +57,7 @@ If the studio is running, it links the app at once: open it from **Your apps**. 
 
 To disconnect an app, remove it from the app list (its code, sessions and reports stay where they are), and remove `saywright()` from its Vite config or the `saywright.js` script tag.
 
-Moved the studio to another port? Run `connect` again: it points the app's script tag at the studio's current address.
+Moved the studio to another port? Run `connect` again: it points the app's script tag at the studio's current address. Until you do, an app whose tag names another address is shown through the [proxy](#the-proxy) (its own tag doesn't run there), and its notes say why.
 
 ## The plugin, by hand
 
