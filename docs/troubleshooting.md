@@ -10,7 +10,8 @@ npx @saywright/studio doctor      # in a checkout: npm run doctor
 
 | Problem | What to do |
 | --- | --- |
-| “Saywright needs Node.js 22.18 or newer” | Install the current LTS from [nodejs.org](https://nodejs.org) (Node 22.18+ or 24.11+). |
+| “Saywright needs Node.js 22 (22.18 or newer) or Node.js 24 and later (24.11 or newer)” | Install the current LTS from [nodejs.org](https://nodejs.org). Node.js 23, and 24.0 to 24.10, aren't supported. |
+| “Saywright can’t use its data folder” | The folder named (usually `~/.saywright`) belongs to another account (often after one `sudo npx @saywright/studio`), isn't writable, or is a file. Give it back to your account (`sudo chown -R $USER ~/.saywright`), remove it, or set `SAYWRIGHT_HOME` to another folder. |
 | “The studio’s interface isn’t built” | Installed from npm: run `npx @saywright/studio@latest`. In a checkout: start it with `npm run dev`. |
 | Port 7357 is taken | The studio takes the next free port and prints it. Apps connected with a script tag look for the studio on 7357: stop the other program, or run `connect` again with `--studio http://localhost:<port>`. `--port` asks for a port outright. |
 | No browser opened | Open the address the command printed. A browser isn't opened with `--no-open` or when `CI` is set. |

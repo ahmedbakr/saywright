@@ -23,7 +23,7 @@ The sample shop has a real bug, there on purpose: the coupon `SAVE20` should tak
 
 ## Before you start
 
-- **Node.js 22.18 or newer** (or 24.11 or newer). Check with `node --version`; get it from [nodejs.org](https://nodejs.org).
+- **Node.js 22 (22.18 or newer) or Node.js 24 and later (24.11 or newer)**. Check with `node --version`; get it from [nodejs.org](https://nodejs.org).
 - **Chrome or Edge**, current.
 - **An AI, for the steps marked _needs an AI_.** Pointing, quick edits, the Experts' checks and recording sessions work without one. For the rest, connect one in **Settings → AI** ([step 14](#14-settings-worth-knowing)): the Claude, ChatGPT or Gemini plan you already pay for, an API key, or a free model on your computer. A session report written without an AI still lists errors, failed requests, slow moments and what you said, but it can't spot a wrong total on the screen by itself.
 

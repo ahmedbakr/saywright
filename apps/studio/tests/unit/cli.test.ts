@@ -408,7 +408,9 @@ describe('setup and doctor', () => {
     const install = vi.spyOn(SpeechService.prototype, 'install');
     // Installed from npm: no test browser to install.
     ctx = { ...ctx, layout: { ...ctx.layout, sample: { source: 'shipped', root: 'copied' } } };
-    expect(await main(['setup', '--no-best-arabic'], ctx)).toBe(0);
+    // The voice model can't be downloaded here (offline): setup says so, and with its exit code.
+    expect(await main(['setup', '--no-best-arabic'], ctx)).toBe(1);
+    expect(out.join('\n')).toMatch(/Done, with 1 thing\(s\) to retry later/);
     expect(out.join('\n')).toMatch(/✓ Speech model: Omnilingual/);
     expect(out.join('\n')).toMatch(/✓ Speech model: Parakeet/);
     expect(install).not.toHaveBeenCalled();

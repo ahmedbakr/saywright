@@ -26,7 +26,7 @@ Saywright is a studio that runs on your computer, next to the web app you are bu
 
 ## Quick start
 
-You need Node.js 22.18 or newer (or 24.11 or newer), and Chrome or Edge.
+You need Node.js 22 (22.18 or newer) or Node.js 24 and later (24.11 or newer), and Chrome or Edge. Node.js 23, and 24.0 to 24.10, aren't supported.
 
 ```bash
 npx @saywright/studio
@@ -134,7 +134,7 @@ The threat model, every protection, and how to report a vulnerability: [SECURITY
 
 ## Requirements
 
-- **Node.js 22.18 or newer, or 24.11 or newer** (the current LTS lines), on macOS, Windows or Linux.
+- **Node.js 22 (22.18 or newer) or Node.js 24 and later (24.11 or newer)** (the current LTS lines; not 23, nor 24.0 to 24.10), on macOS, Windows or Linux.
 - **A current Chrome or Edge.** Voice uses the browser's recogniser in Chrome, Edge or Safari, or the on-device model in any browser.
 - **Optional:** a microphone (voice), git (GitHub repositories), Playwright in your app (to run the tests it writes), and disk space for the speech models (about 740 MB, and 1.6 GB more for the most accurate Arabic model).
 

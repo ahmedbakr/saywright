@@ -13,6 +13,7 @@ import { appRoutes } from './apps/routes.ts';
 import { probeFolder } from './apps/detect.ts';
 import { connectedTargets } from './apps/connected.ts';
 import { keepStartedIn, stopLeftovers } from './apps/started.ts';
+import { checkDataFiles } from './data-check.ts';
 import { FakeProvider, fakeAutopilotAsk, fakeExpertAsk } from './ai/fake.ts';
 import { AiService } from './ai/service.ts';
 import { AgentError, type AgentProvider } from './ai/types.ts';
@@ -88,6 +89,8 @@ export async function createStudioApi(layout: StudioLayout) {
   loadEnvFiles(layout.envDir);
   const { dataDir } = layout;
   fs.mkdirSync(dataDir, { recursive: true });
+  // Data files of a shape it can't read are set aside before anything reads them.
+  checkDataFiles(dataDir);
   const hub = new EventHub();
   const inflight = new Map<string, AbortController>();
   /** A request's own stop: Stop in the page, or the page that asked going away (its tab closed, the studio reloaded). */

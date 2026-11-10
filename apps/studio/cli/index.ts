@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { packageLayout, type StudioLayout } from '../server/layout.ts';
 import { connect } from './connect.ts';
+import { dataDirProblem } from './data-dir.ts';
 import { doctor } from './doctor.ts';
 import { mcp } from './mcp.ts';
 import { setup } from './setup.ts';
@@ -55,6 +56,15 @@ export async function main(argv: string[], ctx: CliContext = installed()): Promi
     return 0;
   }
   const [command, ...rest] = argv.length && !argv[0].startsWith('-') ? argv : ['start', ...argv];
+  // The data folder first, for the commands that write it: a sentence that says what is wrong and how to fix it,
+  // rather than a raw system error half-way through. doctor reports it among its checks; mcp writes nothing there.
+  if (['start', 'connect', 'setup'].includes(command) && !rest.some((a) => a === '--help' || a === '-h')) {
+    const problem = dataDirProblem(ctx.layout.dataDir);
+    if (problem) {
+      console.error(`${c.red('✗')} ${problem}`);
+      return 1;
+    }
+  }
   try {
     switch (command) {
       case 'start':

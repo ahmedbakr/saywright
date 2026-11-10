@@ -110,7 +110,8 @@ export async function setup(argv: string[], ctx: CliContext): Promise<number> {
 
   console.log(problems ? c.yellow(`\nDone, with ${problems} thing(s) to retry later.`) : c.green('\nAll set.'));
   console.log(`Next: ${c.cyan(ctx.startCommand)}\n`);
-  return 0;
+  // A script can tell: something that failed is a failure, however much else worked.
+  return problems ? 1 : 0;
 }
 
 /** The large Arabic model is much more accurate: ask (in a terminal), unless a flag already said. */

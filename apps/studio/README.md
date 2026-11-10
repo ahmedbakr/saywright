@@ -10,7 +10,7 @@ Saywright is a studio that runs on your computer, next to the web app you are bu
 npx @saywright/studio
 ```
 
-The studio opens in your browser at `http://localhost:7357`. Link your app (a folder on this computer, an address, or a GitHub repository), or try the sample shop, which has a real bug to find. You need Node.js 22.18 or newer (or 24.11 or newer).
+The studio opens in your browser at `http://localhost:7357`. Link your app (a folder on this computer, an address, or a GitHub repository), or try the sample shop, which has a real bug to find. You need Node.js 22 (22.18 or newer) or Node.js 24 and later (24.11 or newer).
 
 Or set your app up from the terminal first, then start the studio:
 
@@ -54,7 +54,7 @@ Saywright runs on your computer. Your code leaves it only when you ask the AI so
 
 ## Requirements
 
-- Node.js 22.18 or newer, or 24.11 or newer, on macOS, Windows or Linux.
+- Node.js 22 (22.18 or newer) or Node.js 24 and later (24.11 or newer), on macOS, Windows or Linux.
 - A current Chrome or Edge. Voice uses the browser's recogniser in Chrome, Edge or Safari, or the on-device model in any browser.
 - Optional: git (to link GitHub repositories), and Playwright in your app (to run the tests it writes).
 

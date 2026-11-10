@@ -42,7 +42,8 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
     fail('The studio’s interface isn’t built.', ctx.clientDir ? 'Reinstall Saywright (npx @saywright/studio@latest).' : 'In the repository, start it with npm run dev.');
     return 1;
   }
-  const port = values.port === undefined ? STUDIO_PORT : Number(values.port);
+  // Digits only: Number() would take 1e3, 0x1D10 or " 7441 " as ports.
+  const port = values.port === undefined ? STUDIO_PORT : /^\d{1,5}$/.test(values.port) ? Number(values.port) : NaN;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     fail(`--port takes a number from 1 to 65535, not “${values.port}”.`);
     return 1;
@@ -57,7 +58,7 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
   if (values.root) process.env.SAYWRIGHT_TARGET_ROOT = path.resolve(values.root);
 
   const studio = await serveStudio({ ...ctx.layout, clientDir: ctx.clientDir, port, strictPort: values.port !== undefined });
-  const home = ctx.layout.dataDir.startsWith(os.homedir()) ? `~${ctx.layout.dataDir.slice(os.homedir().length)}` : ctx.layout.dataDir;
+  const home = shortHome(ctx.layout.dataDir);
   console.log(`\n  ${c.amber('◉')} ${c.bold('Saywright')} ${c.dim(ctx.layout.version)}  ${c.dim('point at your app, say what to change')}\n`);
   console.log(`  ${c.dim('Studio'.padEnd(9))}${c.cyan(studio.url)}`);
   console.log(`  ${c.dim('Data'.padEnd(9))}${home}`);
@@ -87,4 +88,10 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
     process.on('uncaughtException', crash);
     process.on('unhandledRejection', crash);
   });
+}
+
+/** A folder in the home folder as ~/…: only under it, not beside it (/home/al is not the start of /home/alice). */
+export function shortHome(dir: string, home = os.homedir()): string {
+  if (dir === home) return '~';
+  return dir.startsWith(home.endsWith(path.sep) ? home : home + path.sep) ? `~${path.sep}${dir.slice(home.length).replace(/^[\\/]+/, '')}` : dir;
 }

@@ -2,7 +2,7 @@
  * Local speech recognition for the studio: Arabic and English, on this
  * computer, in a child process (see worker.mjs). Also installs models.
  */
-import { fork, type ChildProcess } from 'node:child_process';
+import { fork, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -38,6 +38,25 @@ interface StreamHandlers {
 
 /** The engine and its models (a few GB for the larger ones) are let go after this long unused; the next request starts them again. */
 const IDLE_MS = 10 * 60_000;
+
+let engineLoads: boolean | undefined;
+
+/**
+ * Whether the speech engine runs on this computer. Its wrapper installs everywhere, but its native part only where it
+ * has a build (not Windows on ARM, not Alpine Linux): loaded once in a child process, so a computer it can't run on
+ * is told apart from one where it only isn't installed, and the answer is kept.
+ */
+export function speechEngineLoads(): boolean {
+  if (engineLoads !== undefined) return engineLoads;
+  let entry: string;
+  try {
+    entry = createRequire(import.meta.url).resolve('sherpa-onnx-node');
+  } catch {
+    return (engineLoads = false);
+  }
+  const r = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(entry)})`], { stdio: 'ignore', timeout: 20_000 });
+  return (engineLoads = r.status === 0);
+}
 
 export class SpeechService {
   private child: ChildProcess | null = null;
@@ -75,14 +94,8 @@ export class SpeechService {
     return path.join(this.root, 'silero_vad.onnx');
   }
 
-  /** The native runtime ships per platform; this checks it resolves without loading it. */
   private runtimeAvailable(): boolean {
-    try {
-      createRequire(import.meta.url).resolve('sherpa-onnx-node');
-      return true;
-    } catch {
-      return false;
-    }
+    return speechEngineLoads();
   }
 
   status(): SpeechStatus {
