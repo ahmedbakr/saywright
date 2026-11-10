@@ -246,6 +246,13 @@ export function setProps(code: string, loc: Loc, changes: [prop: string, value: 
   const lastAttr = attrs.length ? attrs[attrs.length - 1] : null;
   const anchorEnd = lastAttr ? lastAttr.end : (open.typeArguments ?? open.typeParameters ?? open.name).end;
   const multiline = lastAttr && lastAttr.loc.start.line > open.loc.start.line;
+  // A new prop goes before the props spread last (`<Button {...props}>`): after them it would always win over what
+  // the caller passes.
+  let spread = attrs.length;
+  while (spread > 0 && attrs[spread - 1].type === 'JSXSpreadAttribute') spread--;
+  const firstSpread = spread < attrs.length ? attrs[spread] : null;
+  // A line of its own ends as the file's lines do (CRLF in a CRLF file).
+  const eol = lastAttr && code[lineEnd(code, lastAttr.end) - 1] === '\r' ? '\r\n' : '\n';
   let changed = false;
 
   // Props already there first: a new one goes after the last, which could itself be removed here.
@@ -272,7 +279,10 @@ export function setProps(code: string, loc: Loc, changes: [prop: string, value: 
   }
   for (const [prop, value] of changes) {
     if (value === null || attrs.some((a: Node) => attrName(a) === prop)) continue;
-    if (multiline) s.appendLeft(anchorEnd, `\n${indentAt(code, lastAttr.start)}${attrString(prop, value)}`);
+    if (firstSpread && firstSpread.loc.start.line > open.loc.start.line && /^\s*$/.test(code.slice(lineStart(code, firstSpread.start), firstSpread.start))) {
+      s.prependLeft(lineStart(code, firstSpread.start), `${indentAt(code, firstSpread.start)}${attrString(prop, value)}${eol}`);
+    } else if (firstSpread) s.prependLeft(firstSpread.start, `${attrString(prop, value)} `);
+    else if (multiline) s.appendLeft(anchorEnd, `${eol}${indentAt(code, lastAttr.start)}${attrString(prop, value)}`);
     else s.appendLeft(anchorEnd, ` ${attrString(prop, value)}`);
     changed = true;
   }
@@ -646,6 +656,33 @@ function dropFromList(s: MagicString, items: Node[], drop: Set<Node>): void {
   }
 }
 
+/**
+ * The whole lines of an element with the comment written on the lines right above it (`{/* the total *\/}`), which
+ * describes it: moved, the element takes it along rather than leave it describing its neighbour.
+ */
+function withComment(code: string, r: { start: number; end: number; whole: boolean }): { start: number; end: number; whole: boolean } {
+  if (!r.whole) return r;
+  let start = r.start;
+  for (;;) {
+    if (start === 0) break;
+    const prevStart = lineStart(code, start - 1);
+    const line = code.slice(prevStart, start).trim();
+    if (/^\{\s*\/\*[\s\S]*\*\/\s*\}$/.test(line) || /^\/\//.test(line)) {
+      start = prevStart;
+      continue;
+    }
+    // A comment over several lines: from its last line back to its first.
+    if (/\*\/\s*\}$/.test(line)) {
+      const open = code.lastIndexOf('{/*', start);
+      if (open < 0 || code.slice(lineStart(code, open), open).trim()) break;
+      start = lineStart(code, open);
+      continue;
+    }
+    break;
+  }
+  return { ...r, start };
+}
+
 export function moveElement(code: string, from: Loc, to: Loc, where: 'above' | 'below', parsed?: Node): string {
   const ast = parsed ?? parseTsx(code); // one parse, so parent nodes can be compared by identity
   const fa = findElement(code, from, ast);
@@ -655,8 +692,8 @@ export function moveElement(code: string, from: Loc, to: Loc, where: 'above' | '
   const b = childUnit(fb, code);
   if (a.container !== b.container) throw new CodemodError('They are in different parents, so a simple move would change the layout structure');
   if (a.unit === b.unit) throw new CodemodError('That is the same element');
-  const ra = lineRange(code, a.unit);
-  const rb = lineRange(code, b.unit);
+  const ra = withComment(code, lineRange(code, a.unit));
+  const rb = withComment(code, lineRange(code, b.unit));
   if (!ra.whole || !rb.whole) throw new CodemodError('Elements share a line with other markup');
   const piece = code.slice(ra.start, ra.end);
   const s = new MagicString(code);

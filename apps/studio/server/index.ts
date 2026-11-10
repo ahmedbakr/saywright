@@ -711,6 +711,8 @@ export async function createStudioApi(layout: StudioLayout) {
   });
   router.get('/ai/usage', () => ai.usage.summary(Date.now(), Object.fromEntries(apps.registry.list().map((a) => [a.id, a.name]))));
   router.put('/ai/budget', (req) => {
+    // An object of limits; a string, a number or a list says nothing about them.
+    if (req.body != null && (typeof req.body !== 'object' || Array.isArray(req.body))) throw new HttpError(400, 'The budget is an object of limits, like {"dailyUsd": 5}');
     const body = (req.body ?? {}) as Partial<Budget>;
     ai.usage.setBudget(body);
     hub.emit('usage', usagePill());

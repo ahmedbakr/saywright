@@ -50,6 +50,22 @@ describe('setProp', () => {
   });
 });
 
+describe('setProp where a line or a spread matters', () => {
+  it('a new prop goes before props spread last, so what the caller passes still wins', () => {
+    const one = '<div>\n  <Button {...props}>Got it</Button>\n</div>';
+    expect(setProp(one, locOf(one, '<Button'), 'size', 'lg')).toContain('<Button size="lg" {...props}>Got it</Button>');
+    const many = '<div>\n  <Button\n    onClick={go}\n    {...props}\n  >\n    Go\n  </Button>\n</div>';
+    expect(setProp(many, locOf(many, '<Button'), 'size', 'lg')).toContain('    onClick={go}\n    size="lg"\n    {...props}\n');
+  });
+
+  it('a prop on a line of its own ends in CRLF in a CRLF file', () => {
+    const code = '<div>\r\n\t<Button\r\n\t\tonClick={go}\r\n\t>\r\n\t\tGo\r\n\t</Button>\r\n</div>';
+    const out = setProp(code, locOf(code, '<Button'), 'size', 'lg');
+    expect(out).toContain('\t\tonClick={go}\r\n\t\tsize="lg"\r\n\t>');
+    expect(out.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+});
+
 describe('readProps', () => {
   it('reads literals, booleans and dynamic values', () => {
     const f = findElement(SRC, locOf(SRC, '<Button\n'))!;
@@ -279,6 +295,12 @@ export default function Page() {
 });
 
 describe('moveElement', () => {
+  it('takes the comment written above an element with it', () => {
+    const code = '<ul>\n  {/* the first */}\n  <li>A</li>\n  {/*\n    the second\n  */}\n  <li>B</li>\n  <li>C</li>\n</ul>';
+    expect(moveElement(code, locOf(code, '<li>A'), locOf(code, '<li>C'), 'below')).toBe('<ul>\n  {/*\n    the second\n  */}\n  <li>B</li>\n  <li>C</li>\n  {/* the first */}\n  <li>A</li>\n</ul>');
+    expect(moveElement(code, locOf(code, '<li>B'), locOf(code, '<li>A'), 'above')).toBe('<ul>\n  {/*\n    the second\n  */}\n  <li>B</li>\n  {/* the first */}\n  <li>A</li>\n  <li>C</li>\n</ul>');
+  });
+
   it('moves an element above a sibling', () => {
     const out = moveElement(SRC, locOf(SRC, '<p>Second'), locOf(SRC, '<p>First'), 'above');
     expect(out.indexOf('Second')).toBeLessThan(out.indexOf('First'));

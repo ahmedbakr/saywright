@@ -104,6 +104,13 @@ describe('a Next.js page, pointed at in the studio', () => {
     return res.json();
   };
 
+  it('answers 400 to a budget that isn’t an object of limits', async () => {
+    for (const bad of ['"x"', '5', 'true', '[]']) {
+      const res = await fetch(`${base}/ai/budget`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: bad });
+      expect(res.status, bad).toBe(400);
+    }
+  });
+
   it('reaches an AI app over MCP with the place the Inspector shows', async () => {
     const inspected = await json('GET', `/inspect?src=${encodeURIComponent(bundleSrc)}`);
     expect(inspected.result).toMatchObject({ file: PAGE, line: 4, col: 7, name: 'h1' });
