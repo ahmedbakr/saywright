@@ -1,7 +1,7 @@
 /** A report as Markdown, for pasting into an issue, a PR or a chat. */
 import { BRAND } from '@shared/brand';
 import { modelName } from '@shared/models';
-import { replayReason, type SessionDetail, type SessionTarget } from '@shared/session';
+import { nothingToJudge, replayReason, type SessionDetail, type SessionTarget } from '@shared/session';
 import { fmtClock } from './Findings';
 import { STRINGS } from './i18n';
 
@@ -21,6 +21,11 @@ export function toMarkdown(detail: SessionDetail): string {
   const findings = r.findings.filter((f) => !aside.has(f.id));
   const lines: string[] = [];
   const s = a.scores;
+  // Nothing was tried: no score, no “no problems found”.
+  if (nothingToJudge(a)) {
+    lines.push(`## ${t.nothing}`, '', `**${meta.name}** · ${new Date(meta.startedAt).toLocaleString()} · ${fmtClock(a.durationMs)} · ${meta.appUrl}`, '', t.nothingWhy, '');
+    return lines.join('\n');
+  }
   lines.push(`## ${r.title}`, '');
   lines.push(`**${meta.name}** · ${new Date(meta.startedAt).toLocaleString()} · ${fmtClock(a.durationMs)} · ${meta.appUrl}${meta.git ? ` · \`${meta.git.branch}@${meta.git.commit}\`` : ''}`, '');
   lines.push(r.summary, '');

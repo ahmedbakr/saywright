@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import { BRAND } from '../../shared/brand.ts';
 import { modelName } from '../../shared/models.ts';
-import type { ReportFinding, SessionAnalysis, SessionMeta, SessionReport, Severity, TimelineItem } from '../../shared/session.ts';
+import { nothingToJudge, type ReportFinding, type SessionAnalysis, type SessionMeta, type SessionReport, type Severity, type TimelineItem } from '../../shared/session.ts';
 import { HttpError } from '../http.ts';
 import type { Sessions } from './index.ts';
 import { clock } from './report.ts';
@@ -35,8 +35,8 @@ const SEV: Record<Severity, { en: string; ar: string; color: string }> = {
 };
 
 const T = {
-  en: { overall: 'Overall', stability: 'Stability', usability: 'Usability', performance: 'Performance', accessibility: 'Accessibility', findings: 'Findings', suggestions: 'Suggestions', positives: 'What worked', journey: 'What the tester did', next: 'Next steps', timeline: 'Timeline', transcript: 'What was said', expected: 'Expected', fix: 'Fix', where: 'Where', steps: 'Steps', said: 'Said', evidence: 'Evidence', verdict: { ship: 'No serious problems found', 'fix-first': 'Fix first', blocked: 'Blocked' }, clean: 'No technical problems found', scope: 'Saywright looks for errors, failed requests, slow responses and signs of frustration. It can’t tell whether the values on screen are right.', effort: 'Effort', by: 'Written by', translated: ', translated by', local: 'Written on this computer (no AI)', duration: 'Duration', recorded: 'Recorded' },
-  ar: { overall: 'التقييم العام', stability: 'الاستقرار', usability: 'سهولة الاستخدام', performance: 'الأداء', accessibility: 'إمكانية الوصول', findings: 'الملاحظات', suggestions: 'الاقتراحات', positives: 'ما نجح', journey: 'ما قام به المختبِر', next: 'الخطوات التالية', timeline: 'التسلسل الزمني', transcript: 'ما قيل', expected: 'المتوقع', fix: 'الإصلاح', where: 'المكان', steps: 'الخطوات', said: 'قال', evidence: 'الأدلة', verdict: { ship: 'لا مشكلات خطيرة', 'fix-first': 'يحتاج إصلاحًا أولًا', blocked: 'متوقف' }, clean: 'لم تُرصد مشكلات تقنية', scope: 'يبحث Saywright عن الأخطاء والطلبات الفاشلة والاستجابات البطيئة وعلامات التعثّر، لكنه لا يستطيع أن يعرف إن كانت القيم المعروضة صحيحة.', effort: 'الجهد', by: 'كتبه', translated: '، وترجمه', local: 'كُتب على هذا الجهاز (بدون ذكاء اصطناعي)', duration: 'المدة', recorded: 'سُجّل' },
+  en: { overall: 'Overall', stability: 'Stability', usability: 'Usability', performance: 'Performance', accessibility: 'Accessibility', findings: 'Findings', suggestions: 'Suggestions', positives: 'What worked', journey: 'What the tester did', next: 'Next steps', timeline: 'Timeline', transcript: 'What was said', expected: 'Expected', fix: 'Fix', where: 'Where', steps: 'Steps', said: 'Said', evidence: 'Evidence', verdict: { ship: 'No serious problems found', 'fix-first': 'Fix first', blocked: 'Blocked' }, clean: 'No technical problems found', scope: 'Saywright looks for errors, failed requests, slow responses and signs of frustration. It can’t tell whether the values on screen are right.', effort: 'Effort', by: 'Written by', translated: ', translated by', local: 'Written on this computer (no AI)', duration: 'Duration', recorded: 'Recorded', nothing: 'Nothing to judge yet', nothingWhy: 'The session recorded no click, typing or remark, so there is no score.' },
+  ar: { overall: 'التقييم العام', stability: 'الاستقرار', usability: 'سهولة الاستخدام', performance: 'الأداء', accessibility: 'إمكانية الوصول', findings: 'الملاحظات', suggestions: 'الاقتراحات', positives: 'ما نجح', journey: 'ما قام به المختبِر', next: 'الخطوات التالية', timeline: 'التسلسل الزمني', transcript: 'ما قيل', expected: 'المتوقع', fix: 'الإصلاح', where: 'المكان', steps: 'الخطوات', said: 'قال', evidence: 'الأدلة', verdict: { ship: 'لا مشكلات خطيرة', 'fix-first': 'يحتاج إصلاحًا أولًا', blocked: 'متوقف' }, clean: 'لم تُرصد مشكلات تقنية', scope: 'يبحث Saywright عن الأخطاء والطلبات الفاشلة والاستجابات البطيئة وعلامات التعثّر، لكنه لا يستطيع أن يعرف إن كانت القيم المعروضة صحيحة.', effort: 'الجهد', by: 'كتبه', translated: '، وترجمه', local: 'كُتب على هذا الجهاز (بدون ذكاء اصطناعي)', duration: 'المدة', recorded: 'سُجّل', nothing: 'لا شيء يُحكم عليه بعد', nothingWhy: 'لم تسجّل الجلسة أي نقرة أو كتابة أو ملاحظة، فلا تقييم لها.' },
 };
 
 function ring(score: number, label: string, big = false): string {
@@ -84,7 +84,7 @@ export function renderHtml(meta: SessionMeta, analysis: SessionAnalysis, report:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(report.title)} · ${BRAND.name} session</title>
+<title>${esc(nothingToJudge(analysis) ? t.nothing : report.title)} · ${BRAND.name} session</title>
 <style>
 :root{--fg:#1c2024;--fg2:#60646c;--line:#e8e8ec;--bg:#fff;--soft:#f9f9fb;--accent:#0090ff}
 *{box-sizing:border-box}body{margin:0;background:var(--soft);color:var(--fg);font:15px/1.6 system-ui,-apple-system,"Segoe UI","Noto Sans Arabic",Tahoma,sans-serif}
@@ -119,11 +119,15 @@ footer{color:var(--fg2);font-size:12.5px;text-align:center;margin-top:28px}
 <main>
 <header>
   <div class="meta">${esc(new Date(meta.startedAt).toLocaleString(lang === 'ar' ? 'ar-EG' : 'en-GB'))} · ${t.duration} ${clock(meta.startedAt + analysis.durationMs, meta.startedAt)} · <span dir="ltr">${esc(meta.appUrl)}</span>${meta.git ? ` · <span dir="ltr">${esc(meta.git.branch)}@${esc(meta.git.commit)}</span>` : ''}</div>
-  <h1 class="title">${esc(report.title)}</h1>
+  ${
+    nothingToJudge(analysis)
+      ? `<h1 class="title">${esc(t.nothing)}</h1>\n  <p class="summary">${esc(t.nothingWhy)}</p>`
+      : `<h1 class="title">${esc(report.title)}</h1>
   <span class="verdict">${esc(report.verdict === 'ship' && !report.findings.length ? t.clean : t.verdict[report.verdict])}</span>
   <p class="summary">${esc(report.summary)}</p>
   ${report.verdict === 'ship' ? `<p class="meta">${esc(t.scope)}</p>` : ''}
-  <div class="scores">${ring(s.overall, t.overall, true)}${ring(s.stability.score, t.stability)}${ring(s.usability.score, t.usability)}${ring(s.performance.score, t.performance)}${ring(s.accessibility.score, t.accessibility)}</div>
+  <div class="scores">${ring(s.overall, t.overall, true)}${ring(s.stability.score, t.stability)}${ring(s.usability.score, t.usability)}${ring(s.performance.score, t.performance)}${ring(s.accessibility.score, t.accessibility)}</div>`
+  }
 </header>
 ${report.findings.length ? `<section><h2>${t.findings} (${report.findings.length})</h2>${report.findings.map((f) => finding(f, lang, shots, analysis)).join('')}</section>` : ''}
 ${report.suggestions.length ? `<section><h2>${t.suggestions}</h2><div class="cols">${report.suggestions.map((g) => `<div class="card"><span class="tag">${esc(g.kind)} · ${t.effort}: ${esc(g.effort)}</span><b>${esc(g.title)}</b>${esc(g.why)}</div>`).join('')}</div></section>` : ''}

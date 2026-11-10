@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ArrowLeft, Check, ClipboardCopy, Download, FileAudio, Languages, Lightbulb, ListChecks, ListRestart, MoreHorizontal, Plus, RefreshCw, ScanSearch, Sparkles, ThumbsUp, Trash2, X } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { useEffect, useRef, useState } from 'react';
-import { fmtDuration, type ReportSuggestion, type SessionDetail, type SessionReport, type TimelineItem, type TranscriptSegment } from '@shared/session';
+import { fmtDuration, nothingToJudge, type ReportSuggestion, type SessionDetail, type SessionReport, type TimelineItem, type TranscriptSegment } from '@shared/session';
 import { Button, IconButton } from '@/components/ui/button';
 import { confirmAction } from '@/components/ui/confirm';
 import { useModal } from '@/components/ui/modal';
@@ -165,7 +165,7 @@ function Report({ detail }: { detail: SessionDetail }) {
           <main className="min-w-0 space-y-6">
             <Summary detail={detail} report={report} t={t} busy={busy} open={report ? report.findings.filter((f) => !skipped.has(f.id)).length : 0} />
             {report && <Verification verification={detail.verification} verifying={detail.verifying} findings={report.findings.filter((f) => !skipped.has(f.id))} t={t} lang={lang} canReplay={replay.can} onReplay={replay.run} />}
-            {analysis && <Scores scores={analysis.scores} previous={detail.previous?.scores ?? null} report={report} t={t} />}
+            {analysis && !nothingToJudge(analysis) && <Scores scores={analysis.scores} previous={detail.previous?.scores ?? null} report={report} t={t} />}
             {report && analysis && <Findings findings={report.findings} skipped={skipped} analysis={analysis} t={t} act={act} start={start} verdicts={detail.verification?.findings ?? null} lang={lang} />}
             {report && <Suggestions report={report} t={t} />}
             {report && <Story report={report} t={t} />}
@@ -456,6 +456,17 @@ function Summary({ detail, report, t, busy, open }: { detail: SessionDetail; rep
   }
   const verdict = { ship: 'bg-ok-soft text-ok', 'fix-first': 'bg-warn-soft text-warn', blocked: 'bg-bad-soft text-bad' }[report.verdict];
   const secs = report.ms ? Math.round(report.ms / 1000) : null;
+  // Nothing was tried: no score, no verdict, and no “no problems found”.
+  if (nothingToJudge(detail.analysis))
+    return (
+      <section className="rounded-[16px] bg-raised p-6 ring-1 ring-inset ring-line" data-nothing-to-judge>
+        <span className="inline-flex h-6 items-center rounded-full bg-sunken px-2.5 text-[12px] font-semibold text-fg-2" data-verdict-badge>
+          {t.nothing}
+        </span>
+        <h1 className="mt-3 text-[24px] font-semibold leading-tight tracking-[-0.02em] text-fg">{t.nothing}</h1>
+        <p className="mt-2 max-w-[78ch] text-[14px] leading-relaxed text-fg-2">{t.nothingWhy}</p>
+      </section>
+    );
   return (
     <section className="relative overflow-hidden rounded-[16px] bg-raised p-6 ring-1 ring-inset ring-line">
       <div className="pointer-events-none absolute -end-24 -top-24 size-72 rounded-full bg-ai-soft blur-3xl" />

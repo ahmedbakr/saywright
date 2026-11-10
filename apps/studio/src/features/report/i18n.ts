@@ -34,6 +34,8 @@ const en = {
   // What recordings can show: errors, failed requests, slowness, frustration. Never whether the app is right.
   verdict: { ship: 'No serious problems found', 'fix-first': 'Fix first', blocked: 'Blocked' },
   clean: 'No technical problems found',
+  nothing: 'Nothing to judge yet',
+  nothingWhy: 'The session recorded no click, typing or remark, so there is no score: record yourself using the app, then stop.',
   scope: 'Saywright looks for errors, failed requests, slow responses and signs of frustration. It can’t tell whether the values on screen are right.',
   addCheck: 'Add a check',
   addCheckHint: 'Point at a value that must be right, like a total, and say what it should show: it becomes a test.',
@@ -128,6 +130,8 @@ const ar: typeof en = {
   play: 'شغّل ما قيل',
   verdict: { ship: 'لا مشكلات خطيرة', 'fix-first': 'يحتاج إصلاحًا أولًا', blocked: 'متوقف' },
   clean: 'لم تُرصد مشكلات تقنية',
+  nothing: 'لا شيء يُحكم عليه بعد',
+  nothingWhy: 'لم تسجّل الجلسة أي نقرة أو كتابة أو ملاحظة، فلا تقييم لها: سجّل نفسك وأنت تستخدم التطبيق، ثم أوقف التسجيل.',
   scope: 'يبحث Saywright عن الأخطاء والطلبات الفاشلة والاستجابات البطيئة وعلامات التعثّر، لكنه لا يستطيع أن يعرف إن كانت القيم المعروضة صحيحة.',
   addCheck: 'أضف فحصًا',
   addCheckHint: 'أشر إلى قيمة يجب أن تكون صحيحة، كالإجمالي، وقل ما يجب أن تعرضه: تصبح اختبارًا.',

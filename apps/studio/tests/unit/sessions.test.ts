@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SessionEvent, SessionTarget } from '@saywright/vite/protocol';
-import { EMPTY_COUNTS, type SessionMeta, type SessionReport, type TranscriptSegment } from '../../shared/session';
+import { EMPTY_COUNTS, nothingToJudge, type SessionMeta, type SessionReport, type TranscriptSegment } from '../../shared/session';
 import { analyze, complaintSeverity, nameOf, pathOf, stackSource, withFindings } from '../../server/sessions/analyze';
 import { renderHtml } from '../../server/sessions/export';
 import { Sessions } from '../../server/sessions/index';
@@ -354,5 +354,37 @@ describe('exported report', () => {
     expect(html).toContain('dir="rtl"');
     expect(html).toContain('تقرير &lt;الجلسة&gt;');
     expect(html).not.toMatch(/<script/i);
+  });
+});
+
+describe('what the report must not miss', () => {
+  const opened = (t: number, over: Record<string, unknown> = {}) => ev(t, { type: 'page', url: 'http://localhost:5174/', title: 'Home', referrer: '', viewport: [1200, 800, 1], ua: 'x', lang: 'en', reload: false, ...over });
+  const click = (t: number) => ev(t, { type: 'click', x: 1, y: 1, button: 0, pointer: 'mouse', count: 1, el: pay });
+
+  it('a page the server answered with an error (a form posted, answered 500) is a finding', () => {
+    const a = analyze(meta(), [opened(0), click(1000), opened(1500, { url: 'http://localhost:5174/submit', title: '500 Internal Server Error', status: 500 })], [], []);
+    expect(a.issues).toEqual([expect.objectContaining({ kind: 'network', severity: 'high', title: 'The page /submit answers 500' })]);
+    expect(a.network.failed).toBe(1);
+    expect(localReport(meta(), a).verdict).not.toBe('ship');
+  });
+
+  it('a request still waiting when the session stopped is a finding: it never answered', () => {
+    const a = analyze(meta(), [opened(0), click(1000), ev(1100, { type: 'net', via: 'fetch', method: 'GET', url: '/api/hang', status: 0, ok: false, ms: 6100, error: 'never answered' })], [], []);
+    expect(a.issues).toEqual([expect.objectContaining({ severity: 'high', title: 'GET /api/hang never answered', detail: 'It was still waiting for an answer after 6.1 s, when the session stopped.' })]);
+  });
+
+  it('a session with no action, nothing said and no problem has nothing to judge', () => {
+    const empty = analyze(meta({ endedAt: T0 + 765 }), [opened(0)], [], []);
+    expect(nothingToJudge(empty)).toBe(true);
+    expect(nothingToJudge(analyze(meta(), [opened(0), click(1000)], [], []))).toBe(false);
+    // The exported page says so instead of a score and “ship”.
+    const html = renderHtml(meta({ endedAt: T0 + 765 }), empty, localReport(meta(), empty), new Map());
+    expect(html).toContain('Nothing to judge yet');
+    expect(html).not.toContain('No technical problems found');
+  });
+
+  it('a page opened by a full load has the title its first look at the screen read', () => {
+    const a = analyze(meta(), [opened(0, { title: '' }), ev(400, { type: 'dom', reason: 'start', url: 'http://localhost:5174/', title: 'Fixture shop', headings: [], text: 'Hello' })], [], []);
+    expect(a.pages[0].title).toBe('Fixture shop');
   });
 });

@@ -280,7 +280,9 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
       const last = pages[pages.length - 1];
       if (last && last.url === e.url) continue;
       if (last) last.ms = e.t - last.t;
-      pages.push({ url: e.url, title: e.title, t: e.t, ms: 0 });
+      // A page opened by a full load is recorded before its <title> is read: its first look at the screen has it.
+      const title = e.title || (events.find((d) => d.type === 'dom' && d.t >= e.t && d.url === e.url && !!(d as { title?: string }).title) as { title?: string } | undefined)?.title || '';
+      pages.push({ url: e.url, title, t: e.t, ms: 0 });
     }
   }
   if (pages.length) pages[pages.length - 1].ms = end - pages[pages.length - 1].t;
@@ -420,6 +422,26 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
         const howAr = e.type === 'page' ? (e.reload ? 'أعاد تحميل' : 'فتح') : e.how === 'pop' ? 'عاد إلى' : 'انتقل إلى';
         add({ t: at, kind: 'navigation', text: `${how} ${pathOf(e.url)}${e.title ? ` (“${e.title}”)` : ''}`, textAr: `${howAr} ${iso(pathOf(e.url))}${e.title ? ` («${iso(e.title)}»)` : ''}` });
         if (e.type === 'page' && !steps.length) steps.push({ t: at, kind: 'navigate', url: e.url, description: `Open ${pathOf(e.url)}`, descriptionAr: `افتح ${iso(pathOf(e.url))}` });
+        // A page the server answered with an error (a form posted, answered 500): the page itself failed.
+        const status = e.type === 'page' ? e.status : undefined;
+        if (status && status >= 400) {
+          const route = normalizePath(pathOf(e.url).split('?')[0]);
+          netFailed++;
+          occur(
+            `net:PAGE ${route}:${status}`,
+            () => ({ t: at, kind: 'network', text: `The page ${pathOf(e.url)} came back with an error (${status})`, textAr: `عادت الصفحة ${iso(pathOf(e.url))} بخطأ (${status})` }),
+            () => ({
+              kind: 'network',
+              severity: status >= 500 ? 'high' : 'medium',
+              title: `The page ${route} answers ${status}`,
+              detail: `The server answered the page itself with an error${e.title ? ` (“${e.title}”)` : ''}: what led here (a form sent, a link) failed.`,
+              titleAr: `الصفحة ${iso(route)} تعيد ${status}`,
+              detailAr: `أجاب الخادم عن الصفحة نفسها بخطأ${e.title ? ` («${iso(e.title)}»)` : ''}: ما أدّى إليها (نموذج أُرسل، رابط) فشل.`,
+              t: at,
+              url: e.url,
+            }),
+          );
+        }
         break;
       }
       case 'scroll':
@@ -476,7 +498,26 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
         ep.totalMs += e.ms * n;
         ep.statuses.add(e.status);
         endpoints.set(key, ep);
-        if (!e.ok && e.error !== 'aborted') {
+        if (e.error === 'never answered') {
+          // Still waiting when the session stopped: the person waited for it, and it never came.
+          netFailed++;
+          ep.failed++;
+          occur(
+            `pending:${key}`,
+            () => ({ t: at, kind: 'network', text: `${e.method} ${page} never answered (waited ${fmtMs(e.ms)})`, textAr: `لم يُجب ${iso(`${e.method} ${page}`)} أبدًا (انتظر ${fmtMsAr(e.ms)})` }),
+            () => ({
+              kind: 'network',
+              severity: 'high',
+              title: `${key} never answered`,
+              detail: `It was still waiting for an answer after ${fmtMs(e.ms)}, when the session stopped.`,
+              titleAr: `${iso(key)} لم يُجب أبدًا`,
+              detailAr: `كان لا يزال ينتظر الإجابة بعد ${fmtMsAr(e.ms)} حين توقّفت الجلسة.`,
+              t: at,
+              url: e.url,
+              src: stackSource(e.stack),
+            }),
+          );
+        } else if (!e.ok && e.error !== 'aborted') {
           netFailed++;
           ep.failed++;
           const sev: Severity = e.status === 0 || e.status >= 500 ? 'high' : 'medium';

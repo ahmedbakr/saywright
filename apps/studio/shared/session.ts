@@ -37,7 +37,8 @@ export interface SessionMeta {
   /** The person named it: the list shows that name rather than the report's title. */
   renamed?: boolean;
   /** The report, in brief: its findings are counted (reports written before they were have no count). */
-  report?: { source: 'ai' | 'claude' | 'local'; model?: string; at: number; overall: number; title: string; scores?: ScoreSummary; findings?: number };
+  /** `empty`: the session recorded nothing to judge (nothingToJudge): its score isn't shown. */
+  report?: { source: 'ai' | 'claude' | 'local'; model?: string; at: number; overall: number; title: string; scores?: ScoreSummary; findings?: number; empty?: boolean };
 }
 
 /** A report's scores as numbers only, kept with the session so a later report can compare without reading this one's analysis. */
@@ -368,6 +369,14 @@ export interface ReplayCheck {
 }
 
 /** How a replay went, as the studio played it. */
+/**
+ * Whether a session recorded nothing to judge: no action, nothing said or marked, no problem. Its report gives no
+ * score and no verdict: a shared “100, ship” would read as a full check when nothing was tried.
+ */
+export function nothingToJudge(a: Pick<SessionAnalysis, 'steps' | 'transcript' | 'issues'> | null | undefined): boolean {
+  return !!a && !a.steps.some((s) => s.kind !== 'navigate') && !a.transcript.length && !a.issues.length;
+}
+
 export interface ReplayOutcome {
   /** Steps played; `failed`: the first one that couldn't be (what comes after it wasn't reached). */
   steps: { total: number; done: number; failed?: { i: number; t: number; description: string; descriptionAr?: string; reason: string } };

@@ -59,6 +59,8 @@ const SCREEN_CHARS = 4000;
 /** After an action, the screen counts as settled once nothing changed for SETTLE_MS, or after SETTLED_BY_MS at most. */
 const SETTLE_MS = 600;
 const SETTLED_BY_MS = 4000;
+/** How long a request may still be waiting when a session stops before it counts as never answered. */
+const UNANSWERED_MS = 3000;
 /** Dialogs and messages: often shown outside the page's main region, in a portal. */
 const LAYERS = 'dialog[open], [role="dialog"], [role="alertdialog"], [role="alert"], [role="status"], [aria-live="polite"], [aria-live="assertive"]';
 const NO_TEXT = new Set(['script', 'style', 'template', 'noscript', 'link', 'meta']);
@@ -235,6 +237,8 @@ export class SessionRecorder {
   private firstLook: 'start' | 'reload' | null = null;
   /** Requests started, DOM changes seen: lets a click tell whether it did anything. */
   private requests = 0;
+  /** Requests sent and not answered yet: one still open when the session stops, after a while, never answered. */
+  private open = new Map<object, { via: 'fetch' | 'xhr'; method: string; url: string; t: number; site: Error }>();
   private lastClicks: { t: number; x: number; y: number }[] = [];
   private submits = new EnterSubmits();
   private rageAt = 0;
@@ -290,6 +294,7 @@ export class SessionRecorder {
   stop(): void {
     if (!this.active) return;
     this.gather();
+    this.unanswered();
     const outbox = this.outbox;
     writeJson(ACTIVE_KEY, null);
     this.active = null;
@@ -325,6 +330,16 @@ export class SessionRecorder {
     this.screenSettled();
   }
 
+  /** Requests still waiting for their answer, a few seconds or more: recorded as never answered. */
+  private unanswered(): void {
+    const t = now();
+    for (const [k, r] of this.open) {
+      if (t - r.t < UNANSWERED_MS) continue;
+      this.open.delete(k);
+      this.record({ type: 'net', via: r.via, method: r.method, url: shortUrl(r.url), status: 0, ok: false, ms: Math.round(t - r.t), error: 'never answered', stack: callSite(r.site) }, r.t, true);
+    }
+  }
+
   mark(note: string, via: string): void {
     if (!this.active) return;
     this.record({ type: 'mark', note: collapse(note, 300), via }, now(), true);
@@ -358,6 +373,8 @@ export class SessionRecorder {
       timing: nav && nav.loadEventEnd > 0 ? { ttfb: Math.round(nav.responseStart), dcl: Math.round(nav.domContentLoadedEventEnd), load: Math.round(nav.loadEventEnd) } : undefined,
       // What the app had saved when the session started: a replay compares its own start with it.
       ...(resumed ? {} : { state: savedState() }),
+      // The page's own answer: a form posted and answered with an error page is a failed request too.
+      ...(nav && (nav as PerformanceNavigationTiming & { responseStatus?: number }).responseStatus ? { status: (nav as PerformanceNavigationTiming & { responseStatus?: number }).responseStatus } : {}),
     }, now(), true);
     // Events a previous page load couldn't send before it went away (this session's only).
     const pending = readJson<Pending>(PENDING_KEY);
@@ -872,8 +889,11 @@ export class SessionRecorder {
       // Where the app made the request: the browser keeps the frames, and only a request that goes wrong turns them into text.
       const site = new Error();
       self.requests++;
+      const key = {};
+      self.open.set(key, { via: 'fetch', method, url, t, site });
       try {
         const res = await original.call(this, input, init);
+        self.open.delete(key);
         const ms = Math.round(now() - t);
         let body: string | undefined;
         if (!res.ok) {
@@ -889,6 +909,7 @@ export class SessionRecorder {
         self.net({ type: 'net', via: 'fetch', method, url: shortUrl(url), status: res.status, ok: res.ok, ms, size, body, ctype, stack: suspect ? callSite(site) : undefined }, t);
         return res;
       } catch (err) {
+        self.open.delete(key);
         const aborted = (err as Error)?.name === 'AbortError';
         self.net({ type: 'net', via: 'fetch', method, url: shortUrl(url), status: 0, ok: false, ms: Math.round(now() - t), error: aborted ? 'aborted' : collapse((err as Error)?.message ?? String(err), 200), stack: aborted ? undefined : callSite(site) }, t);
         throw err;
@@ -912,7 +933,9 @@ export class SessionRecorder {
         const t = now();
         const site = new Error();
         self.requests++;
+        self.open.set(this, { via: 'xhr', method: meta.method, url: meta.url, t, site });
         this.addEventListener('loadend', () => {
+          self.open.delete(this);
           const ok = this.status >= 200 && this.status < 400;
           let text: string | undefined;
           if (!ok && (this.responseType === '' || this.responseType === 'text')) text = collapse(this.responseText, 800);

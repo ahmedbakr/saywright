@@ -188,3 +188,46 @@ test('correct a word in the transcript, then rewrite the report with it', async 
   expect(d.analysis.transcript[0].text).toContain('smoke and steam');
   expect(d.analysis.transcript[0].original).toBe(heard);
 });
+
+test('a request still waiting when the session stops is in the report; an empty session has nothing to judge, and no score', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('saywright.session.prefs', JSON.stringify({ lang: 'en', mic: false, screen: false, video: false, countdown: 0 })));
+  // Never answered.
+  await page.route('**/api/hang', () => undefined);
+  await openStudio(page);
+  const frame = page.frames().find((f) => f.url().startsWith(SHOP_URL))!;
+  const record = async (name: string, during: () => Promise<void>) => {
+    await page.getByRole('button', { name: 'Record session', exact: true }).click();
+    await page.getByPlaceholder('What are you testing? (optional)').fill(name);
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+    await during();
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    let id = '';
+    await expect
+      .poll(async () => {
+        const { sessions } = (await (await fetch(`${STUDIO}/api/sessions`)).json()) as { sessions: { id: string; name: string; status: string }[] };
+        id = sessions.find((s) => s.name === name)?.id ?? '';
+        return sessions.find((s) => s.id === id)?.status;
+      }, { timeout: 60_000 })
+      .toBe('ready');
+    return id;
+  };
+  const hung = await record('Export CSV', async () => {
+    await frame.evaluate(() => {
+      const b = document.createElement('button');
+      b.textContent = 'Export CSV';
+      b.onclick = () => void fetch('/api/hang');
+      document.body.prepend(b);
+    });
+    await frame.getByRole('button', { name: 'Export CSV' }).click();
+    await page.waitForTimeout(4000);
+  });
+  const d = (await (await fetch(`${STUDIO}/api/sessions/${hung}`)).json()) as { analysis: { issues: { title: string }[] } };
+  expect(d.analysis.issues.map((i) => i.title)).toContain('GET /api/hang never answered');
+  await page.keyboard.press('Escape');
+
+  const empty = await record('Empty', async () => undefined);
+  await page.goto(`/report/${empty}`);
+  await expect(page.locator('[data-nothing-to-judge]')).toContainText('Nothing to judge yet');
+  await expect(page.getByText('No technical problems found')).toHaveCount(0);
+});

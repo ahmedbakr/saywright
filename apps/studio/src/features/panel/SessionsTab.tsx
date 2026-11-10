@@ -42,7 +42,8 @@ export function SessionsTab() {
       )}
       <div className="space-y-1.5">
         {list.map((m) => {
-          const score = m.report?.overall;
+          // A session that recorded nothing to judge has no score.
+          const score = m.report?.empty ? undefined : m.report?.overall;
           const busy = m.status === 'processing' || m.status === 'recording';
           // What its report found; for a report written before findings were counted, what the recording showed.
           const n = m.report?.findings;

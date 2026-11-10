@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionBatch, SessionEvent, SessionEventBody } from '@saywright/vite/protocol';
-import type { NarrationState, ReplayOutcome, ReportDecisions, ScoreSummary, SessionDetail, SessionLang, SessionLive, SessionMeta, SessionReport, SessionScores, TranscriptSegment } from '../../shared/session.ts';
+import { nothingToJudge, type NarrationState, type ReplayOutcome, type ReportDecisions, type ScoreSummary, type SessionDetail, type SessionLang, type SessionLive, type SessionMeta, type SessionReport, type SessionScores, type TranscriptSegment } from '../../shared/session.ts';
 import { HttpError } from '../http.ts';
 import type { Project } from '../project.ts';
 import { breathe } from '../slices.ts';
@@ -434,7 +434,7 @@ export class Sessions {
       status: 'ready',
       stage: undefined,
       error: undefined,
-      report: { source: report.source, model: report.model, at: report.at, overall: scores.overall, title: report.title, scores: summaryOf(scores), findings: report.findings.length },
+      report: { source: report.source, model: report.model, at: report.at, overall: scores.overall, title: nothingToJudge(analysis) ? 'Nothing to judge yet' : report.title, scores: summaryOf(scores), findings: report.findings.length, ...(nothingToJudge(analysis) ? { empty: true } : {}) },
     });
     this.emit({ kind: 'status', id, status: done.status });
     if (report.source !== 'local') void this.translate(id);
