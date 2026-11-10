@@ -127,7 +127,7 @@ Anything that isn't a quick edit or a question (“add a free-shipping banner ab
 
 For this walk-through, click **Undo**, so the bug is still there for the next steps (on your own app, you would click **Keep fix**). Then press <kbd>E</kbd> to go back to Edit mode.
 
-> Running the test needs Playwright in the app. The sample shop has it; if the browser isn't installed, the Test tab offers **Install test browser**.
+> Running the test needs Playwright in the app. The sample shop has it; in an app of yours that doesn't, the run's card offers **Add Playwright to this app**, which adds it with the app's own package manager and runs the test. The test runs in Playwright's own browser, or in the Chrome or Edge on your computer when that one isn't installed.
 
 ## 9. Record a session
 
