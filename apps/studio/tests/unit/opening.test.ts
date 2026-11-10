@@ -325,3 +325,13 @@ describe('an app connected with a script tag', { timeout: 60_000 }, () => {
     }
   });
 });
+
+describe('an address given with --target', { timeout: 30_000 }, () => {
+  it('is not kept in the app list when nothing ever answers there', async () => {
+    const url = `http://localhost:${await closedPort()}`;
+    const before = apps.registry.list().length;
+    await expect(apps.openTarget(url, null)).rejects.toThrow(/isn’t (answering|running)/);
+    expect(apps.registry.list()).toHaveLength(before);
+    expect(apps.registry.find(null, url)).toBeNull();
+  });
+});

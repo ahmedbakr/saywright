@@ -445,6 +445,7 @@ export class AppManager {
    */
   async openTarget(url: string, root: string | null): Promise<Workspace> {
     let app = this.registry.find(root, url);
+    const added = !app;
     if (!app) {
       const probe: AppProbe = root ? probeFolder(root) : { name: new URL(url).hostname, root: null, connection: 'proxy', notes: [] };
       probe.connection = root && hasPlugin(root) ? 'plugin' : (await pluginAnswers(url)) ? 'plugin' : 'proxy';
@@ -455,7 +456,13 @@ export class AppManager {
       app = this.registry.update(app.id, { env: (env ?? app.envs[app.envs.length - 1]).id, start: null });
     }
     this.launcher = false;
-    return this.open(app.id);
+    try {
+      return await this.open(app.id);
+    } catch (err) {
+      // Linked only for this start, and never reached (nothing answers, or it didn't start): not kept in the app list.
+      if (added && err instanceof HttpError && err.status === 502) this.registry.remove(app.id);
+      throw err;
+    }
   }
 
   close(): void {

@@ -28,8 +28,8 @@ Most of Saywright is set up in the studio itself (**Settings**). This page lists
 | --- | --- | --- |
 | `--port <number>` (`-p`) | `7357` | Where the studio listens. Without `--port`, the next free port is used when 7357 is taken; with it, that port or an error. |
 | `--no-open` | opens | Don't open a browser. It isn't opened when `CI` is set either. |
-| `--target <url>` | | Open this running app straight away. |
-| `--root <folder>` | | Where that app's code is, when the app can't say (an app without the plugin, such as Next.js or Create React App). |
+| `--target <url>` | | Open this running app straight away (an `http://` or `https://` address). An address the studio never reaches isn't added to your apps. |
+| `--root <folder>` | | Where that app's code is, when the app can't say (an app without the plugin, such as Next.js or Create React App). Only with `--target`. |
 
 If a studio already answers on the port, the command opens it instead of starting a second one. **Ctrl+C** stops the studio and the dev servers it started; so does closing the terminal, and so does a crash.
 

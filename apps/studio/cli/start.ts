@@ -48,6 +48,15 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
     fail(`--port takes a number from 1 to 65535, not “${values.port}”.`);
     return 1;
   }
+  // Checked before anything starts: a studio that starts anyway would open no app and leave the person guessing why.
+  if (values.target !== undefined && !isAppAddress(values.target)) {
+    fail(`--target takes the address of a running app, like http://localhost:3000, not “${values.target}”.`);
+    return 1;
+  }
+  if (values.root !== undefined && values.target === undefined) {
+    fail('--root says where the code of the app given with --target is: give --target too.', 'To link an app’s folder, start the studio and choose Link an app.');
+    return 1;
+  }
   const open = values.open && !process.env.CI;
   if (await running(port)) {
     console.log(`Saywright is already running at ${c.cyan(`http://localhost:${port}`)}.`);
@@ -94,4 +103,13 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
 export function shortHome(dir: string, home = os.homedir()): string {
   if (dir === home) return '~';
   return dir.startsWith(home.endsWith(path.sep) ? home : home + path.sep) ? `~${path.sep}${dir.slice(home.length).replace(/^[\\/]+/, '')}` : dir;
+}
+
+/** An http(s) address, as a running app has. */
+function isAppAddress(text: string): boolean {
+  try {
+    return /^https?:$/.test(new URL(text).protocol);
+  } catch {
+    return false;
+  }
 }

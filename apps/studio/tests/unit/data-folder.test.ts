@@ -99,6 +99,17 @@ describe('the command line', () => {
     }
   });
 
+  it('refuses a --target that isn’t an address, and a --root without a --target', async () => {
+    const client = temp();
+    fs.writeFileSync(path.join(client, 'index.html'), '');
+    out = [];
+    expect(await main(['--target', 'banana', '--no-open'], { ...ctxFor(temp()), clientDir: client })).toBe(1);
+    expect(out.join('\n')).toMatch(/--target takes the address of a running app, like http:\/\/localhost:3000, not “banana”/);
+    out = [];
+    expect(await main(['--root', '.', '--no-open'], { ...ctxFor(temp()), clientDir: client })).toBe(1);
+    expect(out.join('\n')).toMatch(/--root says where the code of the app given with --target is/);
+  });
+
   it('shortens the data folder to ~ only under the home folder', () => {
     expect(shortHome('/home/alice/.saywright', '/home/al')).toBe('/home/alice/.saywright');
     expect(shortHome('/home/al/.saywright', '/home/al')).toBe(`~${path.sep}.saywright`);
