@@ -31,6 +31,7 @@ import tls from 'node:tls';
 import zlib from 'node:zlib';
 import { PROXY_CREDENTIALS_HEADER as CREDENTIALS_HEADER } from '@saywright/vite/protocol';
 import { relay } from '../streams.ts';
+import { certificateProblem, isLoopback, tlsFor } from './local-tls.ts';
 import { freePort } from './runner.ts';
 
 interface ProxyOptions {
@@ -501,7 +502,8 @@ export class AppProxy {
     const lib = url.protocol === 'https:' ? https : http;
     const upstreamReq = lib.request(
       url,
-      { method: req.method, headers: this.requestHeaders(req, target, proxyOrigin), servername: url.hostname, timeout: 30_000 },
+      // A dev server on this computer is accepted with its own certificate, as the developer accepted it in their browser.
+      { method: req.method, headers: this.requestHeaders(req, target, proxyOrigin), servername: url.hostname, timeout: 30_000, ...tlsFor(url) },
       (up) => this.answer(up, res, () => this.respond(target, req, up, res, proxyOrigin)),
     );
     untilGone(res, upstreamReq);
@@ -511,7 +513,11 @@ export class AppProxy {
       if (res.destroyed) return;
       if (res.headersSent) return void res.destroy();
       res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(`<!doctype html><meta charset="utf-8"><body style="font:14px system-ui;padding:32px;color:#333"><h2 style="margin:0 0 8px">${target.upstream.origin} didn’t answer</h2><p>${String(err.message).replace(/[<>&]/g, '')}</p><p>Check that it is running, then reload.</p>`);
+      const cert = certificateProblem(err);
+      const [title, advice] = cert
+        ? [`${target.upstream.origin}’s certificate isn’t trusted`, 'This computer doesn’t trust the certificate it sent, so the studio doesn’t show it (it accepts a development certificate only from an app on this computer).']
+        : [`${target.upstream.origin} didn’t answer`, 'Check that it is running, then reload.'];
+      res.end(`<!doctype html><meta charset="utf-8"><body style="font:14px system-ui;padding:32px;color:#333"><h2 style="margin:0 0 8px">${title}</h2><p>${String(cert ?? err.message).replace(/[<>&]/g, '')}</p><p>${advice}</p>`);
     });
     req.pipe(upstreamReq);
   }
@@ -556,7 +562,7 @@ export class AppProxy {
     const secure = url.protocol === 'https:';
     const lib = secure ? https : http;
     // This computer's own API often has a self-signed development certificate; the connection never leaves the computer.
-    const tlsOptions = secure ? { rejectUnauthorized: false, servername: url.hostname === 'localhost' ? 'localhost' : undefined } : {};
+    const tlsOptions = secure ? { ...tlsFor(url), servername: url.hostname === 'localhost' ? 'localhost' : undefined } : {};
     // What the API's CORS rules don't let a page of the site read, the page doesn't get: as in the site's own tab.
     const blocked = (why: string) => {
       if (res.destroyed) return;
@@ -692,7 +698,9 @@ export class AppProxy {
     const secure = to.protocol === 'https:';
     const port = Number(to.port) || (secure ? 443 : 80);
     const host = to.hostname.replace(/^\[|\]$/g, '');
-    const upstream = secure ? tls.connect({ host, port, servername: api ? undefined : to.hostname, rejectUnauthorized: !api }) : net.connect({ host, port });
+    // A dev server on this computer (the site or its API) is accepted with its own certificate; a site elsewhere is not.
+    const servername = net.isIP(host) ? undefined : host;
+    const upstream = secure ? tls.connect({ host, port, servername, rejectUnauthorized: !isLoopback(to.hostname) }) : net.connect({ host, port });
     const path = api ? api.pathname + api.search : req.url;
     upstream.once(secure ? 'secureConnect' : 'connect', () => {
       const headers: IncomingHttpHeaders = { ...req.headers, host: to.host };

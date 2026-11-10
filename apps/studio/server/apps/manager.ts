@@ -14,6 +14,7 @@ import { Project } from '../project.ts';
 import type { Sessions } from '../sessions/index.ts';
 import type { SourceMapper } from '../sessions/sourcemap.ts';
 import { dependenciesInstalled, hasPlugin, hasScriptTag, probeFolder } from './detect.ts';
+import { appFetch } from './local-tls.ts';
 import { AppProxy } from './proxy.ts';
 import { AppRegistry, appStateDir, envFor } from './registry.ts';
 import { AppRunner } from './runner.ts';
@@ -44,14 +45,15 @@ interface ManagerDeps {
 export type OpenDecision = 'keep' | 'undo';
 
 const answers = (url: string, ms = 2500) =>
-  fetch(url, { signal: AbortSignal.timeout(ms) })
+  appFetch(url, { signal: AbortSignal.timeout(ms) })
     .then((r) => r.status < 500)
     .catch(() => false);
 
+// A dev server on this computer is accepted with its own certificate (see local-tls.ts).
 // A dev server that just started can be slow to answer anything (pre-bundling its dependencies, type-checking on a
 // busy computer): an app whose config loads the plugin gets longer.
 const pluginAnswers = (url: string, ms = 5000) =>
-  fetch(new URL('/__saywright/info', url), { signal: AbortSignal.timeout(ms) })
+  appFetch(new URL('/__saywright/info', url), { signal: AbortSignal.timeout(ms) })
     .then((r) => r.ok && /json/.test(r.headers.get('content-type') ?? ''))
     .catch(() => false);
 
@@ -61,7 +63,7 @@ const pluginAnswers = (url: string, ms = 5000) =>
  */
 async function servedFolder(url: string, ms: number): Promise<string | null | undefined> {
   try {
-    const res = await fetch(new URL('/__saywright/info', url), { signal: AbortSignal.timeout(ms) });
+    const res = await appFetch(new URL('/__saywright/info', url), { signal: AbortSignal.timeout(ms) });
     if (!res.ok || !/json/.test(res.headers.get('content-type') ?? '')) return null;
     const root = ((await res.json()) as { root?: unknown }).root;
     return typeof root === 'string' ? root : null;
@@ -401,7 +403,7 @@ export class AppManager {
   private async announce(ws: Workspace): Promise<void> {
     if (ws.env.connection !== 'plugin') return;
     try {
-      await fetch(new URL('/__saywright/studio', ws.project.url), { method: 'POST', body: JSON.stringify({ url: this.deps.studio() }), signal: AbortSignal.timeout(2000) });
+      await appFetch(new URL('/__saywright/studio', ws.project.url), { method: 'POST', body: JSON.stringify({ url: this.deps.studio() }), signal: AbortSignal.timeout(2000) });
     } catch {
       /* the app's tab finds the studio by its default address */
     }

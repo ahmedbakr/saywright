@@ -10,12 +10,15 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import zlib from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppProxy, corsAllows, fromPage, PageRewriter, preflightAllows, preflightFor, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaRequest, viaUrl } from '../../server/apps/proxy';
+import { probeUrl } from '../../server/apps/detect';
+import { certificateProblem, tlsFor } from '../../server/apps/local-tls';
 
 let upstream: http.Server;
 let upstreamUrl = '';
@@ -432,6 +435,73 @@ describe('the app’s API on another port of this computer', () => {
     expect(await handshake(route('/hub'), 'https://evil.example')).toBe('');
     // A path for a port it won't pass on to is refused, never handed to the site itself.
     expect(await handshake(route('/hub', 5173), origin)).toBe('');
+  });
+});
+
+describe('an app on this computer served over https with its own development certificate', () => {
+  const tlsDir = path.join(__dirname, '../fixtures/tls');
+  let site: https.Server;
+  let siteUrl = '';
+  const tlsProxy = new AppProxy({ studio: () => 'http://localhost:5173', port: 5560 });
+
+  beforeAll(async () => {
+    site = https.createServer({ key: fs.readFileSync(path.join(tlsDir, 'localhost-key.pem')), cert: fs.readFileSync(path.join(tlsDir, 'localhost-cert.pem')) }, (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><html><head><title>Secure</title></head><body>over https</body></html>');
+    });
+    site.on('upgrade', (req, socket) => {
+      const accept = crypto.createHash('sha1').update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      socket.on('data', (d) => socket.write(d));
+    });
+    await new Promise<void>((r) => site.listen(0, '127.0.0.1', () => r()));
+    siteUrl = `https://localhost:${(site.address() as net.AddressInfo).port}`;
+  });
+  afterAll(() => {
+    tlsProxy.close();
+    site.close();
+  });
+
+  it('shows its pages and tunnels its live-reload socket', async () => {
+    const at = new URL(await tlsProxy.open(`${siteUrl}/`, 'secure/local'));
+    const page = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      http
+        .get({ host: '127.0.0.1', port: at.port, path: '/', headers: { host: at.host, 'sec-fetch-dest': 'document', 'sec-fetch-mode': 'navigate' } }, (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+        })
+        .on('error', reject);
+    });
+    expect(page.status).toBe(200);
+    expect(page.body).toContain('over https');
+    expect(page.body).toContain('saywright.js');
+    const socket = net.connect(Number(at.port), '127.0.0.1');
+    const got = await new Promise<string>((resolve) => {
+      let buf = '';
+      socket.on('data', (d) => {
+        buf += d.toString('latin1');
+        if (buf.includes('\r\n\r\n') && !buf.includes('ping')) socket.write('ping');
+        if (buf.includes('ping')) resolve(buf);
+      });
+      socket.on('close', () => resolve(buf));
+      socket.write(`GET /hmr HTTP/1.1\r\nHost: ${at.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nOrigin: ${at.origin}\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+    });
+    socket.destroy();
+    expect(got).toMatch(/^HTTP\/1\.1 101/);
+  });
+
+  it('is accepted by its link check, and a certificate is never accepted from a host elsewhere', async () => {
+    expect((await probeUrl(`${siteUrl}/`)).title).toBe('Secure');
+    expect(tlsFor(new URL('https://shop.example/'))).toEqual({});
+    expect(tlsFor(new URL('https://192.168.1.20/'))).toEqual({});
+    expect(tlsFor(new URL('https://localhost:8443/'))).toEqual({ rejectUnauthorized: false });
+  });
+
+  it('says a certificate is why a site elsewhere can’t be shown', () => {
+    const err = new TypeError('fetch failed', { cause: Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' }) });
+    expect(certificateProblem(err)).toBe('self-signed certificate');
+    expect(certificateProblem(new TypeError('fetch failed', { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }))).toBeNull();
   });
 });
 

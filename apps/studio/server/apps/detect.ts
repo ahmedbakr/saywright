@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AppProbe, Connection, FolderListing, Framework, PackageManager } from '../../shared/apps.ts';
 import { loadsPlugin } from './vite-config.ts';
+import { appFetch, certificateProblem } from './local-tls.ts';
 
 interface Pkg {
   name?: string;
@@ -392,7 +393,7 @@ async function fetchIcon(pageUrl: string, html: string): Promise<string | undefi
   const href = links.map((t) => attr(t, 'href')).find(Boolean) ?? '/favicon.ico';
   try {
     if (href.startsWith('data:')) return href.length < 40_000 ? href : undefined;
-    const res = await fetch(new URL(href, pageUrl), { signal: AbortSignal.timeout(4000) });
+    const res = await appFetch(new URL(href, pageUrl), { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return undefined;
     const type = (res.headers.get('content-type') ?? '').split(';')[0] || 'image/x-icon';
     if (!/^image\//.test(type)) return undefined;
@@ -415,8 +416,11 @@ export async function probeUrl(input: string): Promise<AppProbe> {
   const local = isLocalHost(url.hostname);
   let res: Response;
   try {
-    res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0 (Saywright link check)' } });
+    // A dev server on this computer is accepted with its own (development) certificate.
+    res = await appFetch(url, { redirect: 'follow', signal: AbortSignal.timeout(8000), headers: { 'User-Agent': 'Mozilla/5.0 (Saywright link check)' } });
   } catch (err) {
+    const cert = certificateProblem(err);
+    if (cert) throw new Error(`${url.origin}’s certificate isn’t trusted by this computer (${cert}), so the studio can’t show it.`);
     const why = err instanceof Error && err.name === 'TimeoutError' ? 'didn’t answer within 8 seconds' : 'isn’t reachable';
     throw new Error(local ? `${url.origin} ${why}. Start the app first, or link its folder and the studio starts it.` : `${url.origin} ${why}.`);
   }
@@ -429,7 +433,7 @@ export async function probeUrl(input: string): Promise<AppProbe> {
   // The plugin answers on the app's own dev server.
   let plugin = false;
   if (local) {
-    plugin = await fetch(new URL('/__saywright/info', final), { signal: AbortSignal.timeout(2500) })
+    plugin = await appFetch(new URL('/__saywright/info', final), { signal: AbortSignal.timeout(2500) })
       .then((r) => r.ok && /json/.test(r.headers.get('content-type') ?? ''))
       .catch(() => false);
   }
