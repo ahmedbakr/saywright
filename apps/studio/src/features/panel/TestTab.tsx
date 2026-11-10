@@ -173,7 +173,7 @@ export function TestTab() {
             })}
             {recording && !selection && (
               <p className="px-1 pt-1 text-[12px] leading-relaxed text-fg-3">
-                Point at a value in your app and say “this should show …”, or type that in the command bar at the bottom while the pointer rests on it.
+                Point at a value in your app and say “this should show …”, or rest the pointer on it and then type that in the command bar at the bottom.
               </p>
             )}
             {recording && selection && (
