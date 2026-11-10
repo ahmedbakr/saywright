@@ -12,6 +12,7 @@ import { envFor } from './apps/registry.ts';
 import { appRoutes } from './apps/routes.ts';
 import { probeFolder } from './apps/detect.ts';
 import { connectedTargets } from './apps/connected.ts';
+import { keepStartedIn, stopLeftovers } from './apps/started.ts';
 import { FakeProvider, fakeAutopilotAsk, fakeExpertAsk } from './ai/fake.ts';
 import { AiService } from './ai/service.ts';
 import { AgentError, type AgentProvider } from './ai/types.ts';
@@ -170,6 +171,11 @@ export async function createStudioApi(layout: StudioLayout) {
   );
 
   // Each linked app gets its own workspace: its code, previews, sessions and metrics.
+  // Dev servers a studio that ended without stopping them left running (its terminal closed, a crash): stopped
+  // before anything answering at their ports is taken for the app.
+  keepStartedIn(dataDir);
+  const leftovers = await stopLeftovers();
+  if (leftovers) console.warn(`[saywright] stopped ${leftovers} dev server(s) the last studio started and left running.`);
   const apps = new AppManager({
     dataDir,
     emit: (event, data) => hub.emit(event, data),

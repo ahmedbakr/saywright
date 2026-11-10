@@ -5,7 +5,9 @@
  * move when one is taken. Output is kept (last lines) for the app list.
  *
  * What it starts, the studio stops: the whole process group, and a server the
- * command moved to the background (it says where and its pid) too.
+ * command moved to the background (it says where and its pid) too. The groups
+ * are written down in the data folder while they run (started.ts), so what a
+ * studio that ended without stopping them left is stopped by the next one.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
@@ -15,6 +17,7 @@ import net from 'node:net';
 import path from 'node:path';
 import type { AppRun, LinkedApp, RunStatus } from '../../shared/apps.ts';
 import { sendFile } from '../streams.ts';
+import { ended, started } from './started.ts';
 
 const MAX_LOG = 300;
 // oxlint-disable-next-line no-control-regex -- the escape character starts the terminal's colour and title codes
@@ -264,6 +267,15 @@ export class AppRunner {
     const proc = spawn(command, { cwd, shell: true, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32', env: { ...process.env, ...CHILD_ENV } });
     proc.stdout?.on('data', (d: Buffer) => this.append(r, d.toString()));
     proc.stderr?.on('data', (d: Buffer) => this.append(r, d.toString()));
+    // Written down in the data folder until the group is gone, so a studio that ends without stopping it (its
+    // terminal closed, a crash) has the next one stop it (started.ts).
+    const pid = proc.pid;
+    if (process.platform !== 'win32') {
+      started(pid, command, cwd);
+      proc.on('exit', () => {
+        if (pid && !treeAlive(pid)) ended(pid);
+      });
+    }
     return proc;
   }
 
@@ -410,6 +422,7 @@ export class AppRunner {
       killTree(pid, 'SIGTERM');
       for (const end = Date.now() + 4000; Date.now() < end && treeAlive(pid); ) await new Promise((res) => setTimeout(res, 100));
       if (treeAlive(pid)) killTree(pid, 'SIGKILL');
+      ended(pid);
     }
     r.proc = null;
     this.emit(this.view(r));

@@ -68,14 +68,23 @@ export async function start(argv: string[], ctx: CliContext): Promise<number> {
   if (open) openBrowser(studio.url);
 
   // Runs until Ctrl+C: the studio stops the apps it started, then the process ends (a second Ctrl+C doesn't wait).
+  // Closing the terminal (SIGHUP) and a crash do the same: the dev servers are in process groups of their own, which
+  // nothing else would stop.
   return new Promise<number>(() => {
     let stopping = false;
-    const stop = () => {
+    const stop = (code: number) => {
       if (stopping) process.exit(1);
       stopping = true;
-      void studio.close().finally(() => process.exit(0));
+      void studio.close().finally(() => process.exit(code));
     };
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
+    process.on('SIGINT', () => stop(0));
+    process.on('SIGTERM', () => stop(0));
+    process.on('SIGHUP', () => stop(129));
+    const crash = (err: unknown) => {
+      fail(`The studio stopped on an error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+      stop(1);
+    };
+    process.on('uncaughtException', crash);
+    process.on('unhandledRejection', crash);
   });
 }

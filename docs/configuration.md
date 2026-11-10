@@ -31,7 +31,7 @@ Most of Saywright is set up in the studio itself (**Settings**). This page lists
 | `--target <url>` | | Open this running app straight away. |
 | `--root <folder>` | | Where that app's code is, when the app can't say (an app without the plugin, such as Next.js or Create React App). |
 
-If a studio already answers on the port, the command opens it instead of starting a second one. **Ctrl+C** stops the studio and the dev servers it started.
+If a studio already answers on the port, the command opens it instead of starting a second one. **Ctrl+C** stops the studio and the dev servers it started; so does closing the terminal, and so does a crash.
 
 #### `saywright connect`
 
@@ -121,7 +121,8 @@ The studio and the proxy listen on this computer only (`127.0.0.1`; the proxy al
 | `usage/` | The AI usage log and your budget |
 | `studio.json` | Studio settings kept on the server, such as the speech model per language |
 | `mcp-token` | The MCP token (readable by you alone) |
-| `server.json` | Where the running studio listens, for `saywright mcp` |
+| `server.json` | Where the running studio listens, for `saywright mcp`, `connect` and `doctor`; removed when it stops |
+| `started.json` | The process groups of the dev servers the studio started, while they run: if the studio ends without stopping them (its terminal closed, a crash), the next one stops those still running the same command in the same folder |
 | `proxy-ports.json` | The proxy's port for each app address |
 | `google-service-account.json` | The Google service account key, if you added one (readable by you alone) |
 | `models/` | The on-device voice model |
