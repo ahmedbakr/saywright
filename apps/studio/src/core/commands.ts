@@ -104,6 +104,10 @@ export interface SpokenExpectation {
   /** The word that names the element ("this", "the total"), when there is one. */
   subject: string | null;
   expected: string;
+  /** “this shouldn't show $51.71”: the value must not be there. */
+  not?: boolean;
+  /** “this should be visible”, “it should be disabled”: a state, not a value (checked boxes are `expected`). */
+  state?: 'visible' | 'hidden' | 'enabled' | 'disabled';
   /**
    * All the words said, when `expected` was cut from them at a “not” or a “but” (“Paid, not yet” → “Paid”): what the
    * check is about if the element already shows all of it.
@@ -119,21 +123,53 @@ export function parseExpectation(text: string): SpokenExpectation | null {
   // "this shouldn't be checked", "it should not be ticked": a box that must be left clear.
   const off = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|ought to|is supposed to)\s*(?:not|n['’]t)\s+be\s+(?:checked|ticked|selected|chosen|on)[.!?]*$/i.exec(text.trim());
   if (off) return { subject: off[1]?.toLowerCase() ?? null, expected: 'not checked' };
+  // "this should be visible", "the button shouldn't be enabled", "it should be gone".
+  const st = new RegExp(`^${LEAD}(?:${SHOULD})\\s*(not\\s+|n['’]t\\s+)?be\\s+(visible|shown|displayed|showing|on screen|hidden|invisible|gone|enabled|clickable|disabled|gr[ae]yed out)[.!?]*$`, 'i').exec(text.trim());
+  if (st) {
+    const word = st[3].toLowerCase();
+    const state = /^(?:visible|shown|displayed|showing|on screen)$/.test(word) ? 'visible' : /^(?:hidden|invisible|gone)$/.test(word) ? 'hidden' : /^(?:enabled|clickable)$/.test(word) ? 'enabled' : 'disabled';
+    const flip = { visible: 'hidden', hidden: 'visible', enabled: 'disabled', disabled: 'enabled' } as const;
+    return { subject: st[1]?.toLowerCase() ?? null, expected: st[2] ? flip[state] : state, state: st[2] ? flip[state] : state };
+  }
+  // "this shouldn't show $51.71", "it should not say Error": the value must not be there.
+  const neg = new RegExp(`^${LEAD}(?:${SHOULD})\\s*(?:not|n['’]t)\\s+(?:be|say|show|read|display|contain|include|have)\\s+(.+)$`, 'is').exec(text.trim());
+  if (neg) {
+    const value = valueOf(neg[2]);
+    return value ? { subject: neg[1]?.toLowerCase() ?? null, expected: value.expected, not: true } : null;
+  }
   const m = /^(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?(?:should|must|needs to|ought to|is supposed to|has to)\s+(?:be|say|show|read|display|equal|contain|have|include)\s+(.+)$/is.exec(
     text.trim(),
   );
   if (!m) return null;
-  const subject = m[1]?.toLowerCase() ?? null;
-  // A quoted value is taken whole, whatever words are in it.
-  const quoted = /^(?:"([^"]+)"|“([^”]+)”|‘([^’]+)’|'([^']+)'|«([^»]+)»)/.exec(m[2].trim());
+  // “this should be bigger”, “it should be more obvious”: an opinion, no value to check.
+  if (/\bbe\s+$/i.test(m[0].slice(0, m[0].length - m[2].length)) && /^(?:a (?:bit|little|lot) )?(?:more|less|bigger|smaller|larger|wider|narrower|taller|shorter|higher|lower|brighter|darker|bolder|clearer|easier|harder|faster|slower|better|nicer)\b/i.test(m[2].trim())) return null;
+  const value = valueOf(m[2]);
+  return value ? { subject: m[1]?.toLowerCase() ?? null, ...value } : null;
+}
+
+/** What may come before “should”: “but”, “and”, “so”, then the element (“this”, “the total”). */
+const LEAD = String.raw`(?:(?:but|and|so)\s+)?(?:(this|that|it|the [\w\s-]{1,30}?)\s+)?`;
+const SHOULD = 'should|must|needs to|ought to|is supposed to|has to';
+
+/** The value said: a quoted one whole, whatever words are in it; else up to where the sentence moves on. */
+function valueOf(said: string): { expected: string; whole?: string } | null {
+  const quoted = /^(?:"([^"]+)"|“([^”]+)”|‘([^’]+)’|'([^']+)'|«([^»]+)»)/.exec(said.trim());
   const inQuotes = quoted?.slice(1).find((x) => x !== undefined)?.trim();
-  if (quoted) return inQuotes ? { subject, expected: inQuotes } : null;
-  const all = m[2].replace(/[\s.,;:!?]+$/, '').trim();
-  let expected = cutSaid(m[2]);
+  if (quoted) return inQuotes ? { expected: inQuotes } : null;
+  const all = said.replace(/[\s.,;:!?]+$/, '').trim();
+  let expected = cutSaid(said);
   // Speech often says "57.60 dollars" for "$57.60".
   const dollars = /^(\d+(?:[.,]\d{1,2})?)\s*(?:dollars|bucks|usd)$/i.exec(expected);
   if (dollars) expected = `$${dollars[1]}`;
   else expected = spokenMoney(expected) ?? expected;
   if (!expected) return null;
-  return { subject, expected, ...(all.length > expected.length && cutSaid(all) !== all ? { whole: all } : {}) };
+  return { expected, ...(all.length > expected.length && cutSaid(all) !== all ? { whole: all } : {}) };
+}
+
+/**
+ * A sentence shaped like a check (“this should …”, “it shouldn't …”, “the total must …”) that isn't one the studio
+ * understands: in Write test it is never a request for the AI.
+ */
+export function looksLikeCheck(text: string): boolean {
+  return new RegExp(`^${LEAD}(?:${SHOULD}|shouldn['’]t|mustn['’]t)\\b`, 'i').test(text.trim()) && /^(?:(?:but|and|so)\s+)?(?:this|that|it|the )/i.test(text.trim());
 }

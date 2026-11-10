@@ -17,7 +17,9 @@ const PHRASES: [string, string][] = [
   ['go up · go inside · next · previous', 'Moves the selection. Also ↑ ↓ ← →.'],
   ['add this · deselect', 'Adds what you point at to the selection; clears it.'],
   ['keep it · undo · cancel', 'Decide on the preview.'],
-  ['this should show $80.80', 'In Write test mode: adds a check to the test.'],
+  ['this should show $80.80', 'In Write test mode: adds a check to the test. Quote words to take them whole: this should say “Item not found”.'],
+  ['this should not show $51.71', 'In Write test mode: a check that the value is not there.'],
+  ['this should be visible · hidden · enabled · disabled · checked · selected', 'In Write test mode: a check of its state.'],
   ['generate test · run test · fix it', 'Turn the narration into a Playwright test, then fix the bug.'],
   ['mark this', 'While recording a session: marks the moment for the report.'],
 ];

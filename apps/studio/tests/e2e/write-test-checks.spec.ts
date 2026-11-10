@@ -44,7 +44,7 @@ function showFixture(): void {
   fs.writeFileSync(app, code.replace("import { Header } from './components/Header';", "import { Header } from './components/Header';\nimport { Fixture } from './components/Fixture';").replace('<Header route={route} />', '<Header route={route} />\n      <Fixture />'));
 }
 
-type Check = { locator: string; expected: string; actual: string; field?: string; description: string };
+type Check = { locator: string; expected: string; actual: string; field?: string; description: string; not?: boolean };
 
 async function writeTestOnAccount(page: Page): Promise<void> {
   await openStudio(page);
@@ -127,7 +127,7 @@ test('a box said to be checked is checked, found from its label; an option said 
   const code = await store<string>(page, 's.recorder.spec.code');
   expect(code).toContain(`await expect(${box.locator}).toBeChecked();`);
   expect(code).toContain(`await expect(${not.locator}).not.toBeChecked();`);
-  expect(code).toContain(`await expect(${option.locator}.locator('option:checked')).toContainText(['Linen']);`);
+  expect(code).toContain(`await expect(${option.locator}.locator('option:checked')).toContainText([/^\\s*Linen\\s*$/u]);`);
   expect(code).not.toContain("toContainText('checked')");
 });
 
@@ -170,10 +170,48 @@ test('a test changed after it failed doesn’t pass as verified: the bug is stil
 
   // Someone (or an AI asked for something else) makes the test expect what the bug shows.
   const spec = path.join(E2E_SHOP, await store<string>(page, 's.recorder.spec.path'));
-  fs.writeFileSync(spec, fs.readFileSync(spec, 'utf8').replace("toContainText('$80.80')", "toContainText('$78.40')"));
+  fs.writeFileSync(spec, fs.readFileSync(spec, 'utf8').replace(/(getByTestId\('summary-total'\)\)\.)to\w+\(.*\);/, "$1toContainText('$78.40');"));
   await runToEnd(page, () => page.evaluate(() => (window as unknown as { __saywright: { runTest(): Promise<void> } }).__saywright.runTest()));
   await expectIsland(page, /Couldn’t verify\. The test changed since it failed/);
   // Said once: the next run judges the test as it is now.
   await runToEnd(page, () => page.evaluate(() => (window as unknown as { __saywright: { runTest(): Promise<void> } }).__saywright.runTest()));
   await expectIsland(page, /Test passed in/);
+});
+
+test('a check is never found by words it only contains, a value can be said not to be there, and what isn’t a check is never sent to the AI', async ({ page }) => {
+  writeFixture(1, '$15.00', 'Inactive');
+  showFixture();
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  // “Inactive” doesn’t show “active”: the check isn’t found by “Inactive”, which the fix takes away.
+  const status = await say(page, app.getByText('Inactive', { exact: true }), 'this should show active');
+  expect(status.locator).not.toContain('Inactive');
+  expect(status).toMatchObject({ expected: 'active', actual: 'Inactive' });
+  const pay = await say(page, app.getByRole('cell', { name: '$15.00' }), 'this shouldn’t show $15.00, it should show $25.00');
+  expect(pay).toMatchObject({ expected: '$15.00', not: true });
+  expect(pay.locator).toBe("page.getByRole('row').filter({ hasText: 'You pay' }).locator('td')");
+
+  // A state the element can’t have, and a sentence shaped like a check that isn’t one: said, never written, never asked.
+  const before = await store<number>(page, 's.recorder.expectations.length');
+  const plan = await app.getByRole('cell', { name: 'Basic' }).boundingBox();
+  await page.mouse.move(plan!.x + plan!.width / 2, plan!.y + plan!.height / 2, { steps: 4 });
+  await page.waitForTimeout(800);
+  await page.getByRole('textbox', { name: 'Describe a change' }).fill('this should be disabled');
+  await page.keyboard.press('Enter');
+  await expectIsland(page, /can’t be disabled/);
+  await page.getByRole('textbox', { name: 'Describe a change' }).fill('this should be more obvious');
+  await page.keyboard.press('Enter');
+  await expectIsland(page, /isn’t a check the studio understands/);
+  await page.getByRole('textbox', { name: 'Describe a change' }).fill('it shouldn’t wobble like that');
+  await page.keyboard.press('Enter');
+  await expectIsland(page, /isn’t a check the studio understands\. Try: this should show …/);
+  expect(await store<unknown>(page, 's.request')).toBeNull();
+  expect(await store<number>(page, 's.recorder.expectations.length')).toBe(before);
+
+  await page.getByRole('button', { name: 'Generate test' }).first().click();
+  await expectIsland(page, /Test saved to tests\/saywright\//);
+  const spec = fs.readFileSync(path.join(E2E_SHOP, await store<string>(page, 's.recorder.spec.path')), 'utf8');
+  expect(spec).toContain('.not.toContainText(/\\$\\s?15(?:[.,]0+)?(?![.,]?\\d)/);');
+  // Not on the page in any case as it was said: compared without case.
+  expect(spec).toContain('toContainText(/\\bactive\\b/iu);');
 });

@@ -14,7 +14,9 @@ export const MAX_CHECKS = 100;
 const MAX_OPTIONS = 1000;
 
 const KINDS: readonly RecordedStep['kind'][] = ['click', 'fill', 'press', 'goto', 'note', 'url'];
-const FIELDS: readonly NonNullable<Expectation['field']>[] = ['value', 'select', 'checked'];
+const FIELDS: readonly NonNullable<Expectation['field']>[] = ['value', 'select', 'checked', 'name', 'state'];
+/** The states a check can say an element is in. */
+const STATES = ['visible', 'hidden', 'enabled', 'disabled', 'selected', 'not selected'];
 /** Steps that act on an element, and so need one to act on. */
 const ON_ELEMENT = new Set<RecordedStep['kind']>(['click', 'fill', 'press']);
 /** Words and names: a locator, a description, a key. What was typed or should show can be as long as a request. */
@@ -98,7 +100,7 @@ function check(v: unknown, i: number, steps: number): Expectation {
   const what = `Check ${i + 1}`;
   const o = record(v, what, 'a check (an object with a locator, a description and what it should show)');
   const field = o.field === undefined || o.field === null ? undefined : (o.field as Expectation['field']);
-  if (field !== undefined && !FIELDS.includes(field)) throw refuse(`${what} is about “${shown(o.field)}”, which a check can’t read: it reads the text, or a field’s value, select or checked.`);
+  if (field !== undefined && !FIELDS.includes(field)) throw refuse(`${what} is about “${shown(o.field)}”, which a check can’t read: it reads the text, or a field’s value, select, checked, name or state.`);
   const out: Expectation = {
     locator: locator(o, what, 'names no element to check (locator)'),
     description: text(o, 'description', what, { needed: 'says nothing about what it checks (description)', max: SHORT })!,
@@ -107,6 +109,13 @@ function check(v: unknown, i: number, steps: number): Expectation {
   };
   if (field) out.field = field;
   if (field === 'checked' && out.expected !== 'checked' && out.expected !== 'not checked') throw refuse(`${what} is about whether it is checked, so it should be “checked” or “not checked”, not “${shown(out.expected)}”.`);
+  if (field === 'state' && !STATES.includes(out.expected)) throw refuse(`${what} is about a state, so it should be one of ${STATES.map((x) => `“${x}”`).join(', ')}, not “${shown(out.expected)}”.`);
+  for (const flag of ['anyCase', 'not'] as const) {
+    const v = o[flag];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'boolean') throw refuse(`${what}: ${flag} must be true or false, not ${shown(v)}.`);
+    if (v) out[flag] = true;
+  }
   if (o.after !== undefined && o.after !== null) {
     const after = o.after;
     if (typeof after !== 'number' || !Number.isInteger(after) || after < 0) throw refuse(`${what}: after must be how many steps come before it (a whole number), not ${shown(after)}.`);

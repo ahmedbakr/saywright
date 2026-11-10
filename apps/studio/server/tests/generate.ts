@@ -218,22 +218,33 @@ const PATTERN_MAX = 1000;
 function checkCode(e: Expectation): string[] {
   const loc = safeLocator(e.locator);
   if (e.field === 'checked') return [`await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`];
+  if (e.field === 'state') {
+    const matcher = Object.hasOwn(STATE_MATCHERS, e.expected) ? STATE_MATCHERS[e.expected] : undefined;
+    if (!matcher) throw new Error(`Unexpected state: ${e.expected}`);
+    return [`await expect(${loc}).${matcher};`];
+  }
   const whole = wholeValue(e.expected);
+  const not = e.not ? 'not.' : '';
   // Words not seen on the page as said are compared without case: speech doesn't know a capital.
   const flags = `${e.anyCase ? 'i' : ''}${whole.amount ? '' : 'u'}`;
   const pattern = `/${whole.source}/${flags}`;
   const anyCase = e.anyCase ? ', { ignoreCase: true }' : '';
   const note = `// ${jsComment(maskSecrets(`${whole.why}.`))}`;
   // An option says the value and nothing else.
-  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).toContainText([/${whole.only}/${flags}]);`];
+  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).${not}toContainText([/${whole.only}/${flags}]);`];
   if (e.field === 'value') {
-    if (e.expected.length > PATTERN_MAX) return [`await expect.poll(() => ${loc}.inputValue()).toContain(${q(e.expected)});`];
+    if (e.expected.length > PATTERN_MAX) return [`await expect.poll(() => ${loc}.inputValue()).${not}toContain(${q(e.expected)});`];
     if (onlyThat(e)) return [e.anyCase ? `await expect(${loc}).toHaveValue(/${whole.only}/${flags});` : `await expect(${loc}).toHaveValue(${q(e.expected)});`];
-    return [note, `await expect(${loc}).toHaveValue(${pattern});`];
+    return [note, `await expect(${loc}).${not}toHaveValue(${pattern});`];
   }
-  if (e.expected.length > PATTERN_MAX) return [`await expect(${loc}).toContainText(${q(e.expected)}${anyCase});`];
+  // An image by its accessible name: its alt text.
+  if (e.field === 'name') {
+    if (onlyThat(e)) return [`await expect(${loc}).toHaveAccessibleName(${q(e.expected)}${anyCase});`];
+    return [note, `await expect(${loc}).${not}toHaveAccessibleName(${pattern});`];
+  }
+  if (e.expected.length > PATTERN_MAX) return [`await expect(${loc}).${not}toContainText(${q(e.expected)}${anyCase});`];
   if (onlyThat(e)) return [`await expect(${loc}).toHaveText(${q(e.expected)}${anyCase});`];
-  return [note, `await expect(${loc}).toContainText(${pattern});`];
+  return [note, `await expect(${loc}).${not}toContainText(${pattern});`];
 }
 
 /**
@@ -241,6 +252,8 @@ function checkCode(e: Expectation): string[] {
  * what was said, or an amount written the same way ($51.71 where $64.64 should be).
  */
 function onlyThat(e: Expectation): boolean {
+  // Not showing a value is checked by its pattern: not there as a whole, however the rest reads.
+  if (e.not) return false;
   const said = collapse(e.expected);
   const shown = collapse(e.actual);
   if (!said || !shown) return false;
@@ -248,6 +261,16 @@ function onlyThat(e: Expectation): boolean {
   const shape = (s: string) => s.replace(/\d+/g, '0');
   return wholeValue(said).amount && /\d/.test(shown) && shape(shown) === shape(said);
 }
+
+/** A state, as Playwright's own matcher checks it. Selected is aria-selected (a tab, an option of a listbox). */
+const STATE_MATCHERS: Record<string, string> = {
+  visible: 'toBeVisible()',
+  hidden: 'toBeHidden()',
+  enabled: 'toBeEnabled()',
+  disabled: 'toBeDisabled()',
+  selected: "toHaveAttribute('aria-selected', 'true')",
+  'not selected': "not.toHaveAttribute('aria-selected', 'true')",
+};
 
 const collapse = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
@@ -290,9 +313,9 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
   const check = (e: Expectation) => {
     // In words, a long value is cut short; the check itself holds all of it.
     const said = { ...e, expected: brief(e.expected) };
-    const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : `it showed ${brief(e.actual) || 'nothing'}`;
+    const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : e.field === 'state' ? (e.actual ? `it was ${e.actual}` : '') : `it showed ${brief(e.actual) || 'nothing'}`;
     step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} ${shouldBe(said, plain)}`), [
-      `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(said, plain)} (${was}).`))}`,
+      `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(said, plain)}${was ? ` (${was})` : ''}.`))}`,
       ...checkCode(e),
     ]);
   };

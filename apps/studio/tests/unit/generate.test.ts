@@ -159,6 +159,30 @@ describe('generateSpec', () => {
     expect(same).toContain("toHaveText('free shipping', { ignoreCase: true });");
   });
 
+  it('writes a value that must not be there, a state and an image’s name with Playwright’s own matchers', () => {
+    const code = generateSpec({
+      ...input,
+      expectations: [
+        { locator: "page.getByTestId('total')", description: 'the total', expected: '$51.71', actual: '$51.71', not: true },
+        { locator: "page.getByTestId('promo')", description: 'the promo', expected: 'visible', actual: 'visible', field: 'state' },
+        { locator: "page.getByRole('button', { name: 'Pay now' })", description: 'the “Pay now” button', expected: 'disabled', actual: '', field: 'state' },
+        { locator: "page.getByRole('tab', { name: 'Billing' })", description: 'the “Billing” tab', expected: 'selected', actual: '', field: 'state' },
+        { locator: "page.getByRole('img', { name: 'Photo' })", description: 'the photo', expected: 'Product photo', actual: 'Photo', field: 'name' },
+      ],
+    });
+    expect(code).toContain("await expect(page.getByTestId('total')).not.toContainText(/\\$\\s?51[.,]710*(?![.,]?\\d)/);");
+    expect(code).toContain("'[check 1] The total should not show $51.71'");
+    expect(code).toContain("await expect(page.getByTestId('promo')).toBeVisible();");
+    expect(code).toContain("await expect(page.getByRole('button', { name: 'Pay now' })).toBeDisabled();");
+    expect(code).toContain('// You said the “Pay now” button should be disabled.');
+    expect(code).toContain("await expect(page.getByRole('tab', { name: 'Billing' })).toHaveAttribute('aria-selected', 'true');");
+    expect(code).toContain("await expect(page.getByRole('img', { name: 'Photo' })).toHaveAccessibleName(/\\bProduct\\s+photo\\b/u);");
+    expect(code).not.toMatch(/toContainText\('(?:visible|disabled|selected)'\)/);
+    expect(() => parse(code, { sourceType: 'module', plugins: ['typescript'] })).not.toThrow();
+    // A state that isn't one is refused, whatever the object it comes from has.
+    expect(() => generateSpec({ ...input, expectations: [{ ...input.expectations[0], field: 'state', expected: 'constructor' }] })).toThrow(/Unexpected state/);
+  });
+
   it('a test and a replay agree on what shows a value', () => {
     expect(showsValue('Inactive', 'active')).toBe(false);
     expect(showsValue('15 in stock', '5 in stock')).toBe(false);
@@ -355,6 +379,11 @@ describe('parseFailure', () => {
   it('pulls expected and received values out of Playwright errors', () => {
     const msg = 'Error: expect(locator).toContainText(expected) failed\n\nLocator: getByTestId(\'summary-total\')\nExpected substring: "$80.80"\nReceived string:    "Total$78.40"\n';
     expect(parseFailure(msg)).toEqual({ expected: '$80.80', received: '$78.40' });
+  });
+
+  it('says a value checked as a pattern as the check’s title says it, and the part of what it got that is like it', () => {
+    const msg = 'Error: expect(locator).toContainText(expected) failed\n\nLocator: getByTestId(\'total\')\nExpected pattern: /\\$\\s?80[.,]80*(?![.,]?\\d)/\nReceived string: "Total$78.40"\n';
+    expect(parseFailure(msg, '[check 1] The total should show $80.80')).toEqual({ expected: '$80.80', received: '$78.40' });
   });
 
   it('says a field’s expected value as it was said, not as the pattern the test checks it with', () => {

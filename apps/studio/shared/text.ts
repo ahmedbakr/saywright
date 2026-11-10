@@ -18,11 +18,19 @@ export function stateWord(said: string): 'checked' | 'not checked' | null {
 }
 
 /** What a check says should be, after the thing it is about: "should show “$80.80”", "should be checked". */
-export function shouldBe(e: { expected: string; field?: string }, quote = (s: string) => `“${s}”`): string {
+export function shouldBe(e: { expected: string; field?: string; not?: boolean }, quote = (s: string) => `“${s}”`): string {
   if (e.field === 'checked') return e.expected === 'not checked' ? 'should not be checked' : 'should be checked';
-  if (e.field === 'select') return `should have ${quote(e.expected)} chosen`;
-  return `should show ${quote(e.expected)}`;
+  if (e.field === 'state') return e.expected === 'not selected' ? 'should not be selected' : `should be ${e.expected}`;
+  if (e.field === 'select') return `should ${e.not ? 'not ' : ''}have ${quote(e.expected)} chosen`;
+  if (e.field === 'name') return `should ${e.not ? 'not ' : ''}be named ${quote(e.expected)}`;
+  return `should ${e.not ? 'not ' : ''}show ${quote(e.expected)}`;
 }
+
+/** The states a check can say an element is in, as Playwright's own matchers check them. */
+export type ElementState = 'visible' | 'hidden' | 'enabled' | 'disabled' | 'selected' | 'not selected';
+
+/** The phrasings Write test understands as a check, for a sentence shaped like one that isn't. */
+export const CHECK_PHRASES = 'Try: this should show …, this should not show …, this should be visible/hidden/enabled/disabled/checked.';
 
 /**
  * Each check's number in the test written from them ([check 1], [check 2]…): they come in the test in the order of

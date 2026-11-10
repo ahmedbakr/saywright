@@ -127,7 +127,7 @@ function valueIn(clause: string): string | null {
  */
 export function cutSaid(said: string): string {
   return said
-    .replace(/\s*[,;]\s*(?:(?:and|but|or)\s+)?(?:not|but|instead|rather than|whereas|while|it shows|it says|it's|it is)\b.*$/is, '')
+    .replace(/\s*[,;]\s*(?:(?:and|but|or)\s+)?(?:not|but|instead|rather than|whereas|while|it shows|it says|it's|it is|it should|it must|should)\b.*$/is, '')
     .replace(/\s*;.*$/s, '')
     .replace(/\s+(?:but|instead of|rather than|whereas)\b.*$/is, '')
     .replace(/\s+instead[.!?]*$/i, '')

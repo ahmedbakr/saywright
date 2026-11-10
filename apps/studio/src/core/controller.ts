@@ -13,11 +13,11 @@ import type { ReportFinding, ReportSuggestion, SessionAnalysis, SessionDetail, S
 import { ApiError, api, subscribe } from '@/lib/api';
 import { apps, useApps } from './apps';
 import { fileName, plural } from '@/lib/format';
-import { focusOn, shouldBe, stateWord } from '@shared/text';
+import { CHECK_PHRASES, focusOn, shouldBe, stateWord } from '@shared/text';
 import { asShown, showsValue } from '@shared/expected';
 import { sanitizeSteps } from '@shared/steps';
 import { BridgeClient } from './bridge';
-import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
+import { looksLikeCheck, parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
 import { findingBrief } from './evidence';
 import { DEFAULT_FUSION, PointerTrack, implicitTargets, resolveDeictics } from './fusion';
 import { afterHold, afterTap, picked, replaced, selectedOf, type Picked } from './selection';
@@ -1185,6 +1185,11 @@ class Controller {
     if (s.mode === 'record') {
       const exp = parseExpectation(said);
       if (exp) return this.addExpectation(exp, spoken);
+      // Shaped like a check, and not one the studio understands: never sent to the AI as a request for a change.
+      if (looksLikeCheck(said)) {
+        if (get().island.kind === 'listening') set({ island: { kind: 'idle' } });
+        return this.notify(`That isn’t a check the studio understands. ${CHECK_PHRASES}`, 'warn');
+      }
     }
     return this.sendIntent(said, spoken, input);
   }
@@ -1550,14 +1555,15 @@ class Controller {
   private async addExpectation(exp: SpokenExpectation, spoken: Spoken | null): Promise<void> {
     const el = this.targetFrom(spoken);
     if (!el) return this.notify('Point at the element that shows the wrong value while you say it.', 'warn');
-    const found = await this.checkOf(el, exp.expected);
+    const found = await this.checkOf(el, exp.expected, { not: exp.not, state: exp.state });
+    if (typeof found === 'string') return this.notify(found, 'warn');
     if (!found) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
     // “Paid, not yet” said of an element that shows “Paid, not yet”: those words are the value, not a value and an aside.
     const e = exp.whole && !found.field && showsValue(found.actual, exp.whole) ? { ...found, ...asShown(found.actual, exp.whole) } : found;
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
     play('keep');
-    const now = e.field === 'checked' ? `, it is ${e.actual}` : e.actual ? `, it shows “${focusOn(e.actual, e.expected)?.slice(0, 40)}”` : '';
+    const now = e.field === 'checked' || e.field === 'state' ? (e.actual ? `, it is ${e.actual}` : '') : e.actual ? `, it shows “${focusOn(e.actual, e.expected)?.slice(0, 40)}”` : '';
     this.notify(`Check added: ${e.description} ${shouldBe(e)}${now}.`, 'ok', [
       { label: 'Generate test', primary: true, run: () => void this.generateTest() },
       { label: 'Add another', run: () => this.dismissIsland() },
@@ -1567,6 +1573,7 @@ class Controller {
   /** From the Test tab: add a check for the selected element. */
   async addExpectationFor(el: ElementInfo, expected: string): Promise<void> {
     const e = await this.checkOf(el, expected);
+    if (typeof e === 'string') return this.notify(e, 'warn');
     if (!e) return this.notify('Couldn’t build a locator for that element.', 'warn');
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
@@ -1575,27 +1582,51 @@ class Controller {
   /**
    * A check that `el` should show `expected`, found by what doesn't change with the fix. Said of a checkbox, a radio
    * button or a switch (or its label) as “checked” or “not checked”, it checks that; said of an option of a list as
-   * “selected”, that the list has it chosen.
+   * “selected”, that the list has it chosen; of a tab as “selected”, that it is. `how.state`: visible, hidden,
+   * enabled or disabled. `how.not`: the value must not be there. A sentence (to say, not a check) when the element
+   * can't be what was said: a paragraph is never disabled, a heading never checked.
    */
-  private async checkOf(el: ElementInfo, expected: string): Promise<Expectation | null> {
+  private async checkOf(el: ElementInfo, expected: string, how: { not?: boolean; state?: 'visible' | 'hidden' | 'enabled' | 'disabled' } = {}): Promise<Expectation | string | null> {
+    const what = el.text ? `“${el.text.slice(0, 40)}”` : 'That';
+    if (how.state) {
+      if ((how.state === 'enabled' || how.state === 'disabled') && !canDisable(el)) return `${what} can’t be ${how.state}: only a button, a field, a list or another control can. Point at the control.`;
+      const loc = await this.bridge.locator(el.id);
+      if (!loc) return null;
+      // Pointed at, it is on screen; whether it is enabled isn't known here.
+      return { locator: loc.locator.code, description: loc.locator.description, expected: how.state, actual: how.state === 'visible' || how.state === 'hidden' ? 'visible' : '', after: await this.checkPlace(), field: 'state' };
+    }
     const state = stateWord(expected);
-    const loc = await this.bridge.locator(el.id, { expected, ...(state ? { state: true } : {}) });
+    if (state && !how.not) {
+      const loc = await this.bridge.locator(el.id, { expected, state: true });
+      if (!loc) return null;
+      const after = await this.checkPlace();
+      const base = { locator: loc.locator.code, description: loc.locator.description, after };
+      if (loc.checked !== undefined) return { ...base, expected: state, actual: loc.checked ? 'checked' : 'not checked', field: 'checked' };
+      if (state === 'checked' && loc.option && loc.chosen) return { ...base, expected: loc.option, actual: loc.chosen.join(', '), field: 'select' };
+      // A tab, an option of a listbox, a row of a grid: selected is aria-selected.
+      if (SELECTABLE.has(el.role ?? '')) {
+        const plain = await this.bridge.locator(el.id);
+        if (!plain) return null;
+        return { locator: plain.locator.code, description: plain.locator.description, after, expected: state === 'checked' ? 'selected' : 'not selected', actual: '', field: 'state' };
+      }
+      // “on” and “off” are also words an element shows (a status that says “Off”); the others only ever a state.
+      if (!/^(?:on|off)$/i.test(expected.trim())) return `${what} can’t be ${state}: it isn’t a checkbox, a radio button, a switch, an option of a list or a tab. To check its words, say “this should show …”.`;
+    }
+    // A list (or a label holding one, from a studio that points at labels): the option chosen, not every option's words.
+    if (el.tag === 'select' || el.tag === 'label') {
+      const list = await this.bridge.locator(el.id, { expected, state: true });
+      if (list?.chosen) return { locator: list.locator.code, description: list.locator.description, expected, actual: list.chosen.join(', '), after: await this.checkPlace(), field: 'select', ...(how.not ? { not: true } : {}) };
+    }
+    // Found by what it won't show once fixed: for “shouldn't show $51.71”, not by the $51.71 it shows now.
+    const loc = await this.bridge.locator(el.id, { expected: how.not ? '' : expected });
     if (!loc) return null;
     const after = await this.checkPlace();
-    const base = { locator: loc.locator.code, description: loc.locator.description, after };
-    if (state && loc.checked !== undefined) return { ...base, expected: state, actual: loc.checked ? 'checked' : 'not checked', field: 'checked' };
-    if (state === 'checked' && loc.option && loc.chosen) return { ...base, expected: loc.option, actual: loc.chosen.join(', '), field: 'select' };
-    // A list (or a label holding one, from a studio that points at labels): the option chosen, not every option's words.
-    if (!state && (el.tag === 'select' || el.tag === 'label')) {
-      const list = await this.bridge.locator(el.id, { expected, state: true });
-      if (list?.chosen) return { ...base, locator: list.locator.code, description: list.locator.description, expected, actual: list.chosen.join(', '), field: 'select' };
-    }
-    // Not a checkbox or a list after all: what was said is the text it should show. Found again without the state's help.
-    const plainLoc = state ? await this.bridge.locator(el.id, { expected }) : loc;
-    if (!plainLoc) return null;
+    // An image says what it is by its name (its alt text), never by text inside it.
+    const image = el.tag === 'img' || el.role === 'img';
+    const actual = image ? el.label.split(' · ').slice(1).join(' · ') : loc.locator.text;
     // Words as the element shows them (“Free shipping” for “free shipping”), or compared without case when it doesn't.
-    const words = asShown(plainLoc.locator.text, expected);
-    return { locator: plainLoc.locator.code, description: plainLoc.locator.description, ...words, actual: plainLoc.locator.text, after, ...fieldOf(el) };
+    const words = asShown(actual, expected);
+    return { locator: loc.locator.code, description: loc.locator.description, ...words, actual, after, ...(image ? { field: 'name' as const } : fieldOf(el)), ...(how.not ? { not: true } : {}) };
   }
 
   // ───────────────────────────── from a session report ─────────────────────────────
@@ -2036,6 +2067,15 @@ const RECORDER_KEY = 'saywright.recorder';
 /** An element as a request names it to the studio's server. */
 function refOf(el: ElementInfo, role: string): RefInfo {
   return { role, src: el.src, name: el.name, label: el.label, text: el.text, tag: el.tag, hint: el.hint, frames: el.frames, ...(el.same ? { same: el.same } : {}) };
+}
+
+/** Roles that are selected or not (aria-selected): a tab, an option of a listbox, a row or cell of a grid, a tree item. */
+const SELECTABLE = new Set(['tab', 'option', 'row', 'gridcell', 'treeitem', 'columnheader', 'rowheader']);
+
+/** Whether an element can be disabled, as Playwright's toBeDisabled reads it: a native control, or an ARIA one. */
+function canDisable(el: ElementInfo): boolean {
+  if (/^(?:button|input|select|textarea|fieldset|option|optgroup)$/.test(el.tag)) return true;
+  return /^(?:button|checkbox|radio|switch|textbox|searchbox|combobox|listbox|menuitem|menuitemcheckbox|menuitemradio|option|slider|spinbutton|tab|treeitem|gridcell)$/.test(el.role ?? '');
 }
 
 function fieldOf(el: { tag: string }): Pick<Expectation, 'field'> {

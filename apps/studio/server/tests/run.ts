@@ -96,11 +96,13 @@ function collect(suite: PwSuite, out: PwTest[]): void {
   for (const s of suite.suites ?? []) collect(s, out);
 }
 
-export function parseFailure(message: string): { expected?: string; received?: string } {
+export function parseFailure(message: string, title?: string): { expected?: string; received?: string } {
   const clean = message.replace(ANSI, '');
   const said = /Expected (?:substring|string|pattern|value)?:?\s*"?(.*?)"?\s*$/m.exec(clean)?.[1];
   const received = /Received (?:string|value)?:?\s*"?(.*?)"?\s*$/m.exec(clean)?.[1];
-  const expected = said && plainPattern(said);
+  // A check written as a pattern (a whole value, an amount): the value as the check's title says it.
+  const titled = title && said && /^(?:not )?\/.*\/[a-z]*$/.test(said) ? /\bshould (?:not )?(?:show|be named|have) (.+?)(?: chosen)?$/.exec(title)?.[1] : undefined;
+  const expected = titled ?? (said && plainPattern(said));
   return { expected, received: focusOn(received, expected) };
 }
 
@@ -335,7 +337,7 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
     }
     const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) }, marksByTest(code, ran));
     const out: TestRunResult = { durationMs, hash, ...verdict };
-    if (verdict.status === 'failed' && verdict.message) Object.assign(out, parseFailure(verdict.message));
+    if (verdict.status === 'failed' && verdict.message) Object.assign(out, parseFailure(verdict.message, verdict.steps?.find((s) => !s.ok)?.title));
     // The test that failed is the one that must pass: a test changed since (by a fix, or by hand) proves nothing about the fix.
     if (out.verified && opts.baseline && opts.baseline !== hash) {
       out.verified = false;

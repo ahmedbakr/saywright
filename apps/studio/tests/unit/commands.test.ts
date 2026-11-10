@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalize, parseClientCommand, parseExpectation } from '../../src/core/commands';
+import { looksLikeCheck, normalize, parseClientCommand, parseExpectation } from '../../src/core/commands';
 import { checkNumbers, shouldBe, stateWord } from '../../shared/text';
 
 const cmd = (t: string, failing = false) => parseClientCommand(t, { hasFailingTest: failing });
@@ -146,6 +146,31 @@ describe('spoken expectations (Write test mode)', () => {
     expect(parseExpectation('this should show Item not found')?.expected).toBe('Item not found');
     // Cut at a comma: all of it is kept too, for an element that shows all of it.
     expect(parseExpectation('this should show Paid, not yet shipped')).toEqual({ subject: 'this', expected: 'Paid', whole: 'Paid, not yet shipped' });
+  });
+
+  it('reads a value that must not be there, and states Playwright checks itself', () => {
+    expect(parseExpectation("this shouldn't show $51.71")).toEqual({ subject: 'this', expected: '$51.71', not: true });
+    expect(parseExpectation('the total should not show $51.71, it should show $64.64')?.expected).toBe('$51.71');
+    expect(parseExpectation('it should not say “Error: not found”')).toEqual({ subject: 'it', expected: 'Error: not found', not: true });
+    expect(parseExpectation('this should be visible')).toEqual({ subject: 'this', expected: 'visible', state: 'visible' });
+    expect(parseExpectation('this should be gone.')).toMatchObject({ state: 'hidden' });
+    expect(parseExpectation("the button shouldn't be enabled")).toMatchObject({ subject: 'the button', state: 'disabled' });
+    expect(parseExpectation('it should be greyed out')).toMatchObject({ state: 'disabled' });
+    expect(parseExpectation('this should not be visible')).toMatchObject({ state: 'hidden' });
+    // Checked and selected stay what they were: a box, an option, a tab.
+    expect(parseExpectation('this should be selected')).toEqual({ subject: 'this', expected: 'selected' });
+    expect(parseExpectation('this should not be selected')).toEqual({ subject: 'this', expected: 'not checked' });
+  });
+
+  it('knows a sentence shaped like a check, so Write test never sends it to the AI', () => {
+    expect(looksLikeCheck('this should be more obvious')).toBe(true);
+    expect(parseExpectation('this should be more obvious')).toBeNull();
+    expect(parseExpectation('this should be bigger')).toBeNull();
+    expect(parseExpectation('the status should be Active')?.expected).toBe('Active');
+    expect(looksLikeCheck("it shouldn't wobble")).toBe(true);
+    expect(looksLikeCheck('the total must add up')).toBe(true);
+    expect(looksLikeCheck('make this bigger')).toBe(false);
+    expect(looksLikeCheck('should I use a table here?')).toBe(false);
   });
 
   it('ignores ordinary requests', () => {

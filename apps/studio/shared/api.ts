@@ -149,9 +149,13 @@ export interface Expectation {
   after?: number;
   /**
    * What it was said about is a field (its value is checked), a list (the option chosen is: `expected` is what that
-   * option says), or a checkbox, radio button or switch (whether it is checked: `expected` is “checked” or “not checked”).
+   * option says), a checkbox, radio button or switch (whether it is checked: `expected` is “checked” or “not checked”),
+   * an image (its accessible name is checked), or a state any element has (`state`: `expected` is “visible”,
+   * “hidden”, “enabled”, “disabled”, “selected” or “not selected”).
    */
-  field?: 'value' | 'select' | 'checked';
+  field?: 'value' | 'select' | 'checked' | 'name' | 'state';
+  /** “this shouldn't show $51.71”: the value must not be there. */
+  not?: boolean;
   /** Words the element didn't show as it was said, in any case: compared without case (“free shipping”). */
   anyCase?: boolean;
 }
