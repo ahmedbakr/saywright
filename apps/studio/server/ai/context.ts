@@ -1,5 +1,7 @@
 import { maskSecrets, parseSrc, redactUrl } from '@saywright/vite/protocol';
 import type { Project } from '../project.ts';
+import { toLf } from '../text-file.ts';
+import { LATIN1_NOTE } from './tools.ts';
 import type { AgentInput } from './types.ts';
 
 const FULL_FILE_LINES = 400;
@@ -75,14 +77,17 @@ export function userMessage(input: AgentInput, project: Project): string {
     windows.set(p.file, list);
   }
   for (const [file, ranges] of windows) {
-    const lines = project.read(file).split('\n');
+    const read = project.readText(file);
+    // As read_file shows it: line ends as LF, and what may be written in a file that isn't UTF-8.
+    const lines = toLf(read.text).split('\n');
+    const note = read.encoding === 'latin1' ? `; ${LATIN1_NOTE}` : '';
     if (lines.length <= FULL_FILE_LINES) {
-      parts.push(`\n--- ${file} (all ${lines.length} lines) ---\n${numbered(lines, 1, lines.length)}`);
+      parts.push(`\n--- ${file} (all ${lines.length} lines${note}) ---\n${numbered(lines, 1, lines.length)}`);
       continue;
     }
     const start = Math.max(1, Math.min(...ranges.map((r) => r[0])));
     const end = Math.min(lines.length, Math.max(...ranges.map((r) => r[1])));
-    parts.push(`\n--- ${file} (lines ${start}-${end} of ${lines.length}; read_file for more) ---\n${numbered(lines, start, end)}`);
+    parts.push(`\n--- ${file} (lines ${start}-${end} of ${lines.length}; read_file for more${note}) ---\n${numbered(lines, start, end)}`);
   }
 
   if (input.brief) {

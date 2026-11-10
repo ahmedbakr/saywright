@@ -7,13 +7,28 @@ import { diffFile } from './diff.ts';
 import { writeFileAtomic } from './fsx.ts';
 import { HttpError } from './http.ts';
 import type { Project } from './project.ts';
+import { EncodingError, NotTextError, decodeText, encodeText } from './text-file.ts';
 
+/** One file of a change, as whoever made it read and wrote it: text. */
 export interface FileEdit {
   path: string;
   /** Content before the change, or null when the change creates the file. */
   before: string | null;
   after: string;
 }
+
+/**
+ * One file of a change as the store keeps it: the file's own bytes before, and the bytes written. Undo puts back
+ * exactly what was there, whatever the file's encoding or line ends, and "is it still as we left it" is asked of
+ * bytes, never of text read back.
+ */
+interface StoredEdit {
+  path: string;
+  before: Buffer | null;
+  after: Buffer;
+}
+
+const sameBytes = (a: Buffer | null, b: Buffer | null) => (a === null || b === null ? a === b : a.equals(b));
 
 interface NewChange {
   title: string;
@@ -26,11 +41,14 @@ interface NewChange {
   latencyMs?: number;
 }
 
-/** What survives a restart: the changes, and the file contents of those still in preview (so they can be undone). */
+/**
+ * What survives a restart: the changes, and the file contents of those still in preview (so they can be undone), as
+ * base64 of their bytes. Version 1 (0.2.x) kept them as text: read as the UTF-8 it was written from.
+ */
 interface Journal {
-  v: 1;
+  v: 1 | 2;
   changes: Change[];
-  edits: Record<string, FileEdit[]>;
+  edits: Record<string, { path: string; before: string | null; after: string }[]>;
 }
 
 /** Changes listed after a restart (previews are always kept). */
@@ -51,7 +69,7 @@ const HISTORY = 200;
  */
 export class ChangeStore {
   private changes: Change[] = [];
-  private edits = new Map<string, FileEdit[]>();
+  private edits = new Map<string, StoredEdit[]>();
   private readonly journal: string;
   /** Previews found waiting from an earlier run of the studio. */
   readonly restored: number;
@@ -81,26 +99,58 @@ export class ChangeStore {
    * moved in: a page never runs half of a change. `check` runs last, right before the writing, with nothing waited
    * on in between: what it finds is what is written over.
    */
-  private async land(files: { path: string; content: string | null }[], check: () => void = () => undefined): Promise<void> {
+  private async land(files: { path: string; content: Buffer | null }[], check: () => void = () => undefined): Promise<void> {
     if (files.length > 1) await this.holdUpdates(this.project.url, files.map((f) => this.project.resolve(f.path)));
     check();
     writeTogether(this.project, files);
   }
 
-  /**
-   * Each file still as the change was made from it. Otherwise it was written since (in an editor, by a formatter, by
-   * another change), and writing the change would lose that: it is refused, and nothing is written.
-   */
-  private unchanged(edits: FileEdit[]): void {
-    for (const e of edits) {
-      if (this.current(e.path) === e.before) continue;
-      const what = e.before === null ? `${e.path} was created` : this.project.exists(e.path) ? `${e.path} changed` : `${e.path} was deleted`;
-      throw new HttpError(409, `${what} while this change was being made (in your editor, or by another change), so it wasn’t written and nothing was lost. Ask again to make it on the file as it is now.`, 'stale');
-    }
+  /** Refused: the file isn't what the change was made from any more. */
+  private stale(e: { path: string; before: unknown }): HttpError {
+    const what = e.before === null ? `${e.path} was created` : this.project.exists(e.path) ? `${e.path} changed` : `${e.path} was deleted`;
+    return new HttpError(409, `${what} while this change was being made (in your editor, or by another change), so it wasn’t written and nothing was lost. Ask again to make it on the file as it is now.`, 'stale');
   }
 
-  private current(rel: string): string | null {
-    return this.project.exists(rel) ? this.project.read(rel) : null;
+  /**
+   * A change's files as bytes: each file's own bytes now, which must read as the text the change was made from
+   * (otherwise it was written since: refused), and the new text written the way the file is (its encoding kept). A
+   * file that isn't UTF-8 can only take the characters its encoding has: a change that adds another is refused, with
+   * what to do, rather than written as something else.
+   */
+  private encode(edits: FileEdit[]): StoredEdit[] {
+    return edits.map((e) => {
+      const bytes = this.current(e.path);
+      if (e.before === null || bytes === null) {
+        if (e.before !== null || bytes !== null) throw this.stale(e);
+        return { path: e.path, before: null, after: Buffer.from(e.after, 'utf8') };
+      }
+      let read: ReturnType<typeof decodeText>;
+      try {
+        read = decodeText(bytes, e.path);
+      } catch (err) {
+        throw err instanceof NotTextError ? new HttpError(400, err.message, 'not-text') : err;
+      }
+      if (read.text !== e.before) throw this.stale(e);
+      try {
+        return { path: e.path, before: bytes, after: encodeText(e.after, read.encoding) };
+      } catch (err) {
+        if (!(err instanceof EncodingError)) throw err;
+        throw new HttpError(409, `${e.path} isn’t saved as UTF-8, and this change adds a character its encoding can’t hold: ${err.message}. Nothing was written. Save the file as UTF-8 in your editor, then ask again.`, 'encoding');
+      }
+    });
+  }
+
+  /**
+   * Each file still holds the bytes the change was made from. Otherwise it was written since (in an editor, by a
+   * formatter, by another change), and writing the change would lose that: it is refused, and nothing is written.
+   */
+  private unchanged(edits: StoredEdit[]): void {
+    for (const e of edits) if (!sameBytes(this.current(e.path), e.before)) throw this.stale(e);
+  }
+
+  /** A file's bytes now, or null when there is no such file. */
+  private current(rel: string): Buffer | null {
+    return this.project.exists(rel) ? this.project.readBytes(rel) : null;
   }
 
   list(): Change[] {
@@ -122,9 +172,9 @@ export class ChangeStore {
   }
 
   private async write(input: NewChange): Promise<Change> {
-    const edits = input.edits.filter((e) => e.before !== e.after);
-    if (!edits.length) throw new HttpError(422, 'That change would not modify any file');
-    this.unchanged(edits);
+    const texts = input.edits.filter((e) => e.before !== e.after);
+    if (!texts.length) throw new HttpError(422, 'That change would not modify any file');
+    const edits = this.encode(texts);
     const change: Change = {
       id: randomUUID().slice(0, 8),
       title: input.title,
@@ -133,7 +183,7 @@ export class ChangeStore {
       refs: input.refs,
       source: input.source,
       model: input.model,
-      files: edits.map((e) => diffFile(e.path, e.before, e.after)),
+      files: texts.map((e) => diffFile(e.path, e.before, e.after)),
       status: 'preview',
       createdAt: Date.now(),
       latencyMs: input.latencyMs,
@@ -155,7 +205,7 @@ export class ChangeStore {
     } catch (err) {
       // Put back any file already in place, so the project is never half-changed (none was, when it was refused).
       for (const e of writing ? edits : []) {
-        if (this.current(e.path) !== e.after) continue;
+        if (!sameBytes(this.current(e.path), e.after)) continue;
         if (e.before === null) this.project.remove(e.path);
         else this.project.write(e.path, e.before);
       }
@@ -212,11 +262,11 @@ export class ChangeStore {
     // Simulate the rollback in memory to make sure nothing else touched these files: before, and again right before
     // the files are written.
     const untouched = () => {
-      const expected = new Map<string, string | null>();
+      const expected = new Map<string, Buffer | null>();
       for (const c of stack) {
         for (const e of (this.edits.get(c.id) ?? []).slice().reverse()) {
           const current = expected.has(e.path) ? expected.get(e.path)! : this.current(e.path);
-          if (current !== e.after) {
+          if (!sameBytes(current, e.after)) {
             throw new HttpError(409, `${e.path} was edited after this change, so undoing it here could lose work. Undo it in your editor instead.`, 'conflict');
           }
           expected.set(e.path, e.before);
@@ -225,8 +275,8 @@ export class ChangeStore {
     };
     if (!opts.force) untouched();
 
-    // Each file as it was before the oldest of these changes, put back together.
-    const restored = new Map<string, string | null>();
+    // Each file as it was before the oldest of these changes, byte for byte, put back together.
+    const restored = new Map<string, Buffer | null>();
     for (const c of stack) for (const e of (this.edits.get(c.id) ?? []).slice().reverse()) restored.set(e.path, e.before);
     await this.land(
       [...restored].map(([p, content]) => ({ path: p, content })),
@@ -247,8 +297,8 @@ export class ChangeStore {
     const previews = new Set(this.previews().map((c) => c.id));
     const changes = this.changes.filter((c, i) => previews.has(c.id) || i >= this.changes.length - HISTORY);
     const edits: Journal['edits'] = {};
-    for (const id of previews) edits[id] = this.edits.get(id) ?? [];
-    const journal: Journal = { v: 1, changes, edits };
+    for (const id of previews) edits[id] = (this.edits.get(id) ?? []).map((e) => ({ path: e.path, before: e.before?.toString('base64') ?? null, after: e.after.toString('base64') }));
+    const journal: Journal = { v: 2, changes, edits };
     writeFileAtomic(this.journal, JSON.stringify(journal));
   }
 
@@ -261,24 +311,24 @@ export class ChangeStore {
     let journal: Journal;
     try {
       journal = JSON.parse(fs.readFileSync(this.journal, 'utf8')) as Journal;
-      if (journal.v !== 1 || !Array.isArray(journal.changes)) return 0;
+      if ((journal.v !== 1 && journal.v !== 2) || !Array.isArray(journal.changes)) return 0;
     } catch {
       return 0; // first run, or nothing to restore
     }
     const now = Date.now();
-    const current = (p: string) => (this.project.exists(p) ? this.project.read(p) : null);
+    const bytes = (text: string) => Buffer.from(text, journal.v === 1 ? 'utf8' : 'base64');
     for (const c of journal.changes) {
-      const edits = journal.edits?.[c.id];
+      const edits = journal.edits?.[c.id]?.map((e): StoredEdit => ({ path: e.path, before: e.before === null ? null : bytes(e.before), after: bytes(e.after) }));
       if (c.status === 'preview') {
-        const found = edits?.map((e) => current(e.path)) ?? [];
+        const found = edits?.map((e) => this.current(e.path)) ?? [];
         if (!edits?.length) {
           c.status = 'kept';
           c.decidedAt = now;
-        } else if (edits.every((e, i) => found[i] === e.before || found[i] === e.after) && !edits.every((e, i) => found[i] === e.after)) {
+        } else if (edits.every((e, i) => sameBytes(found[i], e.before) || sameBytes(found[i], e.after)) && !edits.every((e, i) => sameBytes(found[i], e.after))) {
           // Stopped before or halfway through writing it (or reverted by hand): put back what was written, so it
           // never half-applies.
           edits.forEach((e, i) => {
-            if (found[i] !== e.after) return;
+            if (!sameBytes(found[i], e.after)) return;
             if (e.before === null) this.project.remove(e.path);
             else this.project.write(e.path, e.before);
           });
@@ -327,19 +377,27 @@ async function holdPageUpdates(url: string, files: string[]): Promise<void> {
  * Write files so they change together: each new version is written beside its file first (a failure there changes
  * nothing), then all are moved into place one right after another. `content` null removes the file.
  */
-function writeTogether(project: Project, files: { path: string; content: string | null }[]): void {
-  const staged: { abs: string; tmp: string | null }[] = [];
+function writeTogether(project: Project, files: { path: string; content: Buffer | null }[]): void {
+  const staged: { asked: string; abs: string; tmp: string | null }[] = [];
   try {
     for (const f of files) {
-      const abs = project.resolve(f.path);
+      const asked = project.resolve(f.path);
       if (f.content === null) {
-        staged.push({ abs, tmp: null });
+        staged.push({ asked, abs: asked, tmp: null });
         continue;
+      }
+      // Through a link, to the file it leads to (resolve checked it), as Project.write does: moved in over the link
+      // itself, the new version would replace the link with a copy and leave the real file as it was.
+      let abs = asked;
+      try {
+        if (fs.lstatSync(asked).isSymbolicLink()) abs = fs.realpathSync(asked);
+      } catch {
+        /* a new file */
       }
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       const tmp = `${abs}.saywright-tmp`;
       fs.writeFileSync(tmp, f.content);
-      staged.push({ abs, tmp });
+      staged.push({ asked, abs, tmp });
     }
   } catch (err) {
     for (const s of staged) if (s.tmp) fs.rmSync(s.tmp, { force: true });
@@ -348,6 +406,7 @@ function writeTogether(project: Project, files: { path: string; content: string 
   for (const s of staged) {
     if (s.tmp) fs.renameSync(s.tmp, s.abs);
     else fs.rmSync(s.abs, { force: true });
-    project.code.forget(project.rel(s.abs));
+    project.code.forget(project.rel(s.asked));
+    if (s.abs !== s.asked) project.code.forget(project.rel(s.abs));
   }
 }

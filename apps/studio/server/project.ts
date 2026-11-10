@@ -5,6 +5,7 @@ import { CodeIndex, type Coverage } from './code-index.ts';
 import { HttpError } from './http.ts';
 import { workspaceRoot } from '../../../packages/vite/src/workspace.ts';
 import { importedFrom, variantsIn } from './quick/variants.ts';
+import { NotTextError, decodeText, type TextEncoding } from './text-file.ts';
 
 export interface ComponentProp {
   values: string[];
@@ -242,14 +243,34 @@ export class Project {
     }
   }
 
-  read(rel: string): string {
+  /** A file's bytes, as they are on disk. */
+  readBytes(rel: string): Buffer {
     const abs = this.resolve(rel);
-    if (!fs.existsSync(abs)) throw new HttpError(404, `No such file: ${rel}`);
-    return fs.readFileSync(abs, 'utf8');
+    const stat = fs.statSync(abs, { throwIfNoEntry: false });
+    if (!stat) throw new HttpError(404, `No such file: ${rel}`);
+    if (stat.isDirectory()) throw new HttpError(400, `${rel} is a folder, not a file`, 'folder');
+    return fs.readFileSync(abs);
   }
 
-  /** Atomic write: temp file + rename, so the dev server never sees half a file. */
-  write(rel: string, content: string): void {
+  /**
+   * A file as text, with the encoding that writes the same bytes back (UTF-8, or Latin-1 for a file that isn't: see
+   * text-file.ts). A binary file is refused: it is no text to show or to edit.
+   */
+  readText(rel: string): { text: string; encoding: TextEncoding } {
+    const bytes = this.readBytes(rel);
+    try {
+      return decodeText(bytes, rel);
+    } catch (err) {
+      throw err instanceof NotTextError ? new HttpError(400, err.message, 'not-text') : err;
+    }
+  }
+
+  read(rel: string): string {
+    return this.readText(rel).text;
+  }
+
+  /** Atomic write: temp file + rename, so the dev server never sees half a file. Text is written as UTF-8; bytes as they are. */
+  write(rel: string, content: string | Uint8Array): void {
     const asked = this.resolve(rel);
     // Through a link, to the file it leads to (resolve checked it): renaming over the link would make it a copy.
     let abs = asked;

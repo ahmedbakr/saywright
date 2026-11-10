@@ -12,6 +12,7 @@ import { applyEditSpecs, listFilesTool, readFileTool, searchTool } from './ai/to
 import { appAddress, type AppManager } from './apps/manager.ts';
 import { HttpError } from './http.ts';
 import type { McpTool } from './mcp.ts';
+import { toLf } from './text-file.ts';
 
 export interface StudioContext {
   /** The app it was for (the context is cleared when another app opens). */
@@ -80,7 +81,7 @@ export function mcpTools(deps: Deps): McpTool[] {
           lines.push(`${i + 1}. ${refs[i].role}: ${maskSecrets(r.label || r.name)}${r.text ? ` showing “${maskSecrets(r.text).slice(0, 80)}”` : ''}${where}`);
           const at = r.src ? parseSrc(r.src) : null;
           if (at && w.project.hasCode && w.project.exists(at.file)) {
-            const text = w.project.read(at.file).split('\n');
+            const text = toLf(w.project.read(at.file)).split('\n');
             const from = Math.max(1, at.line - 12);
             const to = Math.min(text.length, at.line + 12);
             lines.push('```', ...text.slice(from - 1, to).map((l, k) => `${String(from + k).padStart(4)}${from + k === at.line ? '>' : ' '} ${l}`), '```');

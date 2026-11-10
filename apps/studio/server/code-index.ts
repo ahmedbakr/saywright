@@ -11,6 +11,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { breathe } from './slices.ts';
+import { decodeText } from './text-file.ts';
 
 /** How much of the project a scan looked at. */
 export interface Coverage {
@@ -72,7 +73,7 @@ export class CodeIndex {
     return files;
   }
 
-  /** A file's text, or null when it can't be read, is a link, or is too large. */
+  /** A file's text, or null when it can't be read, is a link, is too large, or isn't text. */
   text(rel: string): Promise<string | null> {
     this.touch();
     const hit = this.texts.get(rel);
@@ -102,7 +103,8 @@ export class CodeIndex {
     let text: string | null = null;
     if (stat.isFile() && stat.size <= MAX_FILE_BYTES) {
       try {
-        text = await fs.promises.readFile(abs, 'utf8');
+        // As the studio reads any file of the project: UTF-8, or Latin-1 for a file that isn't; a binary one is no text.
+        text = decodeText(await fs.promises.readFile(abs), rel).text;
       } catch {
         text = null;
       }

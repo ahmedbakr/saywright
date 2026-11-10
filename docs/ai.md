@@ -99,7 +99,8 @@ With **Stop**, a request is sent only when the most it could cost fits in what i
 ## What is sent, and where
 
 - **A change or a question** goes to the AI you chose for that kind of work, with: your words; the elements you referred to (their component name, visible text, file and line); the code around them (a whole file up to 400 lines, otherwise the lines around each place); the names of your app's files (up to 300) and the design system described in your `saywright.config.json`; and the files the AI then reads.
-- **Which files it can read.** With an API key, another provider or a model on your computer, the AI reads through Saywright's own tools, which stay inside your app's folder and refuse `.env` files, `node_modules`, `.git` and links that lead outside. With your plan, the official app reads with its own tools, started in your app's folder, and those rules are the app's own.
+- **Which files it can read.** With an API key, another provider or a model on your computer, the AI reads through Saywright's own tools, which stay inside your app's folder and refuse `.env` files, `node_modules`, `.git` and links that lead outside. Binary files (images, fonts, anything that isn't text) are never shown to it and never changed. With your plan, the official app reads with its own tools, started in your app's folder, and those rules are the app's own.
+- **Files stay what they are.** A change is written in the file's own encoding and with its own line ends. A file that isn't UTF-8 (a legacy page in ISO-8859-1 or Windows-1252, say) keeps every byte the change didn't touch, a file with Windows line ends stays that way, and **Undo** puts back the very bytes that were there, for quick edits too. A file that isn't UTF-8 can only take the characters its encoding has: a change that would add another (an emoji, a “€” in a Latin-1 page) is refused, and says to save the file as UTF-8 first.
 - **Session reports** get the evidence described in [Sessions and reports](session-report.md#what-leaves-your-computer); **expert opinions** the page summary described in [Experts](experts.md#what-is-sent-and-where); **Autopilot** a short description of each page it is on ([Autopilot](autopilot.md#what-the-ai-sees-and-what-it-costs)).
 - **A model on your computer**: nothing leaves it.
 - **Keys** go only to their own provider.
@@ -118,6 +119,7 @@ Saywright is also an MCP server: Claude Code, Cursor, Codex, VS Code and Claude 
 | “Couldn’t reach …” | The provider or your network is down. Saywright stops quickly instead of retrying for minutes; try again, or route the work elsewhere. |
 | Requests are refused with a budget message | The budget is set to **Stop** and a limit is reached: raise it or reset the count in **Settings → Usage and budget**. |
 | “Claude declined this request” | Rephrase it. With the budget set to **Stop**, Claude doesn't try another model for it; with **Warn** it does. |
+| “… isn’t saved as UTF-8, and this change adds a character its encoding can’t hold” | Nothing was written. Save that file as UTF-8 in your editor (“Save with encoding”), then ask again. |
 | “The change was too long for one answer” | Ask for it in smaller parts: one file or one behaviour at a time. Nothing was changed. |
 | An answer ends with “(Cut short: …)” | The model reached its length limit in mid-answer. Ask a narrower question; when the note names your budget, raise the limit in **Settings → Usage and budget**. |
 | An OpenAI-compatible provider doesn't list models | Add the model's name by hand under that connection. |

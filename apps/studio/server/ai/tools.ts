@@ -6,12 +6,17 @@
 import type { FileEdit } from '../changes.ts';
 import type { Coverage } from '../code-index.ts';
 import type { Project } from '../project.ts';
+import { eolOf, isBinaryName, lfView, toLf, unwritable, withEol, type TextEncoding } from '../text-file.ts';
 
 const MAX_READ_LINES = 400;
 
+/** What a model is told about a file that isn't UTF-8, wherever it is shown one: what it may write there. */
+export const LATIN1_NOTE = 'not UTF-8: read as Latin-1, so only characters up to U+00FF can be written in it';
+
 export function readFileTool(project: Project, path: string, start?: number, end?: number): string {
-  const text = project.read(path);
-  const lines = text.split('\n');
+  const file = project.readText(path);
+  // Line ends as LF, whatever the file has: an edit is matched the same way.
+  const lines = toLf(file.text).split('\n');
   const s = Math.max(1, Math.floor(start ?? 1));
   const e = Math.min(lines.length, Math.floor(end ?? s + MAX_READ_LINES - 1), s + MAX_READ_LINES - 1);
   if (s > lines.length) return `${path} has only ${lines.length} lines.`;
@@ -20,7 +25,7 @@ export function readFileTool(project: Project, path: string, start?: number, end
     .map((l, i) => `${String(s + i).padStart(4)}  ${l}`)
     .join('\n');
   const more = e < lines.length ? `\n… ${lines.length - e} more lines. Call read_file with start_line=${e + 1} to continue.` : '';
-  return `${path} (lines ${s}-${e} of ${lines.length})\n${body}${more}`;
+  return `${path} (lines ${s}-${e} of ${lines.length}${file.encoding === 'latin1' ? `; ${LATIN1_NOTE}` : ''})\n${body}${more}`;
 }
 
 const thousands = (n: number) => n.toLocaleString('en-US');
@@ -68,36 +73,56 @@ function count(haystack: string, needle: string): number {
   return n;
 }
 
+/** A file a change is being made in: as it was, as it is after the edits so far, and how it is written. */
+interface Working {
+  path: string;
+  before: string | null;
+  text: string;
+  encoding: TextEncoding;
+  eol: '\r\n' | '\n';
+}
+
 /**
  * Turn exact-string edits into full before/after file contents. Throws an
  * Error whose message tells Claude precisely what to fix, so it can retry.
+ *
+ * A file keeps what it is: an edit is matched with line ends left aside (the model reads and writes LF) and what it
+ * adds takes the line ends the file has, every other line's end is left as it was, and a file that isn't UTF-8 only
+ * takes the characters its encoding can hold.
  */
 export function applyEditSpecs(project: Project, specs: EditSpec[]): FileEdit[] {
   if (!specs.length) throw new Error('No edits were given.');
   if (specs.length > 25) throw new Error('Too many edits in one change; keep it focused.');
-  const order: string[] = [];
-  const working = new Map<string, { before: string | null; text: string }>();
+  // By the file each path leads to, so one file written two ways (“a.js”, “x/../a.js”) is edited once, in order.
+  const working = new Map<string, Working>();
   for (const spec of specs) {
     const path = spec.path.replace(/^\.\//, '');
-    project.resolve(path); // throws on unsafe paths
-    if (!working.has(path)) {
-      const before = project.exists(path) ? project.read(path) : null;
-      working.set(path, { before, text: before ?? '' });
-      order.push(path);
+    const abs = project.resolve(path); // throws on unsafe paths
+    let file = working.get(abs);
+    if (!file) {
+      if (isBinaryName(path)) throw new Error(`${path} is a binary file by its name: only text files can be read or written here.`);
+      const read = project.exists(path) ? project.readText(path) : null;
+      file = { path, before: read?.text ?? null, text: read?.text ?? '', encoding: read?.encoding ?? 'utf8', eol: read ? eolOf(read.text) : '\n' };
+      working.set(abs, file);
     }
-    const file = working.get(path)!;
+    const bad = unwritable(spec.new_string, file.encoding);
+    if (bad) {
+      throw new Error(
+        `${file.path} isn’t saved as UTF-8 (it is read as Latin-1), and new_string has a character it can’t hold: “${bad}” (U+${bad.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}). Write only characters up to U+00FF in this file (an HTML entity or an escape may do), or tell the user the file must be saved as UTF-8 first.`,
+      );
+    }
     if (spec.old_string === '') {
-      if (file.before !== null || file.text !== '') throw new Error(`old_string is empty but ${path} already exists. Copy the exact text you want to replace.`);
+      if (file.before !== null || file.text !== '') throw new Error(`old_string is empty but ${file.path} already exists. Copy the exact text you want to replace.`);
       file.text = spec.new_string;
       continue;
     }
-    const n = count(file.text, spec.old_string);
-    if (n === 0) throw new Error(`old_string was not found in ${path}. Re-read the file and copy the exact current text, including whitespace.`);
-    if (n > 1) throw new Error(`old_string appears ${n} times in ${path}. Include more surrounding lines so it matches exactly once.`);
-    file.text = file.text.replace(spec.old_string, () => spec.new_string);
+    const view = lfView(file.text);
+    const old = toLf(spec.old_string);
+    const n = count(view.lf, old);
+    if (n === 0) throw new Error(`old_string was not found in ${file.path}. Re-read the file and copy the exact current text, including whitespace.`);
+    if (n > 1) throw new Error(`old_string appears ${n} times in ${file.path}. Include more surrounding lines so it matches exactly once.`);
+    const at = view.lf.indexOf(old);
+    file.text = file.text.slice(0, view.at(at)) + withEol(spec.new_string, file.eol) + file.text.slice(view.at(at + old.length));
   }
-  return order.map((path) => {
-    const f = working.get(path)!;
-    return { path, before: f.before, after: f.text };
-  });
+  return [...working.values()].map((f) => ({ path: f.path, before: f.before, after: f.text }));
 }

@@ -86,6 +86,22 @@ describe('ChangeStore', () => {
     await expect(new ChangeStore(p).undo(c.id)).rejects.toThrow(/earlier run of the studio/);
   });
 
+  it('writes a change through a link inside the project to the file it leads to: the link stays a link, through undo too', async () => {
+    const p = tempShop();
+    const real = path.join(p.root, 'src', 'lib', 'money.ts');
+    const original = fs.readFileSync(real, 'utf8');
+    const link = path.join(p.root, 'src', 'money-link.ts');
+    fs.symlinkSync('lib/money.ts', link);
+    const store = new ChangeStore(p, async () => undefined);
+    const before = p.read('src/money-link.ts');
+    const change = await store.preview({ title: 'linked', source: 'ai', edits: [{ path: 'src/money-link.ts', before, after: before.replace('toFixed(2)', 'toFixed(3)') }] });
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe(original.replace('toFixed(2)', 'toFixed(3)'));
+    await store.undo(change.id);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe(original);
+  });
+
   it('refuses to undo over edits made elsewhere', async () => {
     const p = tempShop();
     const store = new ChangeStore(p);
