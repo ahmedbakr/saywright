@@ -7,7 +7,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test } from '@playwright/test';
-import { resetAll, SHOP_URL, store } from './helpers';
+import { openStudio, resetAll, SHOP_URL, STUDIO, store } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -56,3 +56,59 @@ for (const [side, ready, says] of [
     expect(await store<boolean>(page, 's.app.connected')).toBe(false);
   });
 }
+
+/** A plain page whose own classic script declares names a bundle could use too, with the studio's script or not. */
+const plainPage = (bridge: boolean) => `<!doctype html><html><head><meta charset="utf-8"><title>Cart</title>
+${bridge ? `<script src="${STUDIO}/saywright.js"></script>` : ''}</head><body>
+<button id="add">Add</button> <p id="cart">Cart: 0 items</p>
+<script>
+const now = Date.now(); let start = now; var step = 1; const find = (s) => document.querySelector(s);
+function collapse() {} function describe() {}
+let items = 0;
+find('#add').onclick = () => { items += step; find('#cart').textContent = 'Cart: ' + items + ' items'; };
+window.ran = true;
+</script></body></html>`;
+
+test('an app whose own script declares common names runs with the studio’s script, by tag and through the proxy', async ({ page, browser }) => {
+  const errors: string[] = [];
+  const site = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(plainPage(req.url !== '/bare'));
+  });
+  await new Promise<void>((r) => site.listen(0, '127.0.0.1', r));
+  const origin = `http://localhost:${(site.address() as AddressInfo).port}`;
+  const call = async <T>(method: string, route: string, body?: unknown): Promise<T> =>
+    (await fetch(`${STUDIO}/api${route}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })).json() as Promise<T>;
+  let linked = '';
+  try {
+    // By script tag, in its own tab: the page's script runs, and the bridge adds no global but its own.
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto(`${origin}/bare`);
+    const bare = await page.evaluate(() => Object.keys(window));
+    await page.goto(`${origin}/`);
+    expect(await page.evaluate(() => (window as Window & { ran?: boolean }).ran)).toBe(true);
+    const added = (await page.evaluate(() => Object.keys(window))).filter((k) => !bare.includes(k));
+    expect(added.filter((k) => !['__SAYWRIGHT__', '__saywrightBridge'].includes(k))).toEqual([]);
+    await page.locator('#add').click();
+    await expect(page.locator('#cart')).toHaveText('Cart: 1 items');
+    expect(errors).toEqual([]);
+
+    // Through the proxy, in the studio.
+    const { probe } = await call<{ probe: unknown }>('POST', '/apps/probe', { url: `${origin}/bare` });
+    linked = (await call<{ app: { id: string } }>('POST', '/apps', { probe, url: `${origin}/bare` })).app.id;
+    const studio = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    studio.on('pageerror', (e) => errors.push(e.message));
+    await openStudio(studio);
+    await studio.waitForFunction(() => (window as any).__saywrightStore.get().app.connected);
+    const frame = studio.frames().find((f) => f.url().includes('/bare'))!;
+    expect(await frame.evaluate(() => (window as Window & { ran?: boolean }).ran)).toBe(true);
+    await studio.keyboard.press('u');
+    await studio.frameLocator('iframe').locator('#add').click();
+    await expect(studio.frameLocator('iframe').locator('#cart')).toHaveText('Cart: 1 items');
+    expect(errors).toEqual([]);
+    await studio.close();
+  } finally {
+    if (linked) await call('DELETE', `/apps/${linked}`).catch(() => undefined);
+    site.close();
+  }
+});

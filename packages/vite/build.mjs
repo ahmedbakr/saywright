@@ -1,5 +1,6 @@
 // Builds the plugin's files:
-//   dist/bridge.js                     the browser script injected into the app (no dependencies)
+//   dist/bridge.js                     the browser script injected into the app (no dependencies), one wrapped function:
+//                                      served as a classic script, its names never become globals of the app's page
 //   dist/index.js                      the Vite plugin (its two dependencies are installed with it)
 //   dist/protocol.js, protocol.d.ts    the messages and session events the bridge and the studio exchange
 import { spawnSync } from 'node:child_process';
@@ -20,7 +21,11 @@ await build({
     emptyOutDir: true,
     minify: false,
     target: 'es2022',
-    lib: { entry: r('src/bridge/index.ts'), formats: ['es'], fileName: () => 'bridge.js' },
+    // An IIFE, not a module: the studio serves it as a classic script (/saywright.js), where every top-level
+    // `const` or `function` would be a global of the app's page and break an app script that declares the same name.
+    lib: { entry: r('src/bridge/index.ts'), formats: ['iife'], name: 'saywrightBridge', fileName: () => 'bridge.js' },
+    // Strict, as the module it was before.
+    rollupOptions: { output: { intro: "'use strict';" } },
   },
 });
 
