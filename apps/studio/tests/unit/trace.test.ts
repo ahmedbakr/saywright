@@ -161,3 +161,39 @@ describe('frames a page sends', () => {
     expect(frameList('nope')).toEqual([]);
   });
 });
+
+describe('an element written in a Next.js server layout (Turbopack)', () => {
+  const LAYOUT = `import Link from 'next/link';
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body>
+        <header className="nav">
+          <Link className="logo" href="/">Studio North</Link>
+          <nav>
+            <Link href="/about">Team</Link>
+          </nav>
+        </header>
+        {children}
+      </body>
+    </html>
+  );
+}
+`;
+  /** Where Turbopack's server chunk says the layout's code is: the module named in the chunk's address. */
+  const at = (root: string, pos: string) => `${root}/.next/dev/server/chunks/ssr/_1sgonsqcyuuh3._.js?id=%5Bproject%5D/app/layout.tsx+%5Bapp-rsc%5D+(ecmascript)?0:${pos}`;
+
+  it('is mapped through the chunk’s source map when there is one', async () => {
+    const p = app({ 'app/layout.tsx': LAYOUT });
+    const chunk = `${p.root}/.next/dev/server/chunks/ssr/_1sgonsqcyuuh3._.js`;
+    const out = await trace(p, { [`${chunk}:27:276`]: 'app/layout.tsx:8:11' }, [{ at: at(p.root, '27:276'), name: 'LinkComponent', root: true }], { tag: 'a', text: 'Studio North' });
+    expect(out).toEqual({ src: 'app/layout.tsx:8:11', guessed: false });
+  });
+
+  it('without one, is found in the layout the chunk names, and said to be a guess', async () => {
+    const p = app({ 'app/layout.tsx': LAYOUT, 'app/page.tsx': 'export default function Page() { return <h1>Home</h1>; }\n' });
+    const out = await trace(p, {}, [{ at: at(p.root, '46:284'), name: 'LinkComponent', root: true }], { tag: 'a', text: 'Team' });
+    expect(out).toEqual({ src: 'app/layout.tsx:10:13', guessed: true });
+  });
+});

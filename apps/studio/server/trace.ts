@@ -27,6 +27,12 @@ interface Traced {
   guessed: boolean;
 }
 
+/**
+ * A server component's place as Turbopack reports it: its chunk, with the module named in the chunk's query
+ * (`…/chunks/ssr/x._.js?id=%5Bproject%5D/app/layout.tsx+%5Bapp-rsc%5D+(ecmascript)?7:24:268`).
+ */
+const TURBOPACK_SERVER = /^(.+?\.[cm]?js)\?id=([^?]*)(?:\?[^:]*)?:(\d+):(\d+)$/;
+
 /** A file path as plugins and frameworks report it ("src/app/(main)/page.tsx:12:5"). */
 const PLAIN = /^[\w@./+()[\] -]+\.([cm]?[jt]sx?|vue|svelte|astro|html?|mdx?):\d+:\d+$/;
 
@@ -81,6 +87,20 @@ export class Tracer {
       if (mapped && inProject(this.project.root, mapped.file)) return { ...mapped, exact: true };
       return { file: wp[1], line: Number(wp[2]), col: Number(wp[3]), exact: false };
     }
+    const tp = TURBOPACK_SERVER.exec(at);
+    if (tp) {
+      // The chunk is the file before the query, and its source map says where the line is.
+      const mapped = this.mapper ? parseSrc((await this.mapper.map(`${tp[1]}:${tp[3]}:${tp[4]}`).catch(() => null)) ?? '') : null;
+      if (mapped && inProject(this.project.root, mapped.file)) return { ...mapped, exact: true };
+      // Else the module it names is the file, and the line is found in it.
+      let named = '';
+      try {
+        named = decodeURIComponent(tp[2]).replace(/^\[project\]\//, '').replace(/\+\[.*$/, '');
+      } catch {
+        return null;
+      }
+      return named && inProject(this.project.root, named) && this.project.exists(named) ? { file: named, line: 1, col: 1, exact: false } : null;
+    }
     let src: string | null = null;
     // A file of the project as it is (the plugin's attributes); anything else is a place in served code to map.
     if (PLAIN.test(at) && !at.startsWith('/') && !at.includes('/.next/') && this.project.exists(parseSrc(at)!.file)) src = at;
@@ -104,6 +124,12 @@ export class Tracer {
     if (frames.length) {
       const found = await this.fromFrames(frames, el);
       if (found) return found;
+      // A server component's file names no line the page can tell (a Next.js server layout without a source map):
+      // what the page shows is searched for in the code, and what is found is a guess.
+      if (frames.some((f) => TURBOPACK_SERVER.test(f.at)) && el.text) {
+        const src = await locateElement(this.files, el, { pageUrl, root: this.project.root }).catch(() => null);
+        if (src) return { src, guessed: true };
+      }
     } else if (typeof ref.src === 'string' && ref.src) {
       const found = await this.frame({ at: ref.src, name: el.tag }, el);
       if (found) return ref.guessed === true ? { ...found, guessed: true } : found;
