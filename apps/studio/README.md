@@ -37,7 +37,7 @@ For a Vite app, `connect` adds the [`@saywright/vite`](https://www.npmjs.com/pac
 | `npx @saywright/studio` | Start the studio and open it (`--port <n>`, `--no-open`, `--target <url>`, `--root <folder>`) |
 | `npx @saywright/studio connect <folder>` | Connect an app once (`--url`, `--start "<command>"`, `--no-start`, `--studio <address>`, `--dry-run`) |
 | `npx @saywright/studio setup` | Download the optional extras: the on-device voice model (28 MB) and speech models for Arabic and English (about 740 MB; `--no-speech`, `--best-arabic`, `--no-best-arabic`) |
-| `npx @saywright/studio doctor` | Check what the studio needs, and how to fix what is missing |
+| `npx @saywright/studio doctor` | Check what the studio needs, and how to fix what is missing; what to paste into an issue (`--json`) |
 | `npx @saywright/studio mcp` | For AI apps that start MCP servers as programs (Claude Desktop) |
 
 Every command takes `--help`. All options, ports and environment variables: [Configuration](https://github.com/ahmedbakr/saywright/blob/HEAD/docs/configuration.md).

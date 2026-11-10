@@ -64,7 +64,7 @@ You can also install speech models later in **Settings → Voice**, and the voic
 
 #### `saywright doctor`
 
-No options. It checks Node.js, the studio's built files, the voice and speech models, whether an AI is available (it asks Claude Code, Codex and Gemini CLI whether they are signed in, looks for API keys in the environment and in `.env.local`, and for Ollama and LM Studio on this computer), the test browser (in a checkout), and whether port 7357 is free.
+It prints the Saywright and Node.js versions, the operating system and architecture, and checks: Node.js, the data folder (where, writable, its size), the studio's built files, the voice model, whether the speech engine can run on this computer and its models, whether an AI is available (it asks Claude Code and Codex whether they are signed in, whether Gemini CLI is installed, looks for API keys in the environment and in `.env.local`, and for Ollama and LM Studio on this computer), a Chrome, Edge or Chromium for generated tests, `git`, `tar`, `bzip2` and `curl`, the proxy variables that are set (their names, never their values), whether a studio answers, and whether port 7357 is free. Each check runs on its own: one that fails doesn't hide the rest. It is the one command that asks the npm registry whether a newer release exists (one request, three seconds at most, nothing said offline). `--json` prints the same as JSON, for a script or an issue.
 
 #### `saywright mcp`
 

@@ -88,4 +88,4 @@ The studio listens on `127.0.0.1` only, and answers only requests addressed to `
 
 ## Reporting a problem
 
-Open an [issue](https://github.com/ahmedbakr/saywright/issues) with what you did, what you expected, what happened, and the output of `npx @saywright/studio doctor`. Security problems: see [SECURITY.md](../SECURITY.md) instead.
+Open an [issue](https://github.com/ahmedbakr/saywright/issues) with what you did, what you expected, what happened, and the output of `npx @saywright/studio doctor` (it holds no keys, and names proxy variables without their values). Security problems: see [SECURITY.md](../SECURITY.md) instead.

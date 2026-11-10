@@ -374,6 +374,36 @@ describe('setup and doctor', () => {
     else process.env.SAYWRIGHT_SPEECH_DIR = saved;
   });
 
+  it('doctor says what to paste into an issue, as text or JSON, and proxy variables by name only', async () => {
+    const saved = process.env.HTTPS_PROXY;
+    process.env.HTTPS_PROXY = 'http://user:secret@proxy.example:3128';
+    try {
+      await main(['doctor'], ctx);
+      const text = out.join('\n');
+      expect(text).toContain(`Saywright ${ctx.layout.version} · Node ${process.versions.node}`);
+      expect(text).toMatch(new RegExp(`Data folder: .*\\(writable, `));
+      expect(text).toMatch(/Proxy variables set: HTTPS_PROXY/);
+      expect(text).not.toContain('secret');
+      // Offline, nothing is said about releases.
+      expect(text).not.toMatch(/is out/);
+      out = [];
+      await main(['doctor', '--json'], ctx);
+      const report = JSON.parse(out.join('\n')) as { version: string; dataDir: string; checks: { status: string; message: string }[]; latest: string | null };
+      expect(report).toMatchObject({ version: ctx.layout.version, dataDir: ctx.layout.dataDir, latest: null });
+      expect(report.checks.some((ch) => ch.status === 'ok' && /^Node /.test(ch.message))).toBe(true);
+      expect(JSON.stringify(report)).not.toContain('secret');
+    } finally {
+      if (saved === undefined) delete process.env.HTTPS_PROXY;
+      else process.env.HTTPS_PROXY = saved;
+    }
+  });
+
+  it('doctor, run on purpose, says when a newer release is on the npm registry', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(async (url) => (String(url).startsWith('https://registry.npmjs.org/') ? new Response(JSON.stringify({ version: '99.0.0' })) : Promise.reject(new Error('offline'))));
+    await main(['doctor'], ctx);
+    expect(out.join('\n')).toMatch(new RegExp(`! Saywright 99\\.0\\.0 is out \\(this is ${ctx.layout.version.replace(/\./g, '\\.')}\\)`));
+  });
+
   it('doctor says where a running studio listens, rather than calling its usual port free', async () => {
     // A small server stands for a studio that started on another port, its usual one being taken. It is asked.
     vi.mocked(globalThis.fetch).mockRestore();
