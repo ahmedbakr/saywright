@@ -284,6 +284,68 @@ describe('when the journal can’t be written, or the app’s folder is gone', (
   });
 });
 
+describe('memory stays flat over a long day', () => {
+  it('keeps what Undo needs only for the most recent kept changes, and older ones say they can’t be undone here', async () => {
+    const saved = ChangeStore.undoAllowance;
+    ChangeStore.undoAllowance = { changes: 3, bytes: 1024 * 1024 };
+    try {
+      const p = tempShop();
+      const store = new ChangeStore(p);
+      const ids: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const before = p.read('src/lib/money.ts');
+        ids.push((await store.preview({ title: `n${i}`, source: 'quick', edits: [{ path: 'src/lib/money.ts', before, after: `${before}// ${i}\n` }] })).id);
+        store.keep();
+      }
+      const by = new Map(store.list().map((c) => [c.title, c.undoable]));
+      expect([...by]).toEqual([['n5', true], ['n4', true], ['n3', true], ['n2', false], ['n1', false], ['n0', false]]);
+      await expect(store.undo(ids[1])).rejects.toThrow(/can no longer be undone here: the studio keeps what Undo needs only for the last 3 changes you kept/);
+      // A preview is always undoable, whatever the allowance.
+      const before = p.read('src/lib/money.ts');
+      const preview = await store.preview({ title: 'p', source: 'quick', edits: [{ path: 'src/lib/money.ts', before, after: `${before}// p\n` }] });
+      expect(preview.undoable).toBe(true);
+      // Too large for the allowance: kept, and said not to be undoable.
+      ChangeStore.undoAllowance = { changes: 3, bytes: 10 };
+      store.keep();
+      expect(store.list()[0]).toMatchObject({ title: 'p', status: 'kept', undoable: false });
+    } finally {
+      ChangeStore.undoAllowance = saved;
+    }
+  });
+
+  it('a new preview writes only its own contents, never every waiting preview’s again', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    const big = Array.from({ length: 5000 }, (_, i) => `export const v${i} = ${i};`).join('\n');
+    fs.writeFileSync(path.join(p.root, 'src/big.ts'), `// ${big}\n`);
+    const a = await store.preview({ title: 'big', source: 'quick', edits: [{ path: 'src/big.ts', before: p.read('src/big.ts'), after: `// ${big}\n// y\n` }] });
+    const dir = path.join(p.stateDir(), 'changes.d');
+    const first = fs.statSync(path.join(dir, `${a.id}.json`));
+    await store.preview({ title: 'small', source: 'quick', edits: [edit(p, 'toFixed(2)', 'toFixed(3)')] });
+    expect(fs.statSync(path.join(dir, `${a.id}.json`)).mtimeMs).toBe(first.mtimeMs);
+    expect(fs.statSync(path.join(p.stateDir(), 'changes.json')).size).toBeLessThan(20_000);
+    // Both come back after a restart, still undoable; once decided, their contents are let go.
+    const again = new ChangeStore(p);
+    expect(again.previews().map((c) => c.title)).toEqual(['big', 'small']);
+    await again.undo();
+    await again.undo();
+    expect(p.read('src/big.ts')).toBe(`// ${big}\n`);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  it('keeps the list to its last changes in memory too', async () => {
+    const p = tempShop();
+    const store = new ChangeStore(p);
+    for (let i = 0; i < 205; i++) {
+      const before = p.read('src/lib/money.ts');
+      await store.preview({ title: `n${i}`, source: 'quick', edits: [{ path: 'src/lib/money.ts', before, after: `${before}//${i}\n` }] });
+      store.keep();
+    }
+    expect(store.list()).toHaveLength(200);
+    expect(store.list().at(-1)?.title).toBe('n5');
+  });
+});
+
 describe('committing kept changes', () => {
   it('commits alongside the studio, and says what git said when a hook refuses', async () => {
     const p = tempShop();

@@ -62,6 +62,11 @@ export interface Change {
   decidedAt?: number;
   /** How long it took from request to preview, in ms. */
   latencyMs?: number;
+  /**
+   * Whether the studio can still undo it: a preview, or a recently kept change whose earlier code it still has (it
+   * keeps that for the most recent kept changes only, while it runs).
+   */
+  undoable?: boolean;
 }
 
 /**

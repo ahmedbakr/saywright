@@ -43,15 +43,18 @@ interface NewChange {
 
 /**
  * What survives a restart: the changes, and the file contents of those still in preview (so they can be undone), as
- * base64 of their bytes. Version 1 (0.2.x) kept them as text: read as the UTF-8 it was written from.
+ * base64 of their bytes. Version 3 keeps each preview's contents in a file of its own beside the list
+ * (`changes.d/<id>.json`), written once: a new preview never writes the others' again. Versions 1 (0.2.x, as text,
+ * read as the UTF-8 it was written from) and 2 kept them all in the list.
  */
 interface Journal {
-  v: 1 | 2;
+  v: 1 | 2 | 3;
   changes: Change[];
-  edits: Record<string, { path: string; before: string | null; after: string }[]>;
+  edits?: Record<string, JournalEdit[]>;
 }
+type JournalEdit = { path: string; before: string | null; after: string };
 
-/** Changes listed after a restart (previews are always kept). */
+/** Changes listed, in this run and after a restart (previews are always kept). */
 const HISTORY = 200;
 
 /**
@@ -68,9 +71,17 @@ const HISTORY = 200;
  * crash of the studio: they come back as previews, still undoable.
  */
 export class ChangeStore {
+  /**
+   * What Undo needs is kept for the most recent kept changes, within this allowance: a studio open all day doesn't
+   * keep a copy of every file it ever changed. Older kept changes say they can no longer be undone here.
+   */
+  static undoAllowance = { changes: 20, bytes: 32 * 1024 * 1024 };
+
   private changes: Change[] = [];
   private edits = new Map<string, StoredEdit[]>();
   private readonly journal: string;
+  /** Each waiting preview's file contents, one file per preview. */
+  private readonly contents: string;
   /** Previews found waiting from an earlier run of the studio. */
   readonly restored: number;
 
@@ -84,6 +95,7 @@ export class ChangeStore {
     private onUpdate: () => void = () => undefined,
   ) {
     this.journal = path.join(project.stateDir(), 'changes.json');
+    this.contents = path.join(path.dirname(this.journal), 'changes.d');
     this.restored = this.restore();
   }
 
@@ -157,6 +169,34 @@ export class ChangeStore {
     return this.changes.slice().reverse();
   }
 
+  /**
+   * Older changes let go: what Undo needs is kept for every preview, and for the most recent kept changes within the
+   * allowance; the list itself keeps the last HISTORY changes (and every preview). Each change says whether it can
+   * still be undone here.
+   */
+  private trim(): void {
+    const { changes: most, bytes } = ChangeStore.undoAllowance;
+    let count = 0;
+    let size = 0;
+    for (let i = this.changes.length - 1; i >= 0; i--) {
+      const c = this.changes[i];
+      const edits = this.edits.get(c.id);
+      if (c.status === 'kept' && edits) {
+        const own = edits.reduce((n, e) => n + (e.before?.length ?? 0) + e.after.length, 0);
+        if (count < most && size + own <= bytes) {
+          count++;
+          size += own;
+        } else this.edits.delete(c.id);
+      } else if (c.status === 'undone') this.edits.delete(c.id);
+      c.undoable = c.status !== 'undone' && this.edits.has(c.id);
+    }
+    const over = this.changes.length - HISTORY;
+    if (over > 0) {
+      const drop = new Set(this.changes.slice(0, over).filter((c) => c.status !== 'preview'));
+      this.changes = this.changes.filter((c) => !drop.has(c));
+    }
+  }
+
   get(id: string): Change {
     const c = this.changes.find((x) => x.id === id);
     if (!c) throw new HttpError(404, 'No such change');
@@ -194,10 +234,11 @@ export class ChangeStore {
     this.changes.push(change);
     this.edits.set(change.id, edits);
     try {
-      this.save('nothing was written');
+      this.save('nothing was written', () => this.saveContents(change.id, edits));
     } catch (err) {
       this.changes.pop();
       this.edits.delete(change.id);
+      this.forgetContents([change.id]);
       throw err;
     }
     let writing = false;
@@ -220,8 +261,10 @@ export class ChangeStore {
       this.changes.pop();
       this.edits.delete(change.id);
       this.saveIfCan();
+      this.forgetContents([change.id]);
       throw writeError(err, change.files.map((f) => f.path));
     }
+    this.trim();
     this.onUpdate();
     return change;
   }
@@ -249,6 +292,8 @@ export class ChangeStore {
       }
       throw err;
     }
+    this.forgetContents(kept.map((c) => c.id));
+    this.trim();
     this.onUpdate();
     return { kept };
   }
@@ -286,7 +331,8 @@ export class ChangeStore {
     const index = this.changes.indexOf(target);
     const stack = this.changes.slice(index).filter((c) => c === target || c.status === 'preview').reverse();
     if (stack.some((c) => !this.edits.has(c.id))) {
-      throw new HttpError(409, 'That change was kept in an earlier run of the studio, so its previous code isn’t stored any more. Undo it in your editor or with git.');
+      const { changes: most } = ChangeStore.undoAllowance;
+      throw new HttpError(409, `That change can no longer be undone here: the studio keeps what Undo needs only for the last ${most} changes you kept while it runs, and this one is older, or was kept in an earlier run of the studio. Undo it in your editor or with git.`, 'too-old');
     }
 
     // Simulate the rollback in memory to make sure nothing else touched these files: before, and again right before
@@ -320,13 +366,16 @@ export class ChangeStore {
     // The files are back. A journal that can't say so yet is no harm: the next start finds them as they were before
     // these changes and counts them undone.
     this.saveIfCan();
+    this.forgetContents(stack.map((c) => c.id));
+    this.trim();
     this.onUpdate();
     return stack;
   }
 
   /** Write the journal; when it can't be (a full disk, a folder that can't be written), why, and `then`, in words. */
-  private save(then = 'nothing was changed'): void {
+  private save(then = 'nothing was changed', first?: () => void): void {
     try {
+      first?.();
       this.saveJournal();
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -343,14 +392,26 @@ export class ChangeStore {
     }
   }
 
-  /** Write the journal, never half-written. Only previews keep their file contents: kept and undone changes are history. */
+  /**
+   * Write the list of changes, never half-written. Only previews keep their file contents (each in its own file,
+   * written once with the preview): kept and undone changes are history.
+   */
   private saveJournal(): void {
     const previews = new Set(this.previews().map((c) => c.id));
-    const changes = this.changes.filter((c, i) => previews.has(c.id) || i >= this.changes.length - HISTORY);
-    const edits: Journal['edits'] = {};
-    for (const id of previews) edits[id] = (this.edits.get(id) ?? []).map((e) => ({ path: e.path, before: e.before?.toString('base64') ?? null, after: e.after.toString('base64') }));
-    const journal: Journal = { v: 2, changes, edits };
+    const changes = this.changes.filter((c, i) => previews.has(c.id) || i >= this.changes.length - HISTORY).map((c) => ({ ...c, undoable: undefined }));
+    const journal: Journal = { v: 3, changes };
     writeFileAtomic(this.journal, JSON.stringify(journal));
+  }
+
+  /** A preview's file contents, beside the list, before the list names it. */
+  private saveContents(id: string, edits: StoredEdit[]): void {
+    const data: JournalEdit[] = edits.map((e) => ({ path: e.path, before: e.before?.toString('base64') ?? null, after: e.after.toString('base64') }));
+    writeFileAtomic(path.join(this.contents, `${id}.json`), JSON.stringify(data));
+  }
+
+  /** The contents of changes no longer waiting: not needed after a restart. */
+  private forgetContents(ids: string[]): void {
+    for (const id of ids) fs.rmSync(path.join(this.contents, `${id}.json`), { force: true });
   }
 
   /**
@@ -362,14 +423,22 @@ export class ChangeStore {
     let journal: Journal;
     try {
       journal = JSON.parse(fs.readFileSync(this.journal, 'utf8')) as Journal;
-      if ((journal.v !== 1 && journal.v !== 2) || !Array.isArray(journal.changes)) return 0;
+      if ((journal.v !== 1 && journal.v !== 2 && journal.v !== 3) || !Array.isArray(journal.changes)) return 0;
     } catch {
       return 0; // first run, or nothing to restore
     }
     const now = Date.now();
     const bytes = (text: string) => Buffer.from(text, journal.v === 1 ? 'utf8' : 'base64');
+    const stored = (id: string): JournalEdit[] | undefined => {
+      if (journal.v !== 3) return journal.edits?.[id];
+      try {
+        return JSON.parse(fs.readFileSync(path.join(this.contents, `${id}.json`), 'utf8')) as JournalEdit[];
+      } catch {
+        return undefined;
+      }
+    };
     for (const c of journal.changes) {
-      const edits = journal.edits?.[c.id]?.map((e): StoredEdit => ({ path: e.path, before: e.before === null ? null : bytes(e.before), after: bytes(e.after) }));
+      const edits = c.status === 'preview' ? stored(c.id)?.map((e): StoredEdit => ({ path: e.path, before: e.before === null ? null : bytes(e.before), after: bytes(e.after) })) : undefined;
       if (c.status === 'preview') {
         const found = edits?.map((e) => this.current(e.path)) ?? [];
         if (!edits?.length) {
@@ -392,7 +461,16 @@ export class ChangeStore {
       this.changes.push(c);
     }
     const waiting = this.previews().length;
-    this.saveIfCan();
+    this.trim();
+    // A journal of an earlier version is written as this one: each waiting preview's contents in a file of its own.
+    try {
+      for (const c of this.previews()) if (journal.v !== 3) this.saveContents(c.id, this.edits.get(c.id) ?? []);
+      this.saveJournal();
+      const waitingIds = new Set(this.previews().map((c) => `${c.id}.json`));
+      for (const f of fs.existsSync(this.contents) ? fs.readdirSync(this.contents) : []) if (!waitingIds.has(f)) fs.rmSync(path.join(this.contents, f), { force: true });
+    } catch (err) {
+      console.warn(`[saywright] couldn’t save the list of changes: ${(err as Error).message}`);
+    }
     return waiting;
   }
 }
