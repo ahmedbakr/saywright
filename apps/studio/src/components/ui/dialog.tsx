@@ -54,15 +54,24 @@ export function Dialog({
     if (!el) return;
     // It fades out with the focus still in it; when that is gone, the focus is on the page, unless another control took it.
     const until = performance.now() + 1500;
+    const done = () => {
+      clearInterval(t);
+      window.removeEventListener('pointerdown', done, true);
+      window.removeEventListener('keydown', done, true);
+      returnTo.current = null;
+    };
     const t = setInterval(() => {
       const now = document.activeElement;
       const inDialog = !!now?.closest('[role="dialog"], [role="alertdialog"]');
       if (inDialog && performance.now() < until) return;
-      clearInterval(t);
       if ((!now || now === document.body) && el.isConnected && !el.closest('[inert]')) el.focus({ preventScroll: true });
-      returnTo.current = null;
+      done();
     }, 50);
-    return () => clearInterval(t);
+    // A click or a key since it closed: the person has moved on, and where they went is where the focus belongs
+    // (a click on the app leaves it on the page: that is no reason to pull it back to a button).
+    window.addEventListener('pointerdown', done, true);
+    window.addEventListener('keydown', done, true);
+    return done;
   }, [open]);
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
@@ -72,7 +81,8 @@ export function Dialog({
             <D.Overlay asChild forceMount>
               <motion.div
                 data-layer-backdrop
-                className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px]"
+                // Closed, it only fades out: a click meant for what is under it goes there.
+                className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] data-[state=closed]:pointer-events-none!"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -107,7 +117,7 @@ export function Dialog({
             >
               <motion.div
                 className={cn(
-                  'fixed left-1/2 z-50 flex max-h-[86vh] w-[min(720px,calc(100vw-32px))] flex-col overflow-hidden rounded-[14px] bg-panel shadow-pop outline-none',
+                  'fixed left-1/2 z-50 flex max-h-[86vh] w-[min(720px,calc(100vw-32px))] flex-col overflow-hidden rounded-[14px] bg-panel shadow-pop outline-none data-[state=closed]:pointer-events-none!',
                   position === 'center' ? 'top-1/2' : 'top-[14vh] max-h-[80vh]',
                   className,
                 )}
