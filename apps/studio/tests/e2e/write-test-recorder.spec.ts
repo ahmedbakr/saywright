@@ -171,3 +171,30 @@ document.getElementById('go').onclick = () => { sessionStorage.setItem('a${i + 1
     for (const file of pages) fs.rmSync(file, { force: true });
   }
 });
+
+test('a confirm and a prompt answered while recording are kept with their steps; outside recording the app’s dialogs are its own', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => {
+    const box = document.createElement('div');
+    box.innerHTML = '<button id="del">Delete account</button> <button id="ren">Rename</button> <p id="said">?</p>';
+    document.querySelector('main')!.prepend(box);
+    const said = box.querySelector('#said')!;
+    box.querySelector('#del')!.addEventListener('click', () => (said.textContent = confirm('Really delete?') ? 'Account: deleted' : 'Kept'));
+    box.querySelector('#ren')!.addEventListener('click', () => (said.textContent = `Project: ${prompt('New name?')}`));
+  });
+  page.once('dialog', (d) => d.accept());
+  await app.getByRole('button', { name: 'Delete account' }).click();
+  await expect(app.locator('#said')).toHaveText('Account: deleted');
+  page.once('dialog', (d) => d.accept('Zephyr'));
+  await app.getByRole('button', { name: 'Rename' }).click();
+  await expect(app.locator('#said')).toHaveText('Project: Zephyr');
+  await expect
+    .poll(async () => (await store<{ dialogs?: unknown[] }[]>(page, 's.recorder.steps')).map((s) => s.dialogs))
+    .toEqual([[{ type: 'confirm', accept: true, message: 'Really delete?' }], [{ type: 'prompt', accept: true, text: 'Zephyr', message: 'New name?' }]]);
+  await expect(page.getByText('Answered “Zephyr”')).toBeVisible();
+  // Recording stopped: the page's own confirm again.
+  await page.evaluate(() => (window as any).__saywright.setMode('use'));
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('use');
+  expect(await app.locator('body').evaluate(() => String(window.confirm))).toContain('[native code]');
+});

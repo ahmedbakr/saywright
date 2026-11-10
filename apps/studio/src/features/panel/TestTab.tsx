@@ -96,6 +96,11 @@ export function TestTab() {
                   <span className="min-w-0 flex-1 truncate text-fg-2" title={s.description}>
                     {s.description}
                   </span>
+                  {s.dialogs?.map((d, j) => (
+                    <span key={j} className="shrink-0 rounded-[5px] bg-sunken px-1.5 py-0.5 text-[10.5px] text-fg-3 ring-1 ring-inset ring-line" title={d.message ? `The page asked “${d.message}”: the test answers the same` : 'The test answers this dialog the same'}>
+                      {d.accept ? (d.type === 'prompt' ? `Answered “${d.text ?? ''}”` : 'OK') : 'Cancel'}
+                    </span>
+                  ))}
                   {s.secret && (
                     <span className="shrink-0 rounded-[5px] bg-sunken px-1.5 py-0.5 font-mono text-[10.5px] text-fg-3 ring-1 ring-inset ring-line" title={`Typed from SAYWRIGHT_SECRET_${s.secret}: never saved in the test`}>
                       {s.secret}

@@ -204,6 +204,24 @@ function stepCode(step: RecordedStep): string | null {
 }
 
 /**
+ * The browser's dialogs a step opens, answered as the person did, set up before the step: Playwright cancels a dialog
+ * nobody answers, and the app would then take the other branch. Each answer waits for its own dialog, in order.
+ */
+function dialogsCode(dialogs: NonNullable<RecordedStep['dialogs']>): string[] {
+  const answer = (d: (typeof dialogs)[number]) => (d.accept ? `dialog.accept(${d.type === 'prompt' ? q(maskSecrets(d.text ?? '')) : ''})` : 'dialog.dismiss()');
+  const said = (d: (typeof dialogs)[number]) => {
+    const what = d.message ? `“${maskSecrets(d.message)}”` : `a${d.type === 'alert' ? 'n alert' : ` ${d.type}`}`;
+    const how = !d.accept ? 'Cancel' : d.type === 'prompt' ? `“${maskSecrets(d.text ?? '')}” and OK` : 'OK';
+    return `${what}: ${how}`;
+  };
+  const once = (i: number): string => {
+    const d = dialogs[i];
+    return i === dialogs.length - 1 ? `page.once('dialog', (dialog) => ${answer(d)});` : `page.once('dialog', (dialog) => { ${once(i + 1)} return ${answer(d)}; });`;
+  };
+  return [`// It opens ${dialogs.map((d) => jsComment(said(d))).join(', then ')}, answered as you did.`, once(0)];
+}
+
+/**
  * The options a step chose, as selectOption takes them: by what each says ({ label: 'Express' }), or by its value
  * when what it says has numbers in it (a price changes, its value doesn't) or isn't known; by value alone when another
  * option of the list says the same as one chosen ({ value: 'std-us' }).
@@ -370,7 +388,7 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
       return;
     }
     const code = stepCode(s);
-    if (code) step(String(++n), maskSecrets(s.description), [code]);
+    if (code) step(String(++n), maskSecrets(s.description), [...(s.dialogs?.length ? dialogsCode(s.dialogs) : []), code]);
   });
   for (const e of checksAt.get(input.steps.length) ?? []) check(e);
   lines.push('});', '');

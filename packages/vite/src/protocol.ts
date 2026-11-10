@@ -114,7 +114,22 @@ export interface LocatorInfo {
 export type RecordedAction =
   | { kind: 'click'; locator: string; description: string }
   | { kind: 'fill'; locator: string; value: string; description: string; secret?: string; select?: string[]; values?: string[]; byValue?: boolean; checked?: boolean }
-  | { kind: 'press'; locator: string; key: string; description: string };
+  | { kind: 'press'; locator: string; key: string; description: string }
+  /**
+   * A dialog of the browser (alert, confirm, prompt) the step just recorded opened, and how the person answered it:
+   * OK (`accept`) or Cancel, and what they typed into a prompt. A test answers it the same way.
+   */
+  | { kind: 'dialog'; dialog: StepDialog };
+
+/** How a dialog a step opens is answered: OK or Cancel, and what was typed into a prompt. */
+export interface StepDialog {
+  type: 'alert' | 'confirm' | 'prompt';
+  accept: boolean;
+  /** What a prompt was answered with (OK). */
+  text?: string;
+  /** What the dialog said. */
+  message?: string;
+}
 
 /** An element as a test session remembers it. Cheap fields are read at once; `locator`, `description` and `path` when the browser is idle. */
 export interface SessionTarget {

@@ -58,6 +58,48 @@ export class Recorder {
   setOn(on: boolean): void {
     if (!on) this.flushAll();
     this.on = on;
+    this.answerDialogs(on);
+  }
+
+  /** The page's own dialogs, while ours stand in for them (recording); put back as they were when it stops. */
+  private native: Pick<Window, 'alert' | 'confirm' | 'prompt'> | null = null;
+  private wrapped: Pick<Window, 'alert' | 'confirm' | 'prompt'> | null = null;
+
+  /**
+   * While recording, the browser's dialogs are the page's as before, and how the person answered each is kept with
+   * the step that opened it: a test (where Playwright cancels every dialog nobody answers) answers it the same way,
+   * so the app takes the same branch. Outside recording the page's own functions are back, untouched.
+   */
+  private answerDialogs(on: boolean): void {
+    if (on && !this.native) {
+      const native = { alert: window.alert, confirm: window.confirm, prompt: window.prompt };
+      const said = (message: unknown) => (message === undefined ? '' : collapse(maskSecrets(String(message)), 120));
+      const emit = this.emit;
+      this.native = native;
+      this.wrapped = {
+        alert(message?: unknown) {
+          native.alert.call(window, message);
+          emit({ kind: 'dialog', dialog: { type: 'alert', accept: true, message: said(message) } });
+        },
+        confirm(message?: string) {
+          const ok = native.confirm.call(window, message);
+          emit({ kind: 'dialog', dialog: { type: 'confirm', accept: ok, message: said(message) } });
+          return ok;
+        },
+        prompt(message?: string, value?: string) {
+          const answer = native.prompt.call(window, message, value);
+          // What was typed into a prompt is kept as typed, unless it looks like a key or a card number.
+          emit({ kind: 'dialog', dialog: { type: 'prompt', accept: answer !== null, ...(answer !== null ? { text: maskSecrets(answer) } : {}), message: said(message) } });
+          return answer;
+        },
+      };
+      Object.assign(window, this.wrapped);
+    } else if (!on && this.native && this.wrapped) {
+      // Only what is still ours goes back: something the page put there since stays.
+      for (const name of ['alert', 'confirm', 'prompt'] as const) if (window[name] === this.wrapped[name]) (window as unknown as Record<string, unknown>)[name] = this.native[name];
+      this.native = null;
+      this.wrapped = null;
+    }
   }
 
   /** Send the text still being typed now: what comes next (a check said about the page) comes after it. */

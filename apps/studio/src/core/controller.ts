@@ -417,6 +417,14 @@ class Controller {
     b.onRecorded = (action) => {
       if (get().mode !== 'record') return;
       const r = get().recorder;
+      if (action.kind === 'dialog') {
+        // A dialog belongs to the step that opened it (recorded just before it): the test answers it before that step.
+        const at = r.steps.findLastIndex((s) => s.kind !== 'url' && s.kind !== 'note' && s.kind !== 'goto');
+        if (at < 0) return;
+        const steps = r.steps.map((s, i) => (i === at ? { ...s, dialogs: [...(s.dialogs ?? []), action.dialog] } : s));
+        set({ recorder: { ...r, steps } });
+        return;
+      }
       const step: RecordedStep = {
         kind: action.kind,
         locator: action.locator,

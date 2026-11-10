@@ -3,6 +3,7 @@
  * check as the test will hold them, or a refusal that names the one that is wrong and why. Nothing is cut short or
  * left out: a test written from part of what was asked for would pass without checking the rest.
  */
+import type { StepDialog } from '@saywright/vite/protocol';
 import type { Expectation, RecordedStep } from '../../shared/api.ts';
 import { HttpError } from '../http.ts';
 import { safeLocator } from './generate.ts';
@@ -14,6 +15,9 @@ export const MAX_CHECKS = 100;
 const MAX_OPTIONS = 1000;
 
 const KINDS: readonly RecordedStep['kind'][] = ['click', 'fill', 'press', 'goto', 'note', 'url'];
+const DIALOGS: readonly StepDialog['type'][] = ['alert', 'confirm', 'prompt'];
+/** Dialogs one step opens, one after the other. */
+const MAX_DIALOGS = 20;
 const FIELDS: readonly NonNullable<Expectation['field']>[] = ['value', 'select', 'checked', 'name', 'state'];
 /** The states a check can say an element is in. */
 const STATES = ['visible', 'hidden', 'enabled', 'disabled', 'selected', 'not selected'];
@@ -77,6 +81,22 @@ function step(v: unknown, i: number): RecordedStep {
   if (url !== undefined) out.url = url;
   const key = text(o, 'key', what, { max: 100 });
   if (key !== undefined) out.key = key;
+  const dialogs = o.dialogs;
+  if (dialogs !== undefined && dialogs !== null) {
+    if (!Array.isArray(dialogs) || dialogs.length > MAX_DIALOGS) throw refuse(`${what}: dialogs must be a list of at most ${MAX_DIALOGS} dialogs it opens.`);
+    out.dialogs = dialogs.map((d, j) => {
+      const which = `${what}, dialog ${j + 1}`;
+      const r = record(d, which, 'a dialog (an object with its type and whether it was accepted)');
+      if (!DIALOGS.includes(r.type as StepDialog['type'])) throw refuse(`${which} is “${shown(r.type)}”: a dialog is one of ${DIALOGS.join(', ')}.`);
+      if (typeof r.accept !== 'boolean') throw refuse(`${which}: accept must be true or false, not ${shown(r.accept)}.`);
+      const out: StepDialog = { type: r.type as StepDialog['type'], accept: r.accept };
+      const answer = text(r, 'text', which, { max: SHORT });
+      if (answer !== undefined) out.text = answer;
+      const message = text(r, 'message', which, { max: SHORT });
+      if (message !== undefined) out.message = message;
+      return out;
+    });
+  }
   if (kind !== 'fill') return out;
   const value = text(o, 'value', what);
   if (value !== undefined) out.value = value;

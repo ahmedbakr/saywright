@@ -1,7 +1,7 @@
 /**
  * Types shared by the studio client and its local API server.
  */
-import type { SourceFrame, SourceHint } from '@saywright/vite/protocol';
+import type { SourceFrame, SourceHint, StepDialog } from '@saywright/vite/protocol';
 import type { AppEnv, Framework } from './apps.ts';
 
 /** An element the user referred to ("this", "that", a pin, the selection). */
@@ -136,6 +136,8 @@ export interface RecordedStep {
   checked?: boolean;
   key?: string;
   url?: string;
+  /** The browser's dialogs (confirm, prompt, alert) this step opened, in order, answered as the person did. */
+  dialogs?: StepDialog[];
   description: string;
 }
 
