@@ -223,17 +223,20 @@ function validate(s: MagicString, start: number, end: number): string {
   return after;
 }
 
-/** Set (or with `value === null`, remove) a string prop on the element at `loc`. */
-export function setProp(code: string, loc: Loc, prop: string, value: string | null, ast?: Node): string {
-  return setProps(code, loc, [[prop, value]], ast);
+/**
+ * Set (or with `value === null`, remove) a string prop on the element at `loc`. With `into`, the edit is written into
+ * that MagicString of the same code (several elements changed in one pass); the caller then checks the whole result.
+ */
+export function setProp(code: string, loc: Loc, prop: string, value: string | null, ast?: Node, into?: MagicString): string {
+  return setProps(code, loc, [[prop, value]], ast, into);
 }
 
 /** Several props on one element in a single edit: each [prop, value], with null to remove it. */
-export function setProps(code: string, loc: Loc, changes: [prop: string, value: string | null][], ast?: Node): string {
+export function setProps(code: string, loc: Loc, changes: [prop: string, value: string | null][], ast?: Node, into?: MagicString): string {
   const f = findElement(code, loc, ast);
   if (!f) throw new CodemodError('Element not found at that location');
   const open = f.el.openingElement;
-  const s = new MagicString(code);
+  const s = into ?? new MagicString(code);
   const attrs = open.attributes;
   const lastAttr = attrs.length ? attrs[attrs.length - 1] : null;
   const anchorEnd = lastAttr ? lastAttr.end : (open.typeArguments ?? open.typeParameters ?? open.name).end;
@@ -266,7 +269,7 @@ export function setProps(code: string, loc: Loc, changes: [prop: string, value: 
     changed = true;
   }
   if (!changed) return code; // every prop to remove was already absent
-  return validate(s, f.el.start, f.el.end);
+  return into ? into.toString() : validate(s, f.el.start, f.el.end);
 }
 
 function escapeJsxText(text: string): string {
@@ -284,17 +287,17 @@ function wordless(n: Node): boolean {
  * Replace the element's visible text. `textProp` is "children" or a prop name such as "label". `shown`, the words the
  * page showed for it, when known: words written beside an input or an icon are changed only when they are all it shows.
  */
-export function setText(code: string, loc: Loc, text: string, textProp = 'children', ast?: Node, shown?: string): string {
-  if (textProp !== 'children') return setProp(code, loc, textProp, text, ast);
+export function setText(code: string, loc: Loc, text: string, textProp = 'children', ast?: Node, shown?: string, into?: MagicString): string {
+  if (textProp !== 'children') return setProp(code, loc, textProp, text, ast, into);
   const f = findElement(code, loc, ast);
   if (!f) throw new CodemodError('Element not found at that location');
   const kids = f.el.children.filter((c: Node) => !(c.type === 'JSXText' && !c.value.trim()));
   let node: Node = kids[0];
   if (kids.length !== 1 || kids[0].type !== 'JSXText') {
     if (kids.length === 1 && kids[0].type === 'JSXExpressionContainer' && kids[0].expression.type === 'StringLiteral') {
-      const s = new MagicString(code);
+      const s = into ?? new MagicString(code);
       s.overwrite(kids[0].start, kids[0].end, `{${JSON.stringify(text)}}`);
-      return validate(s, f.el.start, f.el.end);
+      return into ? into.toString() : validate(s, f.el.start, f.el.end);
     }
     // Words beside an input, an icon or a picture (“<label>Email <input /></label>”): the words are what changes.
     const own = kids.filter((c: Node) => c.type === 'JSXText');
@@ -308,9 +311,9 @@ export function setText(code: string, loc: Loc, text: string, textProp = 'childr
   const raw = code.slice(node.start, node.end);
   const lead = /^\s*/.exec(raw)![0].length;
   const trail = /\s*$/.exec(raw)![0].length;
-  const s = new MagicString(code);
+  const s = into ?? new MagicString(code);
   s.overwrite(node.start + lead, node.end - trail, escapeJsxText(text));
-  return validate(s, f.el.start, f.el.end);
+  return into ? into.toString() : validate(s, f.el.start, f.el.end);
 }
 
 /** The child unit that represents the element inside its parent's children (the element, or `{cond && <El/>}`). */
@@ -355,54 +358,91 @@ function lineRange(code: string, node: Node): { start: number; end: number; whol
  * markup around it: these two need no parse to check.
  */
 export function removeElement(code: string, loc: Loc, ast?: Node): string {
-  return removal(code, loc, ast).code;
-}
-
-/** What removing the element leaves: the code, and where the removed part began. */
-function removal(code: string, loc: Loc, ast?: Node): { code: string; at: number; found: Found } {
   const f = findElement(code, loc, ast);
   if (!f) throw new CodemodError('Element not found at that location');
+  const r = removalRange(f, code);
+  const s = new MagicString(code);
+  s.overwrite(r.start, r.end, r.text);
+  return s.toString();
+}
+
+/**
+ * What taking the element out replaces, and with what. A child of markup goes with its own lines, and with its
+ * `{cond && …}` (nothing is left to show). The fallback of `a || <El/>` or `a ?? <El/>` leaves `a`, which is what
+ * shows the rest of the time; one branch of `cond ? <A/> : <B/>` leaves `null`, so the other still shows.
+ */
+function removalRange(f: Found, code: string): { start: number; end: number; text: string } {
+  const p = f.parent;
+  if (p?.type === 'LogicalExpression' && p.right === f.el && p.operator !== '&&') {
+    let start = code.indexOf(p.operator, p.left.end);
+    while (start > 0 && /\s/.test(code[start - 1])) start--;
+    return { start, end: p.end, text: '' };
+  }
+  if (p?.type === 'ConditionalExpression' && (p.consequent === f.el || p.alternate === f.el)) {
+    const paren = f.el.extra?.parenthesized ? f.el.extra.parenStart : null;
+    if (typeof paren === 'number') return { start: paren, end: code.indexOf(')', f.el.end) + 1, text: 'null' };
+    return { start: f.el.start, end: f.el.end, text: 'null' };
+  }
   const { unit } = childUnit(f, code);
   const r = lineRange(code, unit);
-  const s = new MagicString(code);
-  s.remove(r.start, r.end);
-  return { code: s.toString(), at: r.start, found: f };
+  return { start: r.start, end: r.end, text: '' };
 }
 
 /** Names never taken out with what used them: the JSX of the classic runtime needs them in scope unwritten. */
 const KEEP_IMPORTS = new Set(['React', 'h']);
 
-/**
- * Remove the element, and what only it used, so the app still builds (an unused import or prop fails a build that
- * checks for them): the imports, and the props its component read for it (unless the props are spread on, where
- * leaving one out would change what is passed). Anything else it alone used (a variable, a helper, a hook's value)
- * may do something besides, so it stays and is named in `unused`.
- */
+/** Removing one element: see removeElementsTidy. */
 export function removeElementTidy(code: string, loc: Loc, ast?: Node): { code: string; took: string[]; unused: string[] } {
+  return removeElementsTidy(code, [loc], ast);
+}
+
+/**
+ * Remove the elements at `locs` (all found in this code, as it is, before any is taken out), and what only they used,
+ * so the app still builds (an unused import or prop fails a build that checks for them): the imports, and the props
+ * their components read for them (unless the props are spread on, where leaving one out would change what is passed).
+ * Anything else only they used (a variable, a helper, a hook's value) may do something besides, so it stays and is
+ * named in `unused`. Every edit is made on the code as it was, in one pass: no removal moves the place of another.
+ */
+export function removeElementsTidy(code: string, locs: Loc[], ast?: Node): { code: string; took: string[]; unused: string[] } {
   const tree = ast ?? parseTsx(code);
-  const { code: after, at, found } = removal(code, loc, tree);
+  const found = locs.map((loc) => {
+    const f = findElement(code, loc, tree);
+    if (!f) throw new CodemodError('Element not found at that location');
+    return f;
+  });
+  const parts = found.map((f) => ({ f, r: removalRange(f, code) }));
+  // One inside another picked one goes with it; two that only partly overlap can't both be taken out cleanly.
+  const outer = parts.filter((p, i) => !parts.some((o, j) => j !== i && o.r.start <= p.r.start && p.r.end <= o.r.end && (o.r.end - o.r.start > p.r.end - p.r.start || j < i)));
+  for (const p of outer) for (const o of outer) if (p !== o && p.r.start < o.r.end && o.r.start < p.r.end) throw new CodemodError('Two of the elements overlap in the code');
+  const s = new MagicString(code);
+  for (const { r } of outer) {
+    if (r.end > r.start) s.overwrite(r.start, r.end, r.text);
+    else if (r.text) s.appendLeft(r.start, r.text);
+  }
+  const removed = outer.map((p) => p.r);
+  const inside = (n: Node) => removed.some((r) => n.start < r.end && r.start < n.end);
   const before = nameCounts(tree.program);
   const took: string[] = [];
   /** Written somewhere besides its own declaration before the removal, and nowhere after it. */
   const gone = (now: Map<string, number>) => (name: string, own: number) => (before.get(name) ?? 0) > own && (now.get(name) ?? 0) <= own;
-  let current = after;
   let currentTree: Node;
   try {
-    currentTree = parseTsx(after);
+    currentTree = parseTsx(s.toString());
   } catch {
-    return { code: after, took: [], unused: [] };
+    return { code: s.toString(), took: [], unused: [] };
   }
+  let done = s;
 
-  // First the props the components around it read only for it (before the element: their places are the same in
-  // what is left); a default value of one may be the last use of an import.
-  const fns = functionsAround(tree, found.el.start);
+  // First the props the components around them read only for them; a default value of one may be the last use of
+  // an import.
+  const fns = [...new Set(outer.flatMap((p) => functionsAround(tree, p.f.el.start)))];
   {
     const lastUseGone = gone(nameCounts(currentTree.program));
-    const s = new MagicString(current);
+    const next = done.clone();
     let changed = false;
     for (const fn of fns) {
       const pattern = fn.params?.[0];
-      if (pattern?.type !== 'ObjectPattern' || pattern.end > at || pattern.properties.some((p: Node) => p.type === 'RestElement')) continue;
+      if (pattern?.type !== 'ObjectPattern' || inside(pattern) || pattern.properties.some((p: Node) => p.type === 'RestElement')) continue;
       const drop = new Set<Node>();
       for (const prop of pattern.properties) {
         const name = boundName(prop);
@@ -412,36 +452,35 @@ export function removeElementTidy(code: string, loc: Loc, ast?: Node): { code: s
       for (const prop of drop) took.push(`the ${boundName(prop)} prop`);
       if (drop.size === pattern.properties.length) {
         // None left: the component takes its props without reading them (`_props`, which no build calls unused).
-        const close = current.indexOf('}', pattern.properties[pattern.properties.length - 1].end);
-        s.overwrite(pattern.start, close + 1, '_props');
-      } else dropFromList(s, pattern.properties, drop);
+        const close = code.indexOf('}', pattern.properties[pattern.properties.length - 1].end);
+        next.overwrite(pattern.start, close + 1, '_props');
+      } else dropFromList(next, pattern.properties, drop);
       changed = true;
     }
     if (changed) {
-      const next = s.toString();
       try {
-        currentTree = parseTsx(next);
-        current = next;
+        currentTree = parseTsx(next.toString());
+        done = next;
       } catch {
         took.length = 0;
       }
     }
   }
 
-  // Then the imports only it used (or a default value it took with it).
+  // Then the imports only they used (or a default value they took with them).
   {
     const lastUseGone = gone(nameCounts(currentTree.program));
-    const s = new MagicString(current);
+    const next = done.clone();
     const named: string[] = [];
-    for (const decl of currentTree.program.body) {
+    for (const decl of tree.program.body) {
       if (decl.type !== 'ImportDeclaration' || !decl.specifiers.length) continue;
       const specs: Node[] = decl.specifiers;
       const drop = specs.filter((sp) => !KEEP_IMPORTS.has(sp.local.name) && lastUseGone(sp.local.name, 0));
       if (!drop.length) continue;
       for (const sp of drop) named.push(`the ${sp.local.name} import`);
       if (drop.length === specs.length) {
-        const r = lineRange(current, decl);
-        s.remove(r.start, r.end);
+        const r = lineRange(code, decl);
+        next.remove(r.start, r.end);
         continue;
       }
       const def = specs.find((sp) => sp.type === 'ImportDefaultSpecifier');
@@ -449,18 +488,17 @@ export function removeElementTidy(code: string, loc: Loc, ast?: Node): { code: s
       const list = specs.filter((sp) => sp.type === 'ImportSpecifier');
       const out = new Set(drop);
       // `X, { A }` → `{ A }`; `X, * as NS` → `* as NS`.
-      if (def && out.has(def)) s.remove(def.start, ns ? ns.start : current.indexOf('{', def.end));
-      if (ns && out.has(ns)) s.remove(def ? def.end : ns.start, ns.end);
+      if (def && out.has(def)) next.remove(def.start, ns ? ns.start : code.indexOf('{', def.end));
+      if (ns && out.has(ns)) next.remove(def ? def.end : ns.start, ns.end);
       // `X, { A }` → `X`.
       if (list.length && list.every((sp) => out.has(sp))) {
-        if (def) s.remove(def.end, current.indexOf('}', list[list.length - 1].end) + 1);
-      } else dropFromList(s, list, out);
+        if (def) next.remove(def.end, code.indexOf('}', list[list.length - 1].end) + 1);
+      } else dropFromList(next, list, out);
     }
     if (named.length) {
-      const next = s.toString();
       try {
-        currentTree = parseTsx(next);
-        current = next;
+        currentTree = parseTsx(next.toString());
+        done = next;
         took.unshift(...named);
       } catch {
         // Left as they were.
@@ -468,12 +506,12 @@ export function removeElementTidy(code: string, loc: Loc, ast?: Node): { code: s
     }
   }
 
-  // What else only it used, which may do more than it needed (a value worked out, a hook): named, left as it is.
+  // What else only they used, which may do more than they needed (a value worked out, a hook): named, left as it is.
   const lastUseGone = gone(nameCounts(currentTree.program));
   const unused: string[] = [];
-  for (const fn of fns) for (const [name, own] of declaredIn(fn.body)) if (lastUseGone(name, own)) unused.push(name);
-  for (const [name, own] of declaredIn(tree.program)) if (lastUseGone(name, own)) unused.push(name);
-  return { code: current, took, unused };
+  for (const fn of fns) for (const [name, own] of declaredIn(fn.body)) if (lastUseGone(name, own) && !unused.includes(name)) unused.push(name);
+  for (const [name, own] of declaredIn(tree.program)) if (lastUseGone(name, own) && !unused.includes(name)) unused.push(name);
+  return { code: done.toString(), took, unused };
 }
 
 /** Nodes whose `key` is a name written in place, not a use of one (`{ title: … }`, `title: string` in a type). */

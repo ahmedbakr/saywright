@@ -198,3 +198,105 @@ describe('quick edits after the code changed under the selection', () => {
     expect(quickEdit('remove this', exportRef, p)).toMatchObject({ kind: 'message', text: expect.stringMatching(/select it again/) });
   });
 });
+
+describe('several picked: each is found in the code as it was, and all are changed in one pass', () => {
+  const APP = `import Header from './Header';
+import Sidebar from './Sidebar';
+import Footer from './Footer';
+
+export default function App() {
+  return (
+    <div className="app">
+      <Header />
+      <Sidebar />
+      <main>content</main>
+      <Footer />
+    </div>
+  );
+}
+`;
+  const TOOLBAR = `import { Bold, Italic, Underline, Link } from 'lucide-react';
+import { Button } from './ds/Button';
+
+export function Toolbar({ a, b }: { a: string; b: string }) {
+  return (
+    <div className="toolbar">
+      <p><Bold /><Italic /><Underline /><Link /></p>
+      <p><b>One</b> <i>Two</i> <u>Three</u></p>
+      <Button>Save</Button> <Button size="sm">Print</Button>
+      <Button variant="ghost">Share</Button>
+      <table>
+        <tr><td>{a}</td></tr>
+        <tr><td>{b}</td></tr>
+      </table>
+    </div>
+  );
+}
+`;
+  const setup = () => {
+    const p = tempShop();
+    fs.writeFileSync(path.join(p.root, 'src/Multi.tsx'), APP);
+    fs.writeFileSync(path.join(p.root, 'src/Toolbar.tsx'), TOOLBAR);
+    return p;
+  };
+  const pick = (p: Project, file: string, needle: string, name: string, text = '') => ref('pin', srcOf(p, file, needle), name, text);
+  const after = (r: ReturnType<typeof quickEdit>, file: string) => (r?.kind === 'edit' ? r.edits.find((e) => e.path === file)?.after : undefined);
+
+  it('removes the picked ones, and the imports only they used, even when one removal moves the other', () => {
+    const p = setup();
+    const two = quickEdit('remove these', [pick(p, 'src/Multi.tsx', '<Header', 'Header'), pick(p, 'src/Multi.tsx', '<Footer', 'Footer')], p);
+    expect(after(two, 'src/Multi.tsx')).toBe(APP.replace("import Header from './Header';\n", '').replace("import Footer from './Footer';\n", '').replace('      <Header />\n', '').replace('      <Footer />\n', ''));
+    expect(two?.kind === 'edit' && two.title).toBe('Remove Header; Remove Footer (2 picked)');
+    const three = quickEdit('remove these', [pick(p, 'src/Multi.tsx', '<Footer', 'Footer'), pick(p, 'src/Multi.tsx', '<main', 'main', 'content'), pick(p, 'src/Multi.tsx', '<Header', 'Header')], p);
+    expect(after(three, 'src/Multi.tsx')).toBe(APP.replace("import Header from './Header';\n", '').replace("import Footer from './Footer';\n", '').replace('      <Header />\n', '').replace('      <main>content</main>\n', '').replace('      <Footer />\n', ''));
+  });
+
+  it('removes two and three on one line, and rows that draw data with the props only they read', () => {
+    const p = setup();
+    const r = quickEdit('remove these', [pick(p, 'src/Toolbar.tsx', '<Bold', 'Bold'), pick(p, 'src/Toolbar.tsx', '<Link', 'Link')], p);
+    const code = after(r, 'src/Toolbar.tsx')!;
+    expect(code).toContain("import { Italic, Underline } from 'lucide-react';");
+    expect(code).toContain('<p><Italic /><Underline /></p>');
+    const three = quickEdit('remove these', [pick(p, 'src/Toolbar.tsx', '<Bold', 'Bold'), pick(p, 'src/Toolbar.tsx', '<Italic', 'Italic'), pick(p, 'src/Toolbar.tsx', '<Link', 'Link')], p);
+    expect(after(three, 'src/Toolbar.tsx')).toContain("import { Underline } from 'lucide-react';");
+    expect(after(three, 'src/Toolbar.tsx')).toContain('<p><Underline /></p>');
+    const rows = quickEdit('remove these', [pick(p, 'src/Toolbar.tsx', '<tr><td>{a}', 'tr', 'Alice'), pick(p, 'src/Toolbar.tsx', '<Bold', 'Bold')], p);
+    const left = after(rows, 'src/Toolbar.tsx')!;
+    expect(left).toContain('export function Toolbar({ b }: { a: string; b: string })');
+    expect(left).toContain('<tr><td>{b}</td></tr>');
+    expect(left).not.toContain('{a}');
+    expect(left).toContain('<p><Italic /><Underline /><Link /></p>');
+  });
+
+  it('removes across files, and an element inside another picked one goes with it', () => {
+    const p = setup();
+    const r = quickEdit('remove these', [pick(p, 'src/Multi.tsx', '<Sidebar', 'Sidebar'), pick(p, 'src/Toolbar.tsx', '<Italic', 'Italic')], p);
+    expect(after(r, 'src/Multi.tsx')).toBe(APP.replace("import Sidebar from './Sidebar';\n", '').replace('      <Sidebar />\n', ''));
+    expect(after(r, 'src/Toolbar.tsx')).toContain('<p><Bold /><Underline /><Link /></p>');
+    const nested = quickEdit('remove these', [pick(p, 'src/Toolbar.tsx', '<p><Bold', 'p'), pick(p, 'src/Toolbar.tsx', '<Bold', 'Bold')], p);
+    const code = after(nested, 'src/Toolbar.tsx')!;
+    expect(code).not.toContain('<Bold');
+    expect(code).toContain("import { Button } from './ds/Button';");
+    expect(code).not.toContain('lucide-react');
+  });
+
+  it('renames, resizes and recolours two and three on one line', () => {
+    const p = setup();
+    const r = quickEdit('rename these to Done', [pick(p, 'src/Toolbar.tsx', '<b>', 'b', 'One'), pick(p, 'src/Toolbar.tsx', '<i>', 'i', 'Two'), pick(p, 'src/Toolbar.tsx', '<u>', 'u', 'Three')], p);
+    expect(after(r, 'src/Toolbar.tsx')).toContain('<p><b>Done</b> <i>Done</i> <u>Done</u></p>');
+    const bigger = quickEdit('make these bigger', [pick(p, 'src/Toolbar.tsx', '<Button>Save', 'Button', 'Save'), pick(p, 'src/Toolbar.tsx', '<Button size="sm"', 'Button', 'Print'), pick(p, 'src/Toolbar.tsx', '<Button variant="ghost"', 'Button', 'Share')], p);
+    const code = after(bigger, 'src/Toolbar.tsx')!;
+    expect(code).toContain('<Button size="lg">Save</Button> <Button>Print</Button>');
+    expect(code).toContain('<Button variant="ghost" size="lg">Share</Button>');
+    const red = quickEdit('make these red', [pick(p, 'src/Toolbar.tsx', '<Button>Save', 'Button', 'Save'), pick(p, 'src/Toolbar.tsx', '<Button size="sm"', 'Button', 'Print')], p);
+    expect(after(red, 'src/Toolbar.tsx')).toContain('<Button variant="danger">Save</Button> <Button size="sm" variant="danger">Print</Button>');
+  });
+
+  it('moves one below another with two picked, and says what it can’t do with three', () => {
+    const p = setup();
+    const two = quickEdit('move this below that', [pick(p, 'src/Multi.tsx', '<Header', 'Header'), pick(p, 'src/Multi.tsx', '<Sidebar', 'Sidebar')], p);
+    expect(after(two, 'src/Multi.tsx')).toContain('      <Sidebar />\n      <Header />\n');
+    const three = quickEdit('move these below that', [pick(p, 'src/Multi.tsx', '<Header', 'Header'), pick(p, 'src/Multi.tsx', '<Sidebar', 'Sidebar'), pick(p, 'src/Multi.tsx', '<Footer', 'Footer')], p);
+    expect(three).toMatchObject({ kind: 'message', text: expect.stringMatching(/one element at a time/) });
+  });
+});

@@ -1,8 +1,9 @@
 import { parseSrc } from '@saywright/vite/protocol';
+import MagicString from 'magic-string';
 import type { NextStep, RefInfo } from '../../shared/api.ts';
 import type { FileEdit } from '../changes.ts';
 import type { ComponentProp, ComponentSpec, Project } from '../project.ts';
-import { CodemodError, componentAt, ComputedTextError, elementName, MixedTextError, findByWords, findElement, moveElement, parseTsx, readProps, removeElementTidy, setProp, setProps, setText, showsText, type Loc } from './codemods.ts';
+import { CodemodError, componentAt, ComputedTextError, elementName, MixedTextError, findByWords, findElement, moveElement, parseTsx, readProps, removeElementsTidy, removeElementTidy, setProp, setProps, setText, showsText, type Found, type Loc } from './codemods.ts';
 import { parseQuick, type QuickIntent } from '../../shared/grammar.ts';
 
 type QuickResult =
@@ -74,6 +75,17 @@ function current(props: ReturnType<typeof readProps>, prop: string, def: Compone
 
 const valueOrNull = (def: ComponentProp, value: string) => (def.default === value ? null : value);
 
+/** A picked element, found in its file's code as it is now (before anything this request changes). */
+interface Site {
+  file: string;
+  loc: Loc;
+  code: string;
+  ast: ReturnType<typeof parseTsx>;
+  el: Found['el'];
+}
+
+type Said = Exclude<QuickResult, { kind: 'edit' }>;
+
 /**
  * Try to satisfy the request with a precise offline edit. Returns null when the
  * request is outside the quick vocabulary or can't be done safely, so the
@@ -85,35 +97,58 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
   if (intent.kind === 'text' && intent.everywhere) return { kind: 'needs-ai', why: 'Changing words everywhere they appear needs an AI: a quick edit changes only what you point at.' };
   // Several picked (“make these smaller”, “remove these”): the same edit on each, once per place in the code.
   const each = refs.filter((r, i) => r.src && refs.findIndex((o) => o.src === r.src) === i);
-  if (each.length > 1 && (intent.kind === 'set' || intent.kind === 'step' || intent.kind === 'text' || intent.kind === 'remove')) return quickEditEach(text, each, project);
+  if (each.length > 1 && (intent.kind === 'set' || intent.kind === 'step' || intent.kind === 'text' || intent.kind === 'remove')) return quickEditEach(intent, each, project);
+  // “Move these below that” with three picked: which go where can't be told from the order they were picked in.
+  if (intent.kind === 'move' && each.length > 2) {
+    return { kind: 'message', tone: 'info', text: `A quick move takes one element at a time: select the one to move and the one it goes ${intent.where}, then say it again, or ask the AI to move them all.`, next: [{ kind: 'ask-ai' }] };
+  }
 
   // Without a pointed-at element there is nothing precise to edit; Claude may still find it by name. “This” with
   // nothing pointed at names nothing: said, rather than an AI asked (and paid) to guess.
   const a = refs[0];
   if (!a && /\b(?:this|that|these|those|it|them)\b/i.test(text)) return { kind: 'message', tone: 'info', text: 'Point at what you mean (or click it to select it), then say it again.' };
+  if (!a) return null;
+  const site = locate(a, project, new Map());
+  if (!site || !('el' in site)) return site;
+  const result = attempt(intent, a, site, refs, project);
+  if (result?.kind === 'edit') {
+    const component = componentAt(site.code, site.loc, site.ast);
+    if (component) result.component = component;
+  }
+  return result;
+}
+
+/**
+ * Where the picked element is in its file's code (read and parsed once per file for the whole request, in `files`).
+ * Null when a quick edit can't work there (no source, markup other than JSX); a message when it can't be found.
+ */
+function locate(a: RefInfo, project: Project, files: Map<string, { code: string; ast: ReturnType<typeof parseTsx> }>): Site | Said | null {
   let where = locOf(a);
   // Quick edits rewrite JSX; other markup (HTML, Vue, Svelte templates) goes to the AI.
-  if (!a || !where || !/\.[jt]sx$/.test(where.file)) return null;
-
-  let code: string;
-  let ast: ReturnType<typeof parseTsx>;
-  try {
-    code = project.read(where.file);
-  } catch {
-    return null;
+  if (!where || !/\.[jt]sx$/.test(where.file)) return null;
+  let file = files.get(where.file);
+  if (!file) {
+    let code: string;
+    try {
+      code = project.read(where.file);
+    } catch {
+      return null;
+    }
+    try {
+      // Parsed once for the whole request (a long component takes a while): every step below uses this tree.
+      file = { code, ast: parseTsx(code) };
+    } catch {
+      // Half-written in an editor, say: a quick edit can't place itself safely, and an AI may not be what was wanted.
+      return { kind: 'message', tone: 'warn', text: `${where.file} doesn’t parse right now (a syntax error?), so a quick edit can’t be made in it. Fix it, or ask the AI.`, next: [{ kind: 'ask-ai' }, { kind: 'open', src: a.src ?? `${where.file}:1:1` }] };
+    }
+    files.set(where.file, file);
   }
-  try {
-    // Parsed once for the whole request (a long component takes a while): every step below uses this tree.
-    ast = parseTsx(code);
-  } catch {
-    // Half-written in an editor, say: a quick edit can't place itself safely, and an AI may not be what was wanted.
-    return { kind: 'message', tone: 'warn', text: `${where.file} doesn’t parse right now (a syntax error?), so a quick edit can’t be made in it. Fix it, or ask the AI.`, next: [{ kind: 'ask-ai' }, { kind: 'open', src: a.src ?? `${where.file}:1:1` }] };
-  }
+  const { code, ast } = file;
   let found = findElement(code, where.loc, ast);
   // The code changed since it was selected (lines added above it in an editor): what is at its place now may be
   // another element. It is found again by its name and words when exactly one near there says them. When none does,
   // what is there is it (the page may just not show an undo yet). Nothing there, or several that could be it: said,
-  // never guessed.
+  // never guessed. This is always the code as it was before this request: nothing it changes moves another pick.
   if (!found || !showsText(found.el, a.text)) {
     const moved = findByWords(code, where.loc, found ? elementName(found.el) : a.name, a.text, ast);
     if (moved && moved !== 'many') {
@@ -123,26 +158,30 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
       return { kind: 'message', tone: 'info', text: `The code changed since you selected ${describeRef(a)}, so it isn’t where it was: select it again.`, next: [{ kind: 'ask-ai' }] };
     }
   }
-  const el = found.el;
-  const here = where;
+  return { file: where.file, loc: where.loc, code, ast, el: found.el };
+}
+
+/**
+ * The edit asked for, on one element. With `into`, a MagicString of the site's code, the edit is written there (with
+ * others of the same request) and `edits` holds no code yet: the caller writes the file once, when all are made.
+ */
+function attempt(intent: QuickIntent, a: RefInfo, site: Site, refs: RefInfo[], project: Project, into?: MagicString): QuickResult | null {
+  const { code, ast, el } = site;
+  const where = { file: site.file, loc: site.loc };
   const name = elementName(el);
   const config = project.config;
   const spec = project.componentSpec(name, where.file);
   const props = readProps(el);
   const what = describeRef(a);
-  const result = attempt(intent, here);
-  if (result?.kind === 'edit') {
+  const result = run();
+  if (result?.kind === 'edit' && a.same && a.same > 1) {
     // The code changed draws more than what was pointed at: said where it shows, not found out later.
-    if (a.same && a.same > 1) {
-      result.title += ` (all ${a.same} on this page)`;
-      result.summary += ` Its code draws it ${a.same} times on this page (the rows of a list, or a component used several times): this changes them all.`;
-    }
-    const component = componentAt(code, here.loc, ast);
-    if (component) result.component = component;
+    result.title += ` (all ${a.same} on this page)`;
+    result.summary += ` Its code draws it ${a.same} times on this page (the rows of a list, or a component used several times): this changes them all.`;
   }
   return result;
 
-  function attempt(intent: QuickIntent, where: { file: string; loc: Loc }): QuickResult | null {
+  function run(): QuickResult | null {
     try {
       switch (intent.kind) {
         case 'set': {
@@ -153,7 +192,7 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
           if (current(props, pick.prop, def) === pick.value) {
             return { kind: 'message', tone: 'info', text: `${what} already uses ${pick.prop} “${pick.value}”.` };
           }
-          const after = setProp(code, where.loc, pick.prop, valueOrNull(def, pick.value), ast);
+          const after = setProp(code, where.loc, pick.prop, valueOrNull(def, pick.value), ast, into);
           const was = current(props, pick.prop, def);
           return edit(`${what} · ${pick.prop} ${was ? `${was} → ` : '→ '}${pick.value}`, `Set ${pick.prop}="${pick.value}" on ${name} in ${where.file}.`, where.file, code, after);
         }
@@ -174,7 +213,7 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
             const ds: NextStep[] = spec.file ? [{ kind: 'open', src: `${spec.file}:1:1` }] : [];
             return { kind: 'message', tone: 'info', text: `${what} is already the ${intent.dir > 0 ? 'largest' : 'smallest'} ${prop} (“${now}”) in your design system.`, next: [{ kind: 'ask-ai' }, ...ds] };
           }
-          const after = setProp(code, where.loc, prop, valueOrNull(def, next), ast);
+          const after = setProp(code, where.loc, prop, valueOrNull(def, next), ast, into);
           return edit(`${what} · ${prop} ${now} → ${next}`, `Changed ${prop} from "${now}" to "${next}" on ${name}.`, where.file, code, after);
         }
 
@@ -214,7 +253,7 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
           const textProp = spec?.text ?? 'children';
           let after: string;
           try {
-            after = setText(code, where.loc, intent.value, textProp, ast, a.text);
+            after = setText(code, where.loc, intent.value, textProp, ast, a.text, into);
           } catch (err) {
             if (!(err instanceof ComputedTextError)) throw err;
             const how = err instanceof MixedTextError ? 'is written among other elements' : 'is built from code';
@@ -226,10 +265,8 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
         case 'remove': {
           // What only it used goes with it, so the app still builds; what may do more than it needed is named.
           const { code: after, took, unused } = removeElementTidy(code, where.loc, ast);
-          const also = took.length ? ` Also took out what only it used: ${andList(took)}.` : '';
-          const left = unused.length ? ` Now unused, and left as they are in case they do more: ${andList(unused.map((n) => `\`${n}\``))}.` : '';
           const title = `Remove ${what}${unused.length ? ` · leaves ${unused.slice(0, 2).join(', ')}${unused.length > 2 ? '…' : ''} unused` : ''}`;
-          return edit(title, `Removed the ${name} element from ${where.file}.${also}${left}`, where.file, code, after);
+          return edit(title, `Removed the ${name} element from ${where.file}.${tidied(took, unused)}`, where.file, code, after);
         }
 
         case 'move': {
@@ -250,32 +287,66 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
   }
 }
 
+/** What a removal also took out, and what it left unused, said after it. */
+function tidied(took: string[], unused: string[]): string {
+  const also = took.length ? ` Also took out what only it used: ${andList(took)}.` : '';
+  const left = unused.length ? ` Now unused, and left as they are in case they do more: ${andList(unused.map((n) => `\`${n}\``))}.` : '';
+  return also + left;
+}
+
 /**
- * The same quick edit on several elements, together as one change. Each is made on the code as the ones before left
- * it, from the bottom of each file up so the places of the others don't move. One that can't be done stops them all,
- * with why: half of “make these smaller” would be a surprise.
+ * The same quick edit on several elements, together as one change. Every one is first found in the code as it is
+ * (before any of them is changed); then each file is written once, all its edits made on its original code in one
+ * pass, and what only removed elements used is tidied once, at the end. One that can't be done stops them all, with
+ * why: half of “make these smaller” would be a surprise.
  */
-function quickEditEach(text: string, refs: RefInfo[], project: Project): QuickResult | null {
-  const overlay = new Map<string, string>();
-  const view = Object.create(project) as Project;
-  view.read = (rel: string) => overlay.get(rel) ?? project.read(rel);
-  const place = (r: RefInfo) => parseSrc(r.src ?? '') ?? { file: '', line: 0, col: 0 };
-  const ordered = [...refs].sort((a, b) => {
-    const pa = place(a);
-    const pb = place(b);
-    return pa.file === pb.file ? pb.line - pa.line || pb.col - pa.col : pa.file < pb.file ? -1 : 1;
-  });
+function quickEditEach(intent: QuickIntent, refs: RefInfo[], project: Project): QuickResult | null {
+  const files = new Map<string, { code: string; ast: ReturnType<typeof parseTsx> }>();
+  const sites: { ref: RefInfo; site: Site }[] = [];
+  const notDone = (r: RefInfo, said: Said): Said => (said.kind === 'message' ? { ...said, text: `Not done for any of them: ${describeRef(r)}: ${said.text}` } : said);
+  for (const r of refs) {
+    const site = locate(r, project, files);
+    if (!site) return null;
+    if (!('el' in site)) return notDone(r, site);
+    sites.push({ ref: r, site });
+  }
+  // In the order they are in the code, file by file: how the title and the summary list them.
+  sites.sort((x, y) => (x.site.file === y.site.file ? x.site.el.start - y.site.el.start : x.site.file < y.site.file ? -1 : 1));
   const titles: string[] = [];
   const summaries: string[] = [];
-  for (const r of ordered) {
-    const one = quickEdit(text, [r], view);
-    if (!one) return null;
-    if (one.kind !== 'edit') return one.kind === 'message' ? { ...one, text: `Not done for any of them: ${describeRef(r)}: ${one.text}` } : one;
-    for (const e of one.edits) overlay.set(e.path, e.after);
-    titles.unshift(one.title);
-    summaries.unshift(one.summary);
+  const edits: FileEdit[] = [];
+  try {
+    if (intent.kind === 'remove') {
+      for (const [file, { code, ast }] of files) {
+        const here = sites.filter((x) => x.site.file === file);
+        const { code: after, took, unused } = removeElementsTidy(code, here.map((x) => x.site.loc), ast);
+        for (const { ref } of here) titles.push(`Remove ${describeRef(ref)}${ref.same && ref.same > 1 ? ` (all ${ref.same} on this page)` : ''}`);
+        const names = here.length > 1 ? `the ${here.length} picked elements (${andList(here.map((x) => elementName(x.site.el)))})` : `the ${elementName(here[0].site.el)} element`;
+        summaries.push(`Removed ${names} from ${file}.${tidied(took, unused).replace('what only it used', 'what only they used')}`);
+        edits.push({ path: file, before: code, after });
+      }
+    } else {
+      const sinks = new Map<string, MagicString>();
+      for (const { ref, site } of sites) {
+        let s = sinks.get(site.file);
+        if (!s) sinks.set(site.file, (s = new MagicString(site.code)));
+        const one = attempt(intent, ref, site, refs, project, s);
+        if (!one) return null;
+        if (one.kind !== 'edit') return notDone(ref, one);
+        titles.push(one.title);
+        summaries.push(one.summary);
+      }
+      for (const [file, s] of sinks) {
+        const after = s.toString();
+        // Checked whole, once: each edit was made beside the others, on the code as it was.
+        parseTsx(after);
+        edits.push({ path: file, before: files.get(file)!.code, after });
+      }
+    }
+  } catch {
+    // Two of them can't be changed together (one inside another's edit, say): the AI can, or one at a time.
+    return null;
   }
-  const edits = [...overlay].map(([path, after]) => ({ path, before: project.read(path), after }));
   const title = titles.length <= 2 ? titles.join('; ') : `${titles[0]}; and ${titles.length - 1} more`;
   return { kind: 'edit', title: `${title} (${refs.length} picked)`, summary: summaries.join(' '), edits };
 }

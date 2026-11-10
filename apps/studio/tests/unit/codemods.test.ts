@@ -111,6 +111,52 @@ describe('removeElement', () => {
   });
 });
 
+describe('removing one side of an expression', () => {
+  const PANEL = `import { Skeleton } from './Skeleton';
+import { EmptyState } from './EmptyState';
+import { Open, Closed } from './state';
+
+export function Panel({ title, children, open }: { title?: string; children?: React.ReactNode; open: boolean }) {
+  return (
+    <section>
+      {title ?? <Skeleton />}
+      {children || (
+        <EmptyState />
+      )}
+      {open ? <Open /> : <Closed />}
+      {open ? (
+        <Open />
+      ) : null}
+    </section>
+  );
+}
+`;
+  it('removing a fallback leaves what shows the rest of the time, and its prop', () => {
+    const a = removeElementTidy(PANEL, locOf(PANEL, '<Skeleton'));
+    expect(a.code).toContain('      {title}\n');
+    expect(a.code).toContain('export function Panel({ title, children, open }');
+    expect(a.code).not.toContain('Skeleton');
+    expect(a.took).toEqual(['the Skeleton import']);
+    const b = removeElementTidy(PANEL, locOf(PANEL, '<EmptyState'));
+    expect(b.code).toContain('      {children}\n      {open ?');
+    expect(b.code).toContain('export function Panel({ title, children, open }');
+    expect(b.code).not.toContain('EmptyState');
+  });
+
+  it('removing one branch of a condition leaves null in its place, and the other branch and its import', () => {
+    const a = removeElementTidy(PANEL, locOf(PANEL, '<Closed'));
+    expect(a.code).toContain('{open ? <Open /> : null}');
+    expect(a.code).toContain("import { Open } from './state';");
+    const b = removeElementTidy(PANEL, locOf(PANEL, '<Open />'));
+    expect(b.code).toContain('{open ? null : <Closed />}');
+    expect(b.code).toContain("import { Open, Closed } from './state';");
+    const c = removeElementTidy(PANEL, locOf(PANEL, '<Open />\n'));
+    expect(c.code).toContain('{open ? null : null}');
+    expect(c.code).toContain("import { Open, Closed } from './state';");
+    expect(c.code).toContain('open }: {');
+  });
+});
+
 describe('removeElementTidy', () => {
   const ROW = `import { useState } from 'react';
 import { Badge, Button, Icon as Glyph } from './ds';
