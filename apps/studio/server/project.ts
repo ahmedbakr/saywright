@@ -483,22 +483,58 @@ export class Project {
   }
 
   /**
-   * Commit these files. Runs alongside the studio (hooks can take a while) and gives up after a minute; when it fails,
-   * `error` says why, in git's own words.
+   * Commit exactly what a change wrote to these files, and nothing of the person's own. Each file must be, in git,
+   * what it was before the change (`before`, null for a file the change created), with nothing of theirs staged, and on
+   * disk what the change left (`after`): otherwise their own uncommitted work would go into the commit, and nothing is
+   * committed (`note` says why). Nor is anything committed into a repository that doesn't track the app's folder (a
+   * home folder kept in git, above it). When git refuses (a hook, no identity), what was staged for the commit is
+   * unstaged again and `error` says why, in git's own words. Runs alongside the studio and gives up after a minute.
    */
-  async commit(files: string[], message: string): Promise<{ committed: boolean; error?: string }> {
-    const git = (args: string[]) =>
-      new Promise<void>((resolve, reject) =>
-        execFile('git', args, { cwd: this.root, timeout: COMMIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (err, _stdout, stderr) => {
-          if (!err) return resolve();
+  async commit(files: { path: string; before: Buffer | null; after: Buffer }[], message: string): Promise<{ committed: boolean; error?: string; note?: string }> {
+    const git = (args: string[], input?: Buffer) =>
+      new Promise<string>((resolve, reject) => {
+        const child = execFile('git', args, { cwd: this.root, timeout: COMMIT_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: 'utf8' }, (err, stdout, stderr) => {
+          if (!err) return resolve(stdout);
           const e = err as Error & { killed?: boolean; code?: unknown };
           const why = e.killed ? `git took more than ${COMMIT_TIMEOUT_MS / 1000} s (a commit hook may be waiting), so it was stopped` : String(stderr).trim().split('\n').filter(Boolean).slice(-3).join(' ') || e.message;
-          reject(new Error(why));
-        }),
-      );
+          reject(Object.assign(new Error(why), { exit: e.code }));
+        });
+        if (input) child.stdin?.end(input);
+      });
+    const quiet = (args: string[], input?: Buffer) => git(args, input).then((out) => out.trim(), () => null);
+    const not = (why: string) => ({ committed: false, note: `Kept, not committed: ${why}` });
     try {
-      await git(['add', '--', ...files]);
-      await git(['commit', '-m', message, '--', ...files]);
+      const top = await quiet(['rev-parse', '--show-toplevel']);
+      if (top === null) return { committed: false };
+      const own = path.resolve(fs.realpathSync(top)) === path.resolve(fs.realpathSync(this.root));
+      if (!own && !(await quiet(['log', '-1', '--format=%H', '--', '.']))) return not(`the git repository at ${top} doesn’t track this app’s folder.`);
+      const hasHead = (await quiet(['rev-parse', '-q', '--verify', 'HEAD'])) !== null;
+      for (const f of files) {
+        const theirs = not(`${f.path} also has changes of yours that aren’t committed.`);
+        // In git (HEAD), the file as the change found it; its bytes as git would store them (line ends, filters).
+        const committed = hasHead ? await quiet(['rev-parse', '-q', '--verify', `HEAD:./${f.path}`]) : null;
+        const found = f.before === null ? null : await quiet(['hash-object', `--path=${f.path}`, '--stdin'], f.before);
+        if (committed !== found) return theirs;
+        // Nothing of theirs staged for it, and on disk what the change left.
+        const staged = hasHead ? await quiet(['diff', '--cached', '--name-only', '--', f.path]) : await quiet(['ls-files', '--', f.path]);
+        if (staged) return theirs;
+        let now: Buffer | null = null;
+        try {
+          now = this.readBytes(f.path);
+        } catch {
+          /* gone */
+        }
+        if (!now || !now.equals(f.after)) return theirs;
+      }
+      const paths = files.map((f) => f.path);
+      await git(['add', '--', ...paths]);
+      try {
+        await git(['commit', '-m', message, '--', ...paths]);
+      } catch (err) {
+        // Unstaged again: the index is as the person left it (these files had nothing of theirs staged).
+        await (hasHead ? quiet(['reset', '-q', '--', ...paths]) : quiet(['rm', '-q', '--cached', '--', ...paths]));
+        throw err;
+      }
       return { committed: true };
     } catch (err) {
       return { committed: false, error: err instanceof Error ? err.message : String(err) };

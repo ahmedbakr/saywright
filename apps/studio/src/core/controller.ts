@@ -1499,11 +1499,12 @@ class Controller {
   async keep(via: string, id?: string): Promise<void> {
     if (!id && !previews(get()).length) return this.notify('Nothing is waiting to be kept.', 'info');
     try {
-      const r = await api.post<{ kept: Change[]; committed: boolean; commitError?: string }>('/changes/keep', { id, via, commit: settings().ui.commitOnKeep });
+      const r = await api.post<{ kept: Change[]; committed: boolean; commitError?: string; commitNote?: string }>('/changes/keep', { id, via, commit: settings().ui.commitOnKeep });
       play('keep');
       await this.decided(r.kept);
       const what = r.kept.length === 1 ? r.kept[0].title : `${r.kept.length} changes`;
       if (r.commitError) this.notify(`Kept: ${what}, but not committed. Git said: ${r.commitError}`, 'warn');
+      else if (r.commitNote) this.notify(r.commitNote, 'warn');
       else this.notify(`Kept: ${what}${r.committed ? ' (committed)' : ''}`, 'ok');
     } catch (err) {
       this.fail(err);

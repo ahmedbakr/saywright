@@ -470,7 +470,7 @@ export async function createStudioApi(layout: StudioLayout) {
     const { kept } = changes.keep(body.id);
     for (const c of kept) metrics.record({ type: 'decision', changeId: c.id, decision: 'kept', via: body.via, decisionMs: (c.decidedAt ?? 0) - c.createdAt });
     const commit = body.commit ? await changes.commit(kept) : null;
-    return { kept, committed: !!commit?.committed, ...(commit?.error ? { commitError: commit.error } : {}) };
+    return { kept, committed: !!commit?.committed, ...(commit?.error ? { commitError: commit.error } : {}), ...(commit?.note ? { commitNote: commit.note } : {}) };
   });
 
   router.post('/changes/undo', async (req) => {

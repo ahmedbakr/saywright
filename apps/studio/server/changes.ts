@@ -235,13 +235,24 @@ export class ChangeStore {
     return { kept };
   }
 
-  /** Commit changes just kept, as one commit (when the app is a git repository); `error` says why it didn't. */
-  async commit(kept: Change[]): Promise<{ committed: boolean; error?: string }> {
+  /**
+   * Commit changes just kept, as one commit (when the app is a git repository): each file as the oldest of them found
+   * it and as the newest left it, and only those files. `error` says why git refused; `note`, why nothing was tried.
+   */
+  async commit(kept: Change[]): Promise<{ committed: boolean; error?: string; note?: string }> {
     if (!kept.length || !this.project.isGit) return { committed: false };
-    const files = [...new Set(kept.flatMap((c) => c.files.map((f) => f.path)))];
+    const files = new Map<string, { path: string; before: Buffer | null; after: Buffer }>();
+    for (const c of kept) {
+      const edits = this.edits.get(c.id);
+      if (!edits) return { committed: false, note: `Kept, not committed: “${c.title}” was made in an earlier run of the studio, so what it changed can’t be told from your own edits.` };
+      for (const e of edits) {
+        const known = files.get(e.path);
+        files.set(e.path, { path: e.path, before: known ? known.before : e.before, after: e.after });
+      }
+    }
     const title = kept.length === 1 ? kept[0].title : `${kept.length} changes from ${BRAND.name}`;
     const said = kept.map((c) => c.said).filter(Boolean);
-    return this.project.commit(files, `${title}\n\nMade with ${BRAND.name}${said.length ? `\n${said.map((s) => `- "${s}"`).join('\n')}` : ''}`);
+    return this.project.commit([...files.values()], `${title}\n\nMade with ${BRAND.name}${said.length ? `\n${said.map((s) => `- "${s}"`).join('\n')}` : ''}`);
   }
 
   /** Undo the newest preview, or a specific change (newer previews are undone first). */

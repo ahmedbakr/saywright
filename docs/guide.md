@@ -29,7 +29,7 @@ Every change is a **preview**. It is already in your code and in your running ap
 
 Previews stack: “bigger”, then “and red”, then “keep it” keeps both; undo removes the newest first. If a file was edited elsewhere after the preview, undo refuses rather than lose that work. Previews survive a restart of the studio: they come back still waiting for keep or undo.
 
-Nothing is committed unless you turn on **Settings → General → Commit when you keep a change** (in a git repository): each kept change then becomes a commit with what you said.
+Nothing is committed unless you turn on **Settings → General → Commit when you keep a change** (in a git repository): each kept change then becomes a commit with what you said, holding only that change's files. When one of those files also has changes of yours that aren't committed (staged or not), or the repository is one above the app that doesn't track its folder (a home folder kept in git), the change is kept and not committed, and the studio says why. When git refuses the commit (a hook, no identity), what was staged for it is unstaged again and git's reason is shown.
 
 ## Modes: Edit, Use, Write test
 

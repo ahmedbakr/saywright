@@ -238,6 +238,75 @@ describe('committing kept changes', () => {
     fs.writeFileSync(hook, '#!/bin/sh\necho "lint failed: 2 problems" >&2\nexit 1\n', { mode: 0o755 });
     await store.preview({ title: 'Four decimals', source: 'quick', edits: [edit(p, 'toFixed(3)', 'toFixed(4)')] });
     expect(await store.commit(store.keep().kept)).toEqual({ committed: false, error: 'lint failed: 2 problems' });
+    // What was staged for it is unstaged again: the person's index is as it was.
+    expect(git('diff', '--cached', '--name-only')).toBe('');
+    expect(git('status', '--porcelain')).toBe(' M src/lib/money.ts\n');
+  });
+
+  const repo = () => {
+    const p = tempShop();
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: p.root, stdio: 'pipe' }).toString();
+    git('init', '-q');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'commit.gpgsign', 'false');
+    git('add', '.');
+    git('commit', '-q', '-m', 'start');
+    return { p, git };
+  };
+
+  it('commits only the change: never a file of the person’s own, nor their work in the same file', async () => {
+    const { p, git } = repo();
+    const store = new ChangeStore(p);
+    // Their own unfinished work in another file stays theirs.
+    fs.appendFileSync(path.join(p.root, 'src/App.tsx'), '// mine\n');
+    await store.preview({ title: 'Three decimals', source: 'quick', edits: [edit(p, 'toFixed(2)', 'toFixed(3)')] });
+    expect(await store.commit(store.keep().kept)).toEqual({ committed: true });
+    expect(git('show', '--name-only', '--format=', 'HEAD')).toBe('src/lib/money.ts\n');
+    expect(git('status', '--porcelain')).toBe(' M src/App.tsx\n');
+
+    // Their unsaved work in the very file the change touches: kept, not committed.
+    fs.appendFileSync(path.join(p.root, 'src/lib/money.ts'), '// debug\n');
+    await store.preview({ title: 'Four decimals', source: 'quick', edits: [edit(p, 'toFixed(3)', 'toFixed(4)')] });
+    const r = await store.commit(store.keep().kept);
+    expect(r).toEqual({ committed: false, note: 'Kept, not committed: src/lib/money.ts also has changes of yours that aren’t committed.' });
+    expect(git('log', '-1', '--format=%s')).toBe('Three decimals\n');
+    expect(git('diff', '--cached', '--name-only')).toBe('');
+
+    // Staged work of theirs counts the same.
+    git('checkout', '-q', '--', 'src/lib/money.ts');
+    const before = p.read('src/lib/money.ts');
+    fs.writeFileSync(path.join(p.root, 'src/lib/money.ts'), `// staged\n${before}`);
+    git('add', 'src/lib/money.ts');
+    fs.writeFileSync(path.join(p.root, 'src/lib/money.ts'), before);
+    await store.preview({ title: 'Five', source: 'quick', edits: [edit(p, 'toFixed(3)', 'toFixed(5)')] });
+    expect(await store.commit(store.keep().kept)).toMatchObject({ committed: false, note: expect.stringMatching(/^Kept, not committed: src\/lib\/money.ts also has changes of yours/) });
+    expect(git('diff', '--cached', '--name-only')).toBe('src/lib/money.ts\n');
+  });
+
+  it('never commits into a repository above the app that doesn’t track it (a home folder kept in git)', async () => {
+    const p = tempShop();
+    const home = path.dirname(p.root);
+    const outer = fs.mkdtempSync(path.join(home, 'saywright-home-'));
+    const app = path.join(outer, 'projects', 'shop');
+    fs.mkdirSync(path.dirname(app), { recursive: true });
+    fs.renameSync(p.root, app);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: outer, stdio: 'pipe' }).toString();
+    fs.writeFileSync(path.join(outer, '.bashrc'), 'alias ll=ls\n');
+    git('init', '-q');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'commit.gpgsign', 'false');
+    git('add', '.bashrc');
+    git('commit', '-q', '-m', 'dotfiles');
+    const { Project } = await import('../../server/project');
+    const shop = new Project(app, 'http://localhost:5174');
+    const store = new ChangeStore(shop);
+    await store.preview({ title: 'Three decimals', source: 'quick', edits: [edit(shop as never, 'toFixed(2)', 'toFixed(3)')] });
+    const r = await store.commit(store.keep().kept);
+    expect(r).toMatchObject({ committed: false, note: expect.stringMatching(/^Kept, not committed: the git repository at .* doesn’t track this app’s folder\.$/) });
+    expect(git('log', '--format=%s')).toBe('dotfiles\n');
+    expect(git('ls-files')).toBe('.bashrc\n');
   });
 
   it('does nothing outside a repository, and commits once the app becomes one', async () => {
