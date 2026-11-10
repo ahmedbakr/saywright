@@ -30,7 +30,7 @@ test('narrate a bug → Playwright test → failing → fixed by Claude → pass
   await page.getByRole('button', { name: 'Generate test' }).first().click();
   await expectIsland(page, /Test saved to tests\/saywright\//);
   const specPath = await store<string>(page, 's.recorder.spec.path');
-  expect(fs.readFileSync(path.join(E2E_SHOP, specPath), 'utf8')).toContain("toContainText('$80.80')");
+  expect(fs.readFileSync(path.join(E2E_SHOP, specPath), 'utf8')).toContain('toContainText(/\\$\\s?80[.,]80*(?![.,]?\\d)/)');
 
   await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
   await expectIsland(page, /Test failed: expected “\$80\.80”, got “\$78\.40”/);

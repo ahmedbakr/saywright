@@ -215,3 +215,23 @@ test('a check is never found by words it only contains, a value can be said not 
   // Not on the page in any case as it was said: compared without case.
   expect(spec).toContain('toContainText(/\\bactive\\b/iu);');
 });
+
+test('a check that held as it was said and fails in the run is a test that doesn’t replay what was done, not the bug', async ({ page }) => {
+  test.setTimeout(120_000);
+  await openStudio(page);
+  await page.keyboard.press('r');
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('record');
+  const app = page.frameLocator('iframe');
+  // Something the recorder can't see changes the page (as a drag, a shortcut or a dialog would).
+  await app.getByTestId('summary-total').evaluate((el) => (el.textContent = 'Total$1.00'));
+  const check = await say(page, app.getByTestId('summary-total'), 'this should show $1.00');
+  expect(check).toMatchObject({ expected: '$1.00', actual: 'Total$1.00' });
+  await page.getByRole('button', { name: 'Generate test' }).first().click();
+  await expectIsland(page, /Test saved to tests\/saywright\//);
+  const spec = fs.readFileSync(path.join(E2E_SHOP, await store<string>(page, 's.recorder.spec.path')), 'utf8');
+  expect(spec).toContain('// It showed that when you said it: if this fails, the test doesn’t replay what you did.');
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
+  await expectIsland(page, /The test doesn’t replay what you did: a step is missing or the page starts differently\. When you said it, the page showed “\$1\.00”; the run saw “\$\d+\.\d\d”/);
+  expect(await store<string>(page, 's.recorder.run.failedAt')).toBe('replay');
+  await expect(page.getByRole('button', { name: /^Fix with/ })).toHaveCount(0);
+});

@@ -339,13 +339,48 @@ function RunResult() {
         <RunSteps />
       </div>
     );
+  if (run.status === 'failed' && run.failedAt === 'replay')
+    return (
+      <div className="space-y-2 rounded-[10px] bg-warn-soft p-3 ring-1 ring-inset ring-warn/25">
+        <div className="flex items-start gap-2">
+          <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
+          <span className="text-[12.5px] text-fg">
+            <span className="font-medium">The test doesn’t replay what you did:</span> a step is missing or the page starts differently. The check failed, but the page showed what it expects when you said it, so this isn’t the bug. Add the missing step (or start over from the page it needs), then run it again.
+          </span>
+        </div>
+        {(run.expected || run.received) && (
+          <div className="grid grid-cols-[70px_1fr] gap-x-2 gap-y-0.5 font-mono text-[11.5px]">
+            <span className="text-fg-3">Expected</span>
+            <span className="text-fg">{run.expected}</span>
+            <span className="text-fg-3">Seen</span>
+            <span className="text-fg">{run.received}</span>
+          </div>
+        )}
+        <RunSteps />
+      </div>
+    );
+  if (run.status === 'failed' && run.failedAt === 'find')
+    return (
+      <div className="space-y-2 rounded-[10px] bg-warn-soft p-3 ring-1 ring-inset ring-warn/25">
+        <div className="flex items-start gap-2">
+          <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
+          <span className="text-[12.5px] text-fg">
+            <span className="font-medium">Couldn’t find what this check looks at:</span> nothing on the page matched it, or more than one thing did, so it doesn’t show the bug yet. Point at the value again and say the check once more.
+          </span>
+        </div>
+        <RunSteps />
+        <Button size="sm" icon={<Sparkles />} onClick={() => void controller.fix()}>
+          Fix with {ai} anyway
+        </Button>
+      </div>
+    );
   if (run.status === 'failed' && run.failedAt === 'step')
     return (
       <div className="space-y-2 rounded-[10px] bg-warn-soft p-3 ring-1 ring-inset ring-warn/25">
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
           <span className="text-[12.5px] text-fg">
-            <span className="font-medium">It doesn’t show the bug yet:</span> the test stopped at a step before its checks. Check the step (the page, a secret, a selector), then run it again.
+            <span className="font-medium">It doesn’t show the bug yet:</span> {/^The test didn’t get to the page it starts on/.test(run.message ?? '') ? `${(run.message ?? '').split('. ')[0].replace(/^The test/, 'the test')}. A test starts in a fresh browser, signed out: start it from the sign-in page and sign in as part of it.` : 'the test stopped at a step before its checks. Check the step (the page, a secret, a selector), then run it again.'}
           </span>
         </div>
         <RunSteps />

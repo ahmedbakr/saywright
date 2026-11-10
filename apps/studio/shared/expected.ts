@@ -173,6 +173,8 @@ export function saidAt(seg: { start: number; end: number }, value: SaidValue): n
  */
 export function showsValue(actual: string, expected: string): boolean {
   const want = amountOf(expected);
+  // A value longer than a pattern can be (a whole letter) is found as it is.
+  if (want === null && expected.length > LONG) return spaced(actual).toLowerCase().includes(spaced(expected).toLowerCase());
   if (want === null) return new RegExp(wholeValue(expected).source, 'iu').test(asciiDigits(actual));
   const found = amountsIn(actual);
   const numbers = found.length ? found.map((a) => a.value) : [...asciiDigits(actual).matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
@@ -227,11 +229,15 @@ export function wholeValue(expected: string): { source: string; only: string; am
  */
 export function asShown(actual: string, expected: string): { expected: string; anyCase?: true } {
   const whole = wholeValue(expected);
-  if (whole.amount || !/\p{L}/u.test(expected)) return { expected };
+  if (whole.amount || !/\p{L}/u.test(expected) || expected.length > LONG) return { expected };
   if (new RegExp(whole.source, 'u').test(actual)) return { expected };
   const shown = new RegExp(whole.source, 'iu').exec(actual);
   return shown ? { expected: shown[0].replace(/\s+/g, ' ') } : { expected, anyCase: true };
 }
+
+/** How long a value may be and still be found as a pattern: a longer one is more than a browser will compile. */
+const LONG = 1000;
+const spaced = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /** Not right after a digit, a sign, or a separator that goes on a number; not right before more of it. */
 const START_DIGIT = '(?<![\\d.,−-])';

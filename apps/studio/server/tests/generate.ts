@@ -11,7 +11,7 @@ import { jsComment, jsString as q, maskSecrets, secretEnvName, SECRET_ENV_PREFIX
 import type { Expectation, RecordedStep } from '../../shared/api.ts';
 export { sanitizeSteps } from '../../shared/steps.ts';
 import { BRAND } from '../../shared/brand.ts';
-import { wholeValue } from '../../shared/expected.ts';
+import { showsValue, wholeValue } from '../../shared/expected.ts';
 import { shouldBe } from '../../shared/text.ts';
 import type { Project } from '../project.ts';
 
@@ -111,6 +111,28 @@ function testTitle(input: GenerateInput): string {
 const plain = (s: string) => s;
 /** A value in words: at most 200 characters of it. */
 const brief = (s: string) => (s.length > 200 ? `${s.slice(0, 200)}…` : s);
+
+/** What a test's first step says when the app sent it elsewhere as it opened. */
+export const STARTS_ELSEWHERE = 'The test didn’t get to the page it starts on';
+
+/**
+ * A check that held on screen as it was said is marked so in its code: if it fails in a run, the test doesn't replay
+ * what was done (a step that wasn't recorded, a page that starts differently), and that isn't the bug.
+ */
+export const HELD = '// It showed that when you said it: if this fails, the test doesn’t replay what you did.';
+
+/** Whether the screen showed what a check says, as it was said. Unknown (a state not read then) is no. */
+export function heldWhenSaid(e: Expectation): boolean {
+  if (e.field === 'checked') return e.actual === e.expected;
+  if (e.field === 'state') return e.expected === 'visible' && e.actual === 'visible';
+  if (!e.actual) return !!e.not;
+  if (e.field === 'select') {
+    const chosen = e.actual.split(', ').some((c) => showsValue(c, e.expected) && showsValue(e.expected, c));
+    return e.not ? !chosen : chosen;
+  }
+  const shows = showsValue(e.actual, e.expected);
+  return e.not ? !shows : shows;
+}
 
 /** A secret's name as the test reads it: capitals, digits and underscores (PASSWORD, CARD_NUMBER). */
 const secretKey = (name: string) => secretEnvName(name).slice(SECRET_ENV_PREFIX.length);
@@ -217,34 +239,54 @@ const PATTERN_MAX = 1000;
  */
 function checkCode(e: Expectation): string[] {
   const loc = safeLocator(e.locator);
-  if (e.field === 'checked') return [`await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`];
+  const time = waitFor(e);
+  const lines = checkLines(e, loc, time ? `timeout: ${time}` : '');
+  return time ? [`// You waited ${Math.round(e.waited! / 1000)} s before saying it: it waits up to ${time / 1000} s.`, ...lines] : lines;
+}
+
+/** How long a check waits (ms) when that is longer than the run's 10 s: as long as the tester waited, and a half, at most 30 s. */
+function waitFor(e: Expectation): number | null {
+  if (!e.waited || e.waited < 8000) return null;
+  return Math.min(30_000, Math.max(10_000, Math.ceil((e.waited * 1.5) / 1000) * 1000));
+}
+
+/** A matcher's options, with the check's own timeout among them (`timeout: 15000`); `last`: they end its arguments. */
+const opts = (wait: string, ...more: string[]) => {
+  const all = [...more, wait].filter(Boolean);
+  return all.length ? `{ ${all.join(', ')} }` : '';
+};
+const after = (o: string) => (o ? `, ${o}` : '');
+
+function checkLines(e: Expectation, loc: string, wait: string): string[] {
+  if (e.field === 'checked') return [`await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked(${opts(wait)});`];
   if (e.field === 'state') {
     const matcher = Object.hasOwn(STATE_MATCHERS, e.expected) ? STATE_MATCHERS[e.expected] : undefined;
     if (!matcher) throw new Error(`Unexpected state: ${e.expected}`);
-    return [`await expect(${loc}).${matcher};`];
+    return [`await expect(${loc}).${matcher.replace(/\((.*)\)$/, (_, a: string) => `(${[a, opts(wait)].filter(Boolean).join(', ')})`)};`];
   }
   const whole = wholeValue(e.expected);
   const not = e.not ? 'not.' : '';
   // Words not seen on the page as said are compared without case: speech doesn't know a capital.
   const flags = `${e.anyCase ? 'i' : ''}${whole.amount ? '' : 'u'}`;
   const pattern = `/${whole.source}/${flags}`;
-  const anyCase = e.anyCase ? ', { ignoreCase: true }' : '';
+  const anyCase = after(opts(wait, e.anyCase ? 'ignoreCase: true' : ''));
+  const w = after(opts(wait));
   const note = `// ${jsComment(maskSecrets(`${whole.why}.`))}`;
   // An option says the value and nothing else.
-  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).${not}toContainText([/${whole.only}/${flags}]);`];
+  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).${not}toContainText([/${whole.only}/${flags}]${w});`];
   if (e.field === 'value') {
-    if (e.expected.length > PATTERN_MAX) return [`await expect.poll(() => ${loc}.inputValue()).${not}toContain(${q(e.expected)});`];
-    if (onlyThat(e)) return [e.anyCase ? `await expect(${loc}).toHaveValue(/${whole.only}/${flags});` : `await expect(${loc}).toHaveValue(${q(e.expected)});`];
-    return [note, `await expect(${loc}).${not}toHaveValue(${pattern});`];
+    if (e.expected.length > PATTERN_MAX) return [`await expect.poll(() => ${loc}.inputValue()${w}).${not}toContain(${q(e.expected)});`];
+    if (onlyThat(e)) return [e.anyCase ? `await expect(${loc}).toHaveValue(/${whole.only}/${flags}${w});` : `await expect(${loc}).toHaveValue(${q(e.expected)}${w});`];
+    return [note, `await expect(${loc}).${not}toHaveValue(${pattern}${w});`];
   }
   // An image by its accessible name: its alt text.
   if (e.field === 'name') {
     if (onlyThat(e)) return [`await expect(${loc}).toHaveAccessibleName(${q(e.expected)}${anyCase});`];
-    return [note, `await expect(${loc}).${not}toHaveAccessibleName(${pattern});`];
+    return [note, `await expect(${loc}).${not}toHaveAccessibleName(${pattern}${w});`];
   }
   if (e.expected.length > PATTERN_MAX) return [`await expect(${loc}).${not}toContainText(${q(e.expected)}${anyCase});`];
   if (onlyThat(e)) return [`await expect(${loc}).toHaveText(${q(e.expected)}${anyCase});`];
-  return [note, `await expect(${loc}).${not}toContainText(${pattern});`];
+  return [note, `await expect(${loc}).${not}toContainText(${pattern}${w});`];
 }
 
 /**
@@ -302,7 +344,8 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
     for (const b of body) lines.push(`    ${b}`);
     lines.push(`  });`);
   };
-  step(String(++n), `Open ${start}`, [`await page.goto(${q(start)});`]);
+  // A test that is sent elsewhere as it opens (to a sign-in page) fails here, at its first step: not at a check.
+  step(String(++n), `Open ${start}`, [`await page.goto(${q(start)});`, `await expect(page, ${q(STARTS_ELSEWHERE)}).toHaveURL(new RegExp(${q(urlPattern(input.startUrl))}));`]);
   // Each check after the steps that came before it was said (an older studio's, after them all).
   const checksAt = new Map<number, Expectation[]>();
   for (const e of input.expectations) {
@@ -316,6 +359,7 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
     const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : e.field === 'state' ? (e.actual ? `it was ${e.actual}` : '') : `it showed ${brief(e.actual) || 'nothing'}`;
     step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} ${shouldBe(said, plain)}`), [
       `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(said, plain)}${was ? ` (${was})` : ''}.`))}`,
+      ...(heldWhenSaid(e) ? [HELD] : []),
       ...checkCode(e),
     ]);
   };

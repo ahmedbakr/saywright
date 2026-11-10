@@ -156,6 +156,8 @@ export interface Expectation {
   field?: 'value' | 'select' | 'checked' | 'name' | 'state';
   /** “this shouldn't show $51.71”: the value must not be there. */
   not?: boolean;
+  /** How long the tester waited (ms) after the step before it, before saying it: the check waits as long, within limits. */
+  waited?: number;
   /** Words the element didn't show as it was said, in any case: compared without case (“free shipping”). */
   anyCase?: boolean;
 }
@@ -184,7 +186,12 @@ export interface TestRunResult {
   /** Why a pass doesn't prove anything (skipped, a step or check that didn't run, the test changed since it failed). */
   unverified?: string;
   /** A failure at a check (the bug shows) or at a step before the checks (the test couldn't get there: not reproduced). */
-  failedAt?: 'check' | 'step';
+  /**
+   * Where it failed: at a check (the bug shows), at a step before the checks (it doesn't show the bug yet), at a check
+   * that couldn't find what it looks at (`find`), or at a check that held on screen as it was said (`replay`: the test
+   * doesn't replay what was done, so it isn't the bug).
+   */
+  failedAt?: 'check' | 'step' | 'find' | 'replay';
   /** The steps and checks the run reported, in order. */
   steps?: RunStep[];
   /** The test's steps and checks: how many it has, and how many ran and passed. */

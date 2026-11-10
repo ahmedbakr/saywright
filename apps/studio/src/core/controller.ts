@@ -419,6 +419,7 @@ class Controller {
       // An older plugin may still send a password in clear: it is a secret by name before it is shown or kept.
       const [clean] = sanitizeSteps([step]);
       set({ recorder: { ...r, steps: [...r.steps, clean] } });
+      this.stepAt = performance.now();
     };
     b.onKey = (key, down) => {
       if (key === 'Space') {
@@ -846,6 +847,7 @@ class Controller {
     const prev = get().mode;
     if (prev === mode) return;
     this.mouse = null;
+    if (mode === 'record') this.stepAt = performance.now();
     this.appMouse = null;
     this.wake();
     set({ mode, hover: null });
@@ -1552,14 +1554,21 @@ class Controller {
 
   // ───────────────────────────── narrate a bug → test ─────────────────────────────
 
+  /** When the last step was recorded (or Write test began): how long a tester waited before saying a check. */
+  private stepAt = 0;
+
   private async addExpectation(exp: SpokenExpectation, spoken: Spoken | null): Promise<void> {
+    const saidAt = spoken?.span.start ?? performance.now();
     const el = this.targetFrom(spoken);
     if (!el) return this.notify('Point at the element that shows the wrong value while you say it.', 'warn');
     const found = await this.checkOf(el, exp.expected, { not: exp.not, state: exp.state });
     if (typeof found === 'string') return this.notify(found, 'warn');
     if (!found) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
     // “Paid, not yet” said of an element that shows “Paid, not yet”: those words are the value, not a value and an aside.
-    const e = exp.whole && !found.field && showsValue(found.actual, exp.whole) ? { ...found, ...asShown(found.actual, exp.whole) } : found;
+    const words = exp.whole && !found.field && showsValue(found.actual, exp.whole) ? { ...found, ...asShown(found.actual, exp.whole) } : found;
+    // What came after a wait (a result that took 12 s) is waited for as long in the test.
+    const waited = this.stepAt ? Math.round(saidAt - this.stepAt) : 0;
+    const e = waited > 0 ? { ...words, waited } : words;
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
     play('keep');
@@ -1872,9 +1881,40 @@ class Controller {
         // The test that failed is the baseline the next fix is checked against.
         set({ recorder: { ...get().recorder, verifying: false, baseline: res.hash } });
         const fixWith = { label: `Fix with ${aiName(get().status?.ai.who)}`, primary: true, run: () => void this.fix() };
+        if (res.failedAt === 'replay') {
+          // The check held on screen as it was said: the test, not the app, differs from what was done.
+          set({
+            island: {
+              kind: 'message',
+              tone: 'warn',
+              sticky: true,
+              text: `The test doesn’t replay what you did: a step is missing or the page starts differently. When you said it, the page showed “${res.expected ?? '?'}”; the run saw “${res.received ?? '?'}”.`,
+              actions: [details],
+            },
+          });
+          return;
+        }
+        if (res.failedAt === 'find') {
+          const check = res.steps?.find((x) => !x.ok);
+          set({
+            island: {
+              kind: 'message',
+              tone: 'warn',
+              sticky: true,
+              text: `${wasFixing ? 'With the fix, the test' : 'The test'} couldn’t find what ${check ? `“${check.title.replace(/^\[check \d+\] /, '')}”` : 'a check'} looks at (${/strict mode|resolved to \d+ elements/i.test(check?.error ?? '') ? 'more than one element matches' : 'nothing matches'}), so it doesn’t show the bug yet.`,
+              actions: [details, { ...fixWith, primary: false, label: `Fix with ${aiName(get().status?.ai.who)} anyway` }],
+            },
+          });
+          return;
+        }
         if (res.failedAt === 'step') {
           // It never got to its checks: it doesn't show the bug (a step that can't be done, a page that didn't come).
           const step = res.steps?.find((x) => !x.ok);
+          const elsewhere = /^The test didn’t get to the page it starts on[^.]*/.exec(res.message ?? '')?.[0];
+          if (elsewhere) {
+            set({ island: { kind: 'message', tone: 'warn', sticky: true, text: `${elsewhere}, so it doesn’t show the bug yet. A test starts in a fresh browser, signed out: start it from the sign-in page and sign in as part of it.`, actions: [details] } });
+            return;
+          }
           const why = (step?.error ?? res.message ?? '').split('\n')[0].slice(0, 160);
           set({
             island: {

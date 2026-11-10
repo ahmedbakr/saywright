@@ -110,6 +110,10 @@ function check(v: unknown, i: number, steps: number): Expectation {
   if (field) out.field = field;
   if (field === 'checked' && out.expected !== 'checked' && out.expected !== 'not checked') throw refuse(`${what} is about whether it is checked, so it should be “checked” or “not checked”, not “${shown(out.expected)}”.`);
   if (field === 'state' && !STATES.includes(out.expected)) throw refuse(`${what} is about a state, so it should be one of ${STATES.map((x) => `“${x}”`).join(', ')}, not “${shown(out.expected)}”.`);
+  if (o.waited !== undefined && o.waited !== null) {
+    if (typeof o.waited !== 'number' || !Number.isFinite(o.waited) || o.waited < 0) throw refuse(`${what}: waited must be a number of milliseconds, not ${shown(o.waited)}.`);
+    out.waited = Math.round(o.waited);
+  }
   for (const flag of ['anyCase', 'not'] as const) {
     const v = o[flag];
     if (v === undefined || v === null) continue;

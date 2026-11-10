@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
 import { generateSpec, safeLocator, secretsOf, slug, urlPattern, writeSpec } from '../../server/tests/generate';
 import { asShown, showsValue } from '../../shared/expected';
-import { focusOn, judge, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
+import { focusOn, heldChecks, judge, sentElsewhere, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
 const input = {
@@ -23,7 +23,8 @@ describe('generateSpec', () => {
   it('writes a readable Playwright test from the narration, each step and check a numbered test.step', () => {
     const code = generateSpec(input, new Date('2026-10-13T00:00:00Z'));
     expect(code).toContain("test('total should show $80.80', async ({ page }) => {");
-    expect(code).toContain("  await test.step('[1] Open /#/checkout', async () => {\n    await page.goto('/#/checkout');\n  });");
+    // It opens the page, and fails there (a step, not a check) when the app sends it elsewhere.
+    expect(code).toContain("  await test.step('[1] Open /#/checkout', async () => {\n    await page.goto('/#/checkout');\n    await expect(page, 'The test didn’t get to the page it starts on').toHaveURL(new RegExp('^[^#]*#/checkout/?(?:[?]|$)'));\n  });");
     expect(code).toContain("  await test.step('[2] Type SAVE20', async () => {\n    await page.getByTestId('coupon-input').fill('SAVE20');\n  });");
     expect(code).toContain("  await test.step('[3] Click Apply', async () => {");
     expect(code).toContain('// Note: the discount looks too big');
@@ -183,6 +184,24 @@ describe('generateSpec', () => {
     expect(() => generateSpec({ ...input, expectations: [{ ...input.expectations[0], field: 'state', expected: 'constructor' }] })).toThrow(/Unexpected state/);
   });
 
+  it('marks a check that held on screen as it was said, and waits as long as the tester did', () => {
+    const code = generateSpec({
+      ...input,
+      expectations: [
+        { locator: "page.getByTestId('a')", description: 'a', expected: '$80.80', actual: '$80.80' },
+        { locator: "page.getByTestId('b')", description: 'b', expected: '$80.80', actual: '$78.40', waited: 12_000 },
+        { locator: "page.getByTestId('c')", description: 'c', expected: '$51.71', actual: '$78.40', not: true, waited: 3000 },
+        { locator: "page.getByTestId('d')", description: 'd', expected: 'visible', actual: 'visible', field: 'state', waited: 60_000 },
+      ],
+    });
+    expect([...heldChecks(code)]).toEqual(['check 1', 'check 3', 'check 4']);
+    expect(code).toContain("await expect(page.getByTestId('b')).toHaveText('$80.80', { timeout: 18000 });");
+    expect(code).toContain('// You waited 12 s before saying it: it waits up to 18 s.');
+    expect(code).toContain("await expect(page.getByTestId('d')).toBeVisible({ timeout: 30000 });");
+    expect(code).not.toMatch(/getByTestId\('c'\)\)\.not\.toContainText\(.*timeout/);
+    expect(() => parse(code, { sourceType: 'module', plugins: ['typescript'] })).not.toThrow();
+  });
+
   it('a test and a replay agree on what shows a value', () => {
     expect(showsValue('Inactive', 'active')).toBe(false);
     expect(showsValue('15 in stock', '5 in stock')).toBe(false);
@@ -194,7 +213,7 @@ describe('generateSpec', () => {
     const long = `${'Dear team, '.repeat(9_000)}thanks.`;
     const code = generateSpec({ ...input, expectations: [{ locator: "page.getByLabel('Notes')", description: 'the notes', expected: long, actual: long, field: 'value' }] });
     expect(code).toContain(`await expect.poll(() => page.getByLabel('Notes').inputValue()).toContain(${jsString(long)});`);
-    expect(code).not.toContain('new RegExp');
+    expect(code).not.toMatch(/toHaveValue\(\//);
     // What the field showed is a comment, cut short; what it should hold is checked whole.
     const comment = code.split('\n').find((l) => l.includes('// You said'))!;
     expect(comment.length).toBeLessThan(600);
@@ -428,6 +447,23 @@ describe('what a run proves', () => {
     expect(atCheck).toMatchObject({ status: 'failed', failedAt: 'check' });
     const atStep = judge({ status: 'failed', duration: 1, steps: [all[0], step('[2] Type SAVE20', 'Timeout 15000ms exceeded waiting for getByTestId(\'coupon-input\')')] }, marks, mask);
     expect(atStep).toMatchObject({ status: 'failed', failedAt: 'step', counts: { stepsPassed: 1, checksPassed: 0 } });
+  });
+
+  it('says what a failure shows: the bug only at a check said against the screen that found its element', () => {
+    const fail = (title: string, error: string) => ({ status: 'failed', duration: 1, steps: [step('[1] Open /', undefined), step(title, error)] });
+    const marks = ['1', 'check 1'];
+    // Said against what the screen showed, found, and still wrong: the bug.
+    expect(judge(fail('[check 1] The total should show $80.80', 'Expected string: "$80.80"\nReceived string: "$78.40"'), marks, mask).failedAt).toBe('check');
+    // Nothing found, or more than one: it shows nothing about the bug.
+    expect(judge(fail('[check 1] The total should show $80.80', 'Timed out 10000ms\nReceived: <element(s) not found>'), marks, mask).failedAt).toBe('find');
+    expect(judge(fail('[check 1] The total should show $80.80', "Error: strict mode violation: getByText('Total') resolved to 2 elements"), marks, mask).failedAt).toBe('find');
+    // It held when it was said, and fails in the run: the test doesn't replay what was done.
+    expect(judge(fail('[check 1] The total should show $80.80', 'Expected string: "$80.80"\nReceived string: "Nothing yet"'), marks, mask, {}, null, new Set(['check 1'])).failedAt).toBe('replay');
+    // Sent elsewhere as it opened: a failed step, said plainly.
+    const away = judge({ status: 'failed', duration: 1, steps: [step('[1] Open /account', 'Error: The test didn’t get to the page it starts on\n\nExpected pattern: /^[a-z]+:\\/\\/[^/]+\\/account\\/?(?:[?#]|$)/\nReceived string: "http://localhost:5281/login?next=%2Faccount"')] }, marks, mask);
+    expect(away.failedAt).toBe('step');
+    expect(away.message).toMatch(/^The test didn’t get to the page it starts on: it was sent to \/login\?next=%2Faccount\./);
+    expect(sentElsewhere('Error: something else')).toBeNull();
   });
 
   it('a check that failed is a failure, though the test caught its error and went on', () => {

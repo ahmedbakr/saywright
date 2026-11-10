@@ -86,13 +86,15 @@ A test starts on the page the app was on when you switched to **Write test**. **
 | The Test tab says | It means |
 | --- | --- |
 | **The test fails at its check, so it reproduces the bug** | Every step ran and the check failed: the bug shows. **Fix with …** is offered. |
-| **It doesn’t show the bug yet** | A step before the checks failed (a field that isn’t there, a page that didn’t come): the test never got to its check. Fix the step, then run it again. |
+| **It doesn’t show the bug yet** | A step before the checks failed (a field that isn’t there, a page that didn’t come): the test never got to its check. Fix the step, then run it again. The first step also checks that the test stays on the page it opens: one sent to a sign-in page says “the test didn’t get to the page it starts on: it was sent to /login”. |
+| **Couldn’t find what this check looks at** | The check found nothing on the page, or more than one element: that shows nothing about the bug. |
+| **The test doesn’t replay what you did** | The check failed, but the page showed what it expects when you said it: a step is missing (something the recorder couldn't record) or the page starts differently. It isn't the bug, so no fix is offered. Only a check said against what the screen showed, that fails the same way, reproduces the bug. |
 | **Passed: all 4 steps and 1 check ran** | Verified: every test in the file passed on its first try, every step and check reported that it ran and passed, Playwright ended cleanly, and (after a fix) the test is the one that failed, unchanged. |
 | **Couldn’t verify** | It passed, but that proves nothing: a step or check didn’t run or was skipped, it passed only when tried again, it has no check, Playwright didn't end cleanly, or the test changed since it failed (by hand, or by any AI request). The next run judges the test as it is then. |
 
 Each test must run its own steps and checks, as often as it has them: two tests that each have `[check 1]` both run theirs, and a check run twice in one test stands for no other test's. A file with `test.only` or `describe.only` isn't run, since its other tests would be left out: remove `.only` and run it again.
 
-A check that failed is a failure, even when the test catches its error and goes on. A test holds up to 1,000 steps and 100 checks, every one of them written: past that, nothing is written and the studio says so, so split it into shorter tests.
+A check waits as long as you waited before saying it (a result that took 12 s is waited for 18 s), at least 10 s and at most 30 s. A check that failed is a failure, even when the test catches its error and goes on. A test holds up to 1,000 steps and 100 checks, every one of them written: past that, nothing is written and the studio says so, so split it into shorter tests.
 
 A fix may not change the test it is checked against: if the AI's change edits that test, that part is left out (and a change that only edits the test is refused), so a weakened check can't pass for a fix.
 

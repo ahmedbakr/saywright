@@ -18,7 +18,7 @@ import type { RunStep, TestRunResult } from '../../shared/api.ts';
 import { focusOn } from '../../shared/text.ts';
 import { spawnProgram } from '../program.ts';
 import type { Project } from '../project.ts';
-import { secretsOf } from './generate.ts';
+import { HELD, secretsOf, STARTS_ELSEWHERE } from './generate.ts';
 
 export { focusOn };
 
@@ -146,6 +146,40 @@ export function marksByTest(code: string, tests: { title: string; line?: number 
   return tests.map((t) => ({ title: t.title, marks: own.get(t.line!)! }));
 }
 
+/**
+ * The checks of a test that held on screen as they were said, by their marks (“check 2”): the studio marks them so
+ * in the code it writes (see HELD). A check written or changed by hand without the mark is judged as any other.
+ */
+export function heldChecks(code: string): Set<string> {
+  const out = new Set<string>();
+  const marks = [...code.matchAll(MARK_IN_CODE)];
+  marks.forEach((m, i) => {
+    if (!m[1].startsWith('check ')) return;
+    const body = code.slice(m.index, marks[i + 1]?.index ?? code.length);
+    // Its own lines only: up to the end of its step.
+    const own = body.slice(0, body.indexOf('\n  });') + 1 || undefined);
+    if (own.includes(HELD)) out.add(m[1]);
+  });
+  return out;
+}
+
+/** A check that couldn't find what it looks at: nothing there, or more than one (Playwright's strict mode). */
+const NOT_FOUND = /element\(s\) not found|strict mode violation|resolved to \d+ elements/i;
+
+/** What a run says when the first step was sent elsewhere: “it was sent to /login”. */
+export function sentElsewhere(error: string | undefined): string | null {
+  if (!error || !error.includes(STARTS_ELSEWHERE)) return null;
+  const url = /Received (?:string|value)?:?\s*"?(.*?)"?\s*$/m.exec(error.replace(ANSI, ''))?.[1];
+  let where = url ?? '';
+  try {
+    const u = new URL(where);
+    where = `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    /* as it came */
+  }
+  return where ? `the test didn’t get to the page it starts on: it was sent to ${where}` : 'the test didn’t get to the page it starts on';
+}
+
 /** A short fingerprint of a test's code: a later run compares it, to know the test is the same one. */
 export const hashOf = (code: string): string => createHash('sha256').update(code).digest('hex').slice(0, 16);
 
@@ -169,6 +203,7 @@ export function judge(
   mask: (t: string | undefined) => string | undefined,
   ended: { exit?: number | null; errors?: string[] } = {},
   tests?: { title: string; marks: string[] }[] | null,
+  held: Set<string> = new Set(),
 ): Pick<TestRunResult, 'status' | 'verified' | 'unverified' | 'failedAt' | 'steps' | 'counts' | 'message'> {
   const all = Array.isArray(results) ? results : [results];
   const each: RunStep[][] = all.map((r) =>
@@ -219,7 +254,7 @@ export function judge(
     // A check (or step) that failed, though its test caught the error and went on: it failed all the same.
     if (failing) {
       const why = `${failing.title} failed, though the test caught the error and went on: ${failing.error ?? 'no message'}`;
-      return { status: 'failed', failedAt: failing.check ? 'check' : 'step', message: why.slice(0, 1200), steps, counts };
+      return { status: 'failed', failedAt: whereFailed(failing, held), message: why.slice(0, 1200), steps, counts };
     }
     if (all.every((r) => r.status === 'skipped')) return { status: 'error', message: 'The test was skipped, so it shows nothing.', steps, counts };
     if (!marks.length) return { status: 'passed', verified: false, unverified: 'This test has no numbered steps (an older version of Saywright wrote it, or it was written by hand), so a pass can’t show that each step and check ran. Generate it again.', steps, counts };
@@ -235,7 +270,20 @@ export function judge(
     return { status: 'passed', verified: true, steps, counts };
   }
   const message = mask((failing?.error ?? bad.error?.message ?? bad.errors?.[0]?.message ?? bad.status).replace(ANSI, ''))!;
-  return { status: 'failed', failedAt: failing?.check ? 'check' : 'step', message: message.slice(0, 1200), steps, counts };
+  const elsewhere = failing && !failing.check ? sentElsewhere(failing.error) : null;
+  return { status: 'failed', failedAt: failing ? whereFailed(failing, held) : 'step', message: (elsewhere ? `${elsewhere[0].toUpperCase()}${elsewhere.slice(1)}. ${message}` : message).slice(0, 1200), steps, counts };
+}
+
+/**
+ * Where a test failed, and so what it shows. Only a check that was said against what the screen showed, and that
+ * found its element, reproduces the bug: one that couldn't find what it looks at shows nothing about it, and one that
+ * held on screen as it was said shows that the test doesn't replay what was done.
+ */
+function whereFailed(failing: RunStep, held: Set<string>): NonNullable<TestRunResult['failedAt']> {
+  if (!failing.check) return 'step';
+  if (NOT_FOUND.test(failing.error ?? '')) return 'find';
+  const mark = MARK.exec(failing.title)?.[1];
+  return mark && held.has(mark) ? 'replay' : 'check';
 }
 
 export interface RunOptions {
@@ -335,7 +383,7 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
       if (/forbidOnly|focused with '\.only'/.test(msg)) return { status: 'error', durationMs, hash, message: FOCUSED };
       return { status: 'error', durationMs, hash, message: msg.slice(0, 600) };
     }
-    const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) }, marksByTest(code, ran));
+    const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) }, marksByTest(code, ran), heldChecks(code));
     const out: TestRunResult = { durationMs, hash, ...verdict };
     if (verdict.status === 'failed' && verdict.message) Object.assign(out, parseFailure(verdict.message, verdict.steps?.find((s) => !s.ok)?.title));
     // The test that failed is the one that must pass: a test changed since (by a fix, or by hand) proves nothing about the fix.
