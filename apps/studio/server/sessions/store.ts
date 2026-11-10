@@ -38,8 +38,29 @@ interface AudioChunk {
   samples: number;
 }
 
+/** What one recording may take on disk, all told (events, narration, screenshots, video): hours of use with a video. */
+const SESSION_MAX_BYTES = 4 * 1024 ** 3;
+/** Left free on the disk the recordings are on, whatever is sent. */
+const DISK_RESERVE_BYTES = 512 * 1024 ** 2;
+
+/** What a folder's files weigh together (a recording's folder: a few files, and its screenshots). */
+function folderBytes(dir: string): number {
+  let total = 0;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const at = path.join(dir, entry.name);
+    try {
+      total += entry.isDirectory() ? folderBytes(at) : fs.statSync(at).size;
+    } catch {
+      /* gone meanwhile */
+    }
+  }
+  return total;
+}
+
 interface Open {
   meta: SessionMeta;
+  /** What the recording takes on disk so far: counted once from its folder, then kept as it grows. */
+  bytes: number | null;
   /** When the last events or audio arrived: a recording that went quiet was abandoned (a closed tab). */
   lastActivity: number;
   /** Sequence numbers already stored, per page load: resent batches are dropped. Read from disk only if a batch comes. */
@@ -139,7 +160,7 @@ export class SessionStore {
       audioSeconds: 0,
       video: null,
     };
-    this.open.set(id, { meta, seen: new Map(), audio: [], audioSamples: 0, videoPieces: new Map(), dirty: true, lastActivity: Date.now() });
+    this.open.set(id, { meta, bytes: 0, seen: new Map(), audio: [], audioSamples: 0, videoPieces: new Map(), dirty: true, lastActivity: Date.now() });
     this.saveMeta(meta);
     // The branch and commit join a moment later: git can take seconds in a big repository, and recording starts now.
     void this.gitInfo().then((git) => {
@@ -172,9 +193,37 @@ export class SessionStore {
     const meta = this.meta(id);
     const audio = readJsonl<AudioChunk>(path.join(dir, 'audio.jsonl'));
     const last = audio[audio.length - 1];
-    const st: Open = { meta, seen: null, audio, audioSamples: last ? last.at + last.samples : 0, videoPieces: new Map(), dirty: false, lastActivity: Date.now() };
+    const st: Open = { meta, bytes: null, seen: null, audio, audioSamples: last ? last.at + last.samples : 0, videoPieces: new Map(), dirty: false, lastActivity: Date.now() };
     this.open.set(id, st);
     return st;
+  }
+
+  /** The most one recording may take on disk (tests set it lower). */
+  maxBytes = SESSION_MAX_BYTES;
+
+  /**
+   * Room for `add` more bytes in a recording, or a refusal. The page being recorded sends what is kept, and that
+   * page is any app or site opened in the studio: without a limit it could fill the disk. Refused as "ended" (409),
+   * which the page's recorder takes as final instead of sending again.
+   */
+  private room(id: string, st: Open, add: number): void {
+    st.bytes ??= folderBytes(this.dir(id));
+    if (st.bytes + add > this.maxBytes) {
+      const limit = this.maxBytes >= 1024 ** 3 ? `${Math.round(this.maxBytes / 1024 ** 3)} GB` : `${Math.max(1, Math.round(this.maxBytes / 1024 ** 2))} MB`;
+      throw new HttpError(409, `This recording has reached its size limit (${limit}). Stop it to get its report.`, 'recording-full');
+    }
+    // Asked of the disk for the larger pieces only (a screenshot, narration, video): events are small and many.
+    if (add >= 32 * 1024) {
+      let free = Infinity;
+      try {
+        const disk = fs.statfsSync(this.dir(id));
+        free = disk.bavail * disk.bsize;
+      } catch {
+        /* not known on this system: the recording's own limit still holds */
+      }
+      if (free - add < DISK_RESERVE_BYTES) throw new HttpError(409, 'The disk is almost full, so this recording can’t take more. Stop it to get its report.', 'disk-full');
+    }
+    st.bytes += add;
   }
 
   /** The events already stored, by page load (a long session's file is big: read only when a batch needs checking). */
@@ -302,7 +351,9 @@ export class SessionStore {
     }
     st.lastActivity = Date.now();
     if (!fresh.length) return fresh;
-    fs.appendFileSync(path.join(this.dir(id), 'events.jsonl'), fresh.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const lines = fresh.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    this.room(id, st, Buffer.byteLength(lines));
+    fs.appendFileSync(path.join(this.dir(id), 'events.jsonl'), lines);
     const c = st.meta.counts;
     for (const e of fresh) {
       c.events++;
@@ -356,6 +407,7 @@ export class SessionStore {
     // The same chunk can arrive twice (a retry racing a beacon when the page closes).
     if (st.audio.some((c) => c.t === t && c.samples === samples)) return { at: st.audioSamples, samples: 0 };
     const dir = this.dir(id);
+    this.room(id, st, samples * 2);
     fs.appendFileSync(path.join(dir, 'audio.pcm'), samples * 2 === pcm.length ? pcm : pcm.subarray(0, samples * 2));
     const chunk: AudioChunk = { t, at: st.audioSamples, samples };
     fs.appendFileSync(path.join(dir, 'audio.jsonl'), JSON.stringify(chunk) + '\n');
@@ -468,6 +520,7 @@ export class SessionStore {
     const st = this.state(id);
     const name = `${Math.round(t)}-${reason.replace(/[^a-z0-9-]/gi, '').slice(0, 24) || 'shot'}.jpg`;
     const dir = this.dir(id);
+    this.room(id, st, jpeg.length);
     fs.writeFileSync(path.join(dir, 'shots', name), jpeg);
     const shot: SessionShot = { name, t: Math.round(t), reason: reason.slice(0, 40), w: size.w, h: size.h };
     fs.appendFileSync(path.join(dir, 'shots.jsonl'), JSON.stringify(shot) + '\n');
@@ -496,15 +549,15 @@ export class SessionStore {
     const st = this.state(id);
     if (st.meta.status !== 'recording') throw new HttpError(409, 'This session has ended');
     const parts = videoParts(st.meta);
-    let part = parts[parts.length - 1];
-    if (!part || part.startedAt !== info.startedAt) {
-      part = { startedAt: info.startedAt, bytes: 0, file: parts.length ? `video-${parts.length + 1}.webm` : 'video.webm' };
-      parts.push(part);
-    }
-    if (info.n !== undefined) {
-      if (info.n <= (st.videoPieces.get(part.file) ?? -1)) return;
-      st.videoPieces.set(part.file, info.n);
-    }
+    const last = parts[parts.length - 1];
+    const fresh = !last || last.startedAt !== info.startedAt;
+    const file = fresh ? (parts.length ? `video-${parts.length + 1}.webm` : 'video.webm') : last.file;
+    if (info.n !== undefined && info.n <= (st.videoPieces.get(file) ?? -1)) return;
+    // Before anything is noted of it: a piece that doesn't fit is not written, and not counted as written.
+    this.room(id, st, chunk.length);
+    const part = fresh ? { startedAt: info.startedAt, bytes: 0, file } : last;
+    if (fresh) parts.push(part);
+    if (info.n !== undefined) st.videoPieces.set(file, info.n);
     fs.appendFileSync(path.join(this.dir(id), part.file), chunk);
     part.bytes += chunk.length;
     st.lastActivity = Date.now();

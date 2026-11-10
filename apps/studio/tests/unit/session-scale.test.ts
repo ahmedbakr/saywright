@@ -169,6 +169,42 @@ describe('session storage for long sessions', () => {
     store.close();
   });
 
+  it('takes no more than its size limit, whatever the page being recorded sends', () => {
+    const project = app();
+    const store = new SessionStore(project);
+    store.maxBytes = 64 * 1024;
+    const m = store.create({ appUrl: 'http://localhost:1', source: 'app', lang: 'en' });
+    const piece = Buffer.alloc(24 * 1024, 1);
+    const video = (n: number, to = store) => to.appendVideo(m.id, piece, { mime: 'video/webm', startedAt: T0, n });
+    video(0);
+    video(1);
+    // Refused as “ended” (409), which the page's recorder takes as final instead of sending it again.
+    const full = (() => {
+      try {
+        video(2);
+      } catch (err) {
+        return err as { status: number; code: string; message: string };
+      }
+    })();
+    expect(full).toMatchObject({ status: 409, code: 'recording-full', message: 'This recording has reached its size limit (1 MB). Stop it to get its report.' });
+    expect(fs.statSync(path.join(store.dir(m.id), 'video.webm')).size).toBe(2 * piece.length);
+    // Every kind of thing a page sends counts toward it.
+    expect(() => store.appendAudio(m.id, T0, Buffer.alloc(40 * 1024))).toThrow(/size limit/);
+    expect(() => store.addShot(m.id, T0, 'moment', Buffer.alloc(40 * 1024), { w: 1, h: 1 })).toThrow(/size limit/);
+    expect(() => store.appendEvents(m.id, { page: 'p', events: [{ seq: 1, t: T0, type: 'console', level: 'log', text: 'x'.repeat(40 * 1024) } as unknown as SessionEvent] })).toThrow(/size limit/);
+    // What fits is still taken, and the session is still there to stop and report on.
+    expect(store.appendEvents(m.id, { page: 'p', events: [{ seq: 2, t: T0, type: 'vis', hidden: false } as SessionEvent] })).toHaveLength(1);
+    store.close();
+    // After a restart what is on disk is counted again; a piece that was refused was never noted as written.
+    const again = new SessionStore(project);
+    again.maxBytes = 64 * 1024;
+    expect(() => video(2, again)).toThrow(/size limit/);
+    again.maxBytes = 1024 * 1024;
+    video(2, again);
+    expect(fs.statSync(path.join(again.dir(m.id), 'video.webm')).size).toBe(3 * piece.length);
+    again.close();
+  });
+
   it('after a restart, still drops a batch sent twice (reading what is stored only when a batch comes)', () => {
     const project = app();
     const first = new SessionStore(project);

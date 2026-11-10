@@ -84,6 +84,8 @@ function searchable(rel: string): boolean {
 
 export class Project {
   private cachedConfig: { mtime: number; config: ProjectConfig } | null = null;
+  /** Where the studio shows the app when its proxy is in front of it: the app's pages name their code at this address. */
+  frame?: string;
 
   /**
    * `root`: the app's code. An app linked by URL alone has none: `hasCode` is false, `root` is its data

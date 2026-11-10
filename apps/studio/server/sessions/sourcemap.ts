@@ -6,8 +6,14 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { isInside, workspaceRoot } from '../../../../packages/vite/src/workspace.ts';
 import { inProject } from '../locate.ts';
 import type { Project } from '../project.ts';
+
+/** The most a bundle or its map may weigh to be read: a development build's largest chunks, with room to spare. */
+const MAX_BYTES = 96 * 1024 * 1024;
+/** This computer, however it is named in an address. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0']);
 
 interface Section {
   line: number;
@@ -118,15 +124,74 @@ export class SourceMapper {
 
   constructor(private project: Project) {}
 
+  /**
+   * Whether an address is the app's own: where it runs, or the studio's proxy in front of it. The positions this
+   * class is given come from the page (an element's source, an error's stack), and a page can write anything
+   * there: no other address is ever asked for, so an app or site shown in the studio can't make the studio call
+   * other servers on this computer or its network.
+   */
+  private own(address: string): boolean {
+    let url: URL;
+    try {
+      url = new URL(address);
+    } catch {
+      return false;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    const port = (u: URL) => u.port || (u.protocol === 'https:' ? '443' : '80');
+    return [this.project.url, this.project.frame].some((mine) => {
+      if (!mine) return false;
+      try {
+        const m = new URL(mine);
+        return m.protocol === url.protocol && port(m) === port(url) && (m.hostname === url.hostname || (LOOPBACK.has(m.hostname) && LOOPBACK.has(url.hostname)));
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  /** Whether a file is the app's to read: in its folder or its workspace's (never elsewhere on the disk, by any link). */
+  private mine(file: string): boolean {
+    if (!this.project.hasCode) return false;
+    const real = (p: string) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return null;
+      }
+    };
+    const at = real(file);
+    if (!at) return false;
+    const roots = [this.project.root, workspaceRoot(this.project.root)].map((r) => (r ? real(r) : null));
+    if (!roots.some((r) => r && isInside(r, at))) return false;
+    try {
+      const stat = fs.statSync(at);
+      return stat.isFile() && stat.size <= MAX_BYTES;
+    } catch {
+      return false;
+    }
+  }
+
   private async loadText(where: string): Promise<string | null> {
     if (/^https?:\/\//.test(where)) {
+      if (!this.own(where)) return null;
       try {
-        const res = await fetch(where, { signal: AbortSignal.timeout(4000) });
-        return res.ok ? await res.text() : null;
+        // A dev server doesn't send its own code elsewhere: a redirect isn't followed (it could lead anywhere).
+        const res = await fetch(where, { signal: AbortSignal.timeout(4000), redirect: 'manual' });
+        if (!res.ok || Number(res.headers.get('content-length') ?? 0) > MAX_BYTES || !res.body) return null;
+        const parts: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of res.body) {
+          size += chunk.byteLength;
+          if (size > MAX_BYTES) return null;
+          parts.push(Buffer.from(chunk));
+        }
+        return Buffer.concat(parts).toString('utf8');
       } catch {
         return null;
       }
     }
+    if (!this.mine(where)) return null;
     try {
       return fs.readFileSync(where, 'utf8');
     } catch {
@@ -180,7 +245,7 @@ export class SourceMapper {
     if (!/^https?:\/\//.test(where)) where = where.replace(/\?[^/]*$/, '');
     // Relative paths from the browser are relative to the project (Vite serves files at their path).
     if (!/^https?:\/\//.test(where) && !path.isAbsolute(where)) where = path.join(this.project.root, where);
-    if (/^https?:\/\//.test(where) || fs.existsSync(where)) {
+    if (/^https?:\/\//.test(where) ? this.own(where) : this.mine(where)) {
       // Already source? Then only make it relative.
       if (!/^https?:/.test(where) && /\.(tsx?|jsx|mjs|vue|svelte|astro|html?)$/.test(where) && !where.includes(`${path.sep}.next${path.sep}`)) return this.relative(where, Number(m[2]), Number(m[3]));
       const loaded = await this.load(where);

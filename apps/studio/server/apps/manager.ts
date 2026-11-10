@@ -322,6 +322,7 @@ export class AppManager {
     let ws = this.spaces.get(app.id);
     if (ws) {
       ws.project.url = url;
+      ws.project.frame = frameUrl;
       ws.frameUrl = frameUrl;
       ws.env = current;
       ws.app = fresh;
@@ -329,6 +330,7 @@ export class AppManager {
     }
     const dataDir = appStateDir(this.deps.dataDir, app);
     const project = new Project(app.root ?? dataDir, url, dataDir, !!app.root);
+    project.frame = frameUrl;
     ws = { app: fresh, env: current, project, frameUrl, ...this.deps.build(project) };
     this.spaces.set(app.id, ws);
     return ws;
