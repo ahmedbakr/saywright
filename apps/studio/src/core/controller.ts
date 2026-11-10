@@ -13,7 +13,7 @@ import type { ReportFinding, ReportSuggestion, SessionAnalysis, SessionDetail, S
 import { ApiError, api, subscribe } from '@/lib/api';
 import { apps, useApps } from './apps';
 import { fileName, plural } from '@/lib/format';
-import { CHECK_PHRASES, focusOn, shouldBe, stateWord } from '@shared/text';
+import { CHECK_PHRASES, focusOn, shouldBe, stateWord, uncheckable } from '@shared/text';
 import { asShown, showsValue } from '@shared/expected';
 import { sanitizeSteps } from '@shared/steps';
 import { BridgeClient } from './bridge';
@@ -1686,6 +1686,9 @@ class Controller {
    * can't be what was said: a paragraph is never disabled, a heading never checked.
    */
   private async checkOf(el: ElementInfo, expected: string, how: { not?: boolean; state?: 'visible' | 'hidden' | 'enabled' | 'disabled' } = {}): Promise<Expectation | string | null> {
+    // An embedded frame is another page: nothing in it can be checked from this one, and the person is told why.
+    const refused = uncheckable(el);
+    if (refused) return refused;
     const what = el.text ? `“${el.text.slice(0, 40)}”` : 'That';
     if (how.state) {
       if ((how.state === 'enabled' || how.state === 'disabled') && !canDisable(el)) return `${what} can’t be ${how.state}: only a button, a field, a list or another control can. Point at the control.`;
