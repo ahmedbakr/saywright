@@ -5,7 +5,7 @@
  */
 import { CircleDot, FileText, Mic, MonitorUp, Square, Timer } from 'lucide-react';
 import { Popover } from 'radix-ui';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/misc';
 import { Segmented } from '@/components/ui/segmented';
@@ -99,11 +99,13 @@ export function SessionControl() {
 function NewSession({ setup, compact }: { setup: boolean; compact: boolean }) {
   // A session's steps are being replayed (and recorded): one recording at a time.
   const replaying = useStudio((s) => !!s.replay);
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
     <Popover.Root open={setup && !replaying} onOpenChange={(open) => useSessions.setState({ setup: open })}>
       <Tip label={replaying ? 'Wait for the replay to finish' : 'Record session: use your app and talk, then get a report with what went wrong'}>
         <Popover.Trigger asChild>
           <button
+            ref={trigger}
             data-tour="record"
             disabled={replaying}
             className={cn(
@@ -118,7 +120,24 @@ function NewSession({ setup, compact }: { setup: boolean; compact: boolean }) {
         </Popover.Trigger>
       </Tip>
       <Popover.Portal>
-        <Popover.Content side="bottom" align="end" sideOffset={8} className="z-[60] w-[360px] rounded-[14px] bg-panel p-4 shadow-pop outline-none" onOpenAutoFocus={(e) => e.preventDefault()}>
+        <Popover.Content
+          side="bottom"
+          align="end"
+          sideOffset={8}
+          aria-label="Record session"
+          className="z-[60] w-[360px] rounded-[14px] bg-panel p-4 shadow-pop outline-none"
+          // Straight into what is asked first: what you are testing.
+          onOpenAutoFocus={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).querySelector<HTMLInputElement>('[data-session-name]')?.focus();
+          }}
+          // Back on the button that opened it, unless something else took the focus meanwhile (the app's frame doesn't count).
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            const now = document.activeElement;
+            if (!now || now === document.body || now.tagName === 'IFRAME') trigger.current?.focus({ preventScroll: true });
+          }}
+        >
           <SessionSetup />
         </Popover.Content>
       </Popover.Portal>
@@ -161,6 +180,8 @@ function SessionSetup() {
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && void sessions.start(name)}
         placeholder="What are you testing? (optional)"
+        aria-label="What are you testing"
+        data-session-name
         className="h-8 w-full rounded-[8px] bg-sunken px-2.5 text-[12.5px] text-fg outline-none ring-1 ring-inset ring-line placeholder:text-fg-3 focus:ring-ai-line"
       />
       <div className="space-y-1.5">

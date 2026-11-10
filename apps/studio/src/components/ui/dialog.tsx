@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { X } from 'lucide-react';
 import { Dialog as D } from 'radix-ui';
-import { useRef, type ReactNode } from 'react';
-import { passThrough } from '@/core/layers';
+import { useEffect, useRef, type ReactNode } from 'react';
+import { focusedBefore, passThrough } from '@/core/layers';
 import { cn } from '@/lib/cn';
 import { IconButton } from './button';
 import { useLayer } from './modal';
@@ -43,8 +43,27 @@ export function Dialog({
 }) {
   const layer = useLayer(open);
   const returnTo = useRef<HTMLElement | null>(null);
-  const isOpen = useRef(open);
+  const isOpen = useRef(false);
+  // What had focus as it opens, read before anything in it (a search box that focuses itself) takes the focus.
+  if (open && !isOpen.current) returnTo.current = focusedBefore();
   isOpen.current = open;
+  // Once it has faded out: if the focus fell to the page (it was inside), back to what had it before.
+  useEffect(() => {
+    if (open) return;
+    const el = returnTo.current;
+    if (!el) return;
+    // It fades out with the focus still in it; when that is gone, the focus is on the page, unless another control took it.
+    const until = performance.now() + 1500;
+    const t = setInterval(() => {
+      const now = document.activeElement;
+      const inDialog = !!now?.closest('[role="dialog"], [role="alertdialog"]');
+      if (inDialog && performance.now() < until) return;
+      clearInterval(t);
+      if ((!now || now === document.body) && el.isConnected && !el.closest('[inert]')) el.focus({ preventScroll: true });
+      returnTo.current = null;
+    }, 50);
+    return () => clearInterval(t);
+  }, [open]);
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
       <AnimatePresence>
@@ -70,7 +89,8 @@ export function Dialog({
               // While it fades out, Escape is for the layer below (the app list, say).
               onEscapeKeyDown={(e) => !isOpen.current && passThrough(e)}
               onOpenAutoFocus={(e) => {
-                returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                const now = document.activeElement;
+                if (now instanceof HTMLElement && now !== document.body && now.tagName !== 'IFRAME' && !now.closest('[role="dialog"], [role="alertdialog"]')) returnTo.current = now;
                 if (focusFirst) return;
                 e.preventDefault();
                 (e.currentTarget as HTMLElement | null)?.focus();
@@ -80,7 +100,8 @@ export function Dialog({
                 e.preventDefault();
                 const el = returnTo.current;
                 const now = document.activeElement;
-                if (now && now !== document.body) return;
+                // Still in the dialog as it fades out (its search box) counts as nowhere.
+                if (now && now !== document.body && !(e.currentTarget as HTMLElement | null)?.contains(now)) return;
                 if (el && el !== document.body && el.isConnected && !el.closest('[inert]')) el.focus({ preventScroll: true });
               }}
             >

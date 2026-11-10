@@ -150,11 +150,11 @@ function General() {
   );
 }
 
-function SliderRow({ left, right, value, onChange }: { left: string; right: string; value: number; onChange: (v: number) => void }) {
+function SliderRow({ left, right, value, onChange, label }: { left: string; right: string; value: number; onChange: (v: number) => void; label: string }) {
   return (
     <div className="flex items-center gap-3">
       <span className="w-[72px] text-[11.5px] text-fg-3">{left}</span>
-      <Slider value={value} onChange={onChange} />
+      <Slider value={value} onChange={onChange} label={label} />
       <span className="w-[56px] text-right text-[11.5px] text-fg-3">{right}</span>
     </div>
   );
@@ -223,6 +223,7 @@ function VoiceSettings() {
           onChange={(v) => s.setVoice({ lang: v })}
           options={LANGS.map(([value, label]) => ({ value, label }))}
           className="w-[200px]"
+          label="Language"
         />
       </Row>
       <Row label="Speech models on this computer" hint="Transcribe test-session narration, and Arabic voice commands. Measured on real recordings of people reading Arabic and English." stack>
@@ -244,7 +245,7 @@ function VoiceSettings() {
         <span className="text-[12px] text-fg-3">Tap Space · ✌</span>
       </Row>
       <Row label="Pause before sending" hint={`In hands-free mode, send after ${(s.voice.autoStopMs / 1000).toFixed(1)} s of silence.`} stack>
-        <SliderRow left="0.8 s" right="2.5 s" value={(s.voice.autoStopMs - 800) / 1700} onChange={(v) => s.setVoice({ autoStopMs: Math.round(800 + v * 1700) })} />
+        <SliderRow label="Pause before sending" left="0.8 s" right="2.5 s" value={(s.voice.autoStopMs - 800) / 1700} onChange={(v) => s.setVoice({ autoStopMs: Math.round(800 + v * 1700) })} />
       </Row>
       <Row label="Microphone" hint="After you talk it stays on for two minutes, so the start of your next sentence isn’t cut off. The audio stays in this tab and is only used when you talk.">
         <Button size="sm" onClick={() => controller.voice.capture.close()}>

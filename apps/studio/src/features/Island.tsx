@@ -59,8 +59,19 @@ export function Island() {
     body = <Idle />;
   }
 
+  // What the island says, for a screen reader: a message or an answer once, politely, an error at once. A step's
+  // progress (a replay, Autopilot, a timer ticking) is not read out each time it changes.
+  const said = island.kind === 'message' || island.kind === 'answer' || island.kind === 'needs-key' ? island.text : '';
+  const urgent = island.kind === 'message' && island.tone === 'error';
+
   return (
     <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4" data-island={view.split('-')[0]}>
+      <div className="sr-only" role="status" aria-live="polite" data-announce="polite">
+        {urgent ? '' : said}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" data-announce="assertive">
+        {urgent ? said : ''}
+      </div>
       <motion.div layout transition={MORPH} className="glass pointer-events-auto max-w-full overflow-hidden" style={{ borderRadius: 16 }}>
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div

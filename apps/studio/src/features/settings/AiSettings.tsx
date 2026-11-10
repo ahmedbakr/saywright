@@ -110,6 +110,7 @@ function Routes({ state }: { state: AiState }) {
               }}
               options={options}
               className="w-[250px] shrink-0"
+              label={t.label}
             />
           </div>
         );
@@ -398,7 +399,7 @@ function AddProvider() {
       </div>
       <p className="text-[12px] leading-relaxed text-fg-3">{p.note ?? 'Any provider with an OpenAI-compatible API.'}</p>
       <div className="flex flex-wrap gap-2">
-        <Select<string> value={preset} onChange={setPreset} options={options} className="w-[190px]" />
+        <Select<string> value={preset} onChange={setPreset} options={options} className="w-[190px]" label="Provider" />
         {preset === 'custom' && <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className={cn(input, 'min-w-[220px] flex-1 font-mono')} aria-label="Provider address" />}
       </div>
       <div className="flex flex-wrap gap-2">

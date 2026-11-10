@@ -22,6 +22,24 @@ export function consumed(e: Event): boolean {
   return e.defaultPrevented && !passed.has(e);
 }
 
+/** The last control focused outside every dialog: where focus goes back when one closes and what opened it is unknown. */
+let outside: HTMLElement | null = null;
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const t = e.target;
+      if (t instanceof HTMLElement && t !== document.body && t.tagName !== 'IFRAME' && !t.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')) outside = t;
+    },
+    true,
+  );
+}
+
+/** What had the focus before the dialogs now open: a control still on the page and usable, or null. */
+export function focusedBefore(): HTMLElement | null {
+  return outside && outside.isConnected && !outside.closest('[inert]') ? outside : null;
+}
+
 export function modalOpen(): boolean {
   return stack.length > 0;
 }

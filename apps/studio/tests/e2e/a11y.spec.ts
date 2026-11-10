@@ -218,3 +218,64 @@ test('Escape closes only the layer on top: the selection survives help, the pale
     })
     .toBe(false);
 });
+
+test('Record session, the report and the palette take focus and give it back to what opened them; Settings’ lists and sliders have names', async ({ page }) => {
+  await finishedSession();
+  await openStudio(page, { onboarded: true });
+  // Record session: a named dialog that takes focus, and gives it back on Escape.
+  const record = page.getByRole('button', { name: 'Record session', exact: true });
+  await record.focus();
+  await page.keyboard.press('Enter');
+  const setup = page.getByRole('dialog', { name: 'Record session' });
+  await expect(setup).toBeVisible();
+  await expect(page.getByPlaceholder('What are you testing? (optional)')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(setup).toHaveCount(0);
+  await expect(record).toBeFocused();
+
+  // The command palette, by keyboard from a button: back on that button.
+  const help = page.getByRole('button', { name: 'Help' });
+  await help.focus();
+  await page.keyboard.press('ControlOrMeta+k');
+  await expect(page.getByPlaceholder('Search commands…')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(help).toBeFocused();
+
+  // The report, opened from the sessions list: back on its row.
+  await page.getByRole('tab', { name: 'Sessions' }).click();
+  const row = page.getByRole('button', { name: /issues? found|Checkout check/ }).first();
+  await row.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Session report' })).toBeVisible();
+  await expect(page.locator('[data-findings]')).toBeVisible({ timeout: 20_000 });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Session report' })).toHaveCount(0);
+  await expect(row).toBeFocused();
+
+  // Settings: every list and slider is named.
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const unnamed = async () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('[role="dialog"] [role="combobox"], [role="dialog"] [role="slider"]')]
+        .filter((el) => !(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || (el.id && document.querySelector(`label[for="${el.id}"]`))))
+        .map((el) => `${el.getAttribute('role')}: ${(el.textContent ?? '').trim().slice(0, 30)}`),
+    );
+  for (const section of ['AI', 'Voice']) {
+    await page.getByRole('dialog').getByRole('button', { name: section, exact: true }).or(page.getByRole('dialog').getByRole('tab', { name: section, exact: true })).first().click();
+    await page.waitForTimeout(300);
+    expect(await unnamed(), section).toEqual([]);
+  }
+});
+
+test('messages on the island and toasts are announced: politely, errors assertively, and a running timer is not', async ({ page }) => {
+  await openStudio(page, { onboarded: true });
+  // A message the island shows after a command.
+  await page.keyboard.press('ControlOrMeta+k');
+  await page.getByPlaceholder('Search commands…').fill('undo');
+  await page.keyboard.press('ControlOrMeta+Enter');
+  await expect(page.getByText('Nothing to undo.').first()).toBeVisible();
+  await expect(page.locator('[aria-live="polite"]', { hasText: 'Nothing to undo.' })).toHaveCount(1);
+  await expect(page.locator('[aria-live="assertive"]', { hasText: 'Nothing to undo.' })).toHaveCount(0);
+  // A replay's or a countdown's ticking is not in a live region of the island.
+  expect(await page.locator('[data-island] [aria-live]').evaluateAll((els) => els.map((e) => e.getAttribute('data-announce')))).toEqual(['polite', 'assertive']);
+});

@@ -9,16 +9,20 @@ export function Select<T extends string>({
   options,
   className,
   placeholder,
+  label,
 }: {
   value: T | undefined;
   onChange: (v: T) => void;
   options: { value: T; label: ReactNode; note?: string }[];
   className?: string;
   placeholder?: string;
+  /** Its accessible name (what the row it sits in is called): a list without one is an unnamed “combobox”. */
+  label?: string;
 }) {
   return (
     <S.Root value={value} onValueChange={(v) => onChange(v as T)}>
       <S.Trigger
+        aria-label={label}
         className={cn(
           'inline-flex h-8 min-w-[160px] items-center justify-between gap-2 rounded-[8px] bg-raised px-2.5 text-[12.5px] text-fg ring-1 ring-inset ring-line-strong hover:bg-hover',
           className,
