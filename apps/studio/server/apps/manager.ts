@@ -5,6 +5,7 @@
  * for one app carries on while you work in another.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { AppEnv, AppProbe, AppsResponse, LinkedApp } from '../../shared/apps.ts';
 import type { ChangeStore } from '../changes.ts';
@@ -139,7 +140,8 @@ export class AppManager {
   }
 
   get cloneDir(): string {
-    return this.registry.cloneDir ?? `${process.env.HOME ?? process.env.USERPROFILE ?? '.'}/saywright-apps`;
+    // The home folder as every other path in the studio finds it (HOME, or the profile folder on Windows).
+    return this.registry.cloneDir ?? path.join(os.homedir(), 'saywright-apps');
   }
 
   link(probe: AppProbe, extra: Parameters<AppRegistry['add']>[1] = {}): LinkedApp {

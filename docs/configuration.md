@@ -218,7 +218,7 @@ When the studio runs Claude Code, Codex or Gemini CLI for your plan, it leaves t
 | `NO_COLOR` | No colours in the commands' output. |
 | `BROWSER` | The browser `npm run dev` opens. On a Mac, when it isn't set and Chrome is installed, Chrome is used. |
 | `LAUNCH_EDITOR`, `VISUAL`, `EDITOR` | The code editor <kbd>O</kbd> opens files in. Without `LAUNCH_EDITOR`, the studio uses an editor it finds running (VS Code, Cursor, WebStorm, Zed and others), then `VISUAL` or `EDITOR`; with none, it says so. |
-| `HOME`, `USERPROFILE` | Where GitHub clones go by default (`~/saywright-apps`). |
+| `HOME` (`USERPROFILE` on Windows) | Your home folder, where GitHub clones go by default (`~/saywright-apps`). |
 | `E2E_STUDIO_PORT`, `E2E_SHOP_PORT` | The end-to-end tests: see [CONTRIBUTING.md](../CONTRIBUTING.md#tests). |
 
 ### Behind a company proxy
