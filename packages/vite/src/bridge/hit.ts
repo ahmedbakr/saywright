@@ -55,9 +55,44 @@ function heldField(label: Element): Element | null {
   return valueField(field) && label.contains(field) && annotatedAncestor(field) === field ? field : null;
 }
 
+/** Whether pointing goes into web components: while a test is written (a check reads a value inside one), or deep. */
+let intoComponents = false;
+export function pointIntoComponents(on: boolean): void {
+  intoComponents = on;
+}
+
+/**
+ * What is at the point, inside open shadow roots too (`document.elementFromPoint` stops at a web component's host).
+ * A closed root shows nothing of itself: its host is what is there.
+ */
+function deepestAt(x: number, y: number): Element | null {
+  let top = document.elementFromPoint(x, y);
+  for (let i = 0; top?.shadowRoot && i < 16; i++) {
+    const inner = top.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === top) break;
+    top = inner;
+  }
+  return top;
+}
+
+/** An element inside a web component, pointed at for what it shows: what a person clicks in it, else itself. */
+function insideComponent(el: Element): Element | null {
+  if (!(el.getRootNode() instanceof ShadowRoot)) return null;
+  const clickable = el.closest(CLICKABLE);
+  const pick = clickable && !isTooBig(clickable) ? clickable : el;
+  return isVisible(pick) && !isTooBig(pick) ? pick : null;
+}
+
 function candidateAt(x: number, y: number, deep: boolean): Element | null {
   if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
-  const top = document.elementFromPoint(x, y);
+  const into = intoComponents || deep || !pageAnnotated();
+  const top = into ? deepestAt(x, y) : document.elementFromPoint(x, y);
+  // An embedded frame is another page: what is in it can't be pointed at, and the part around it isn't what is meant.
+  if (top instanceof HTMLIFrameElement || top instanceof HTMLFrameElement || top instanceof HTMLObjectElement || top instanceof HTMLEmbedElement) return isTooBig(top) ? null : top;
+  if (into && top) {
+    const inner = insideComponent(top);
+    if (inner) return inner;
+  }
   let el = annotatedAncestor(top);
   if (el && !deep) {
     el = collapseToInstance(el);

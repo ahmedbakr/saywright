@@ -19,7 +19,7 @@ import {
 import { clickAt, scrollAt, typeText } from './actions';
 import { annotatedAncestor, controlOf, describe, elOf, isVisible, rectOf, stateOf, typesInto } from './dom';
 import { snapshot } from './explore';
-import { probe, probeSticky, releaseSticky } from './hit';
+import { pointIntoComponents, probe, probeSticky, releaseSticky } from './hit';
 import { buildLocator } from './locator';
 import { find, step } from './nav';
 import { act, find as findRecorded, textOf } from './replay';
@@ -186,6 +186,7 @@ function start(): void {
         return;
       case 'record':
         recorder.setOn(m.on);
+        pointIntoComponents(m.on);
         return;
       case 'flush':
         // The steps go out before the reply: the studio places what comes next after them.
@@ -270,6 +271,19 @@ function start(): void {
     later = null;
     if (mouseOn) post({ type: 'mouse', x: null, y: null });
   });
+  // Into an embedded frame (another page: this one sees no pointer moving in it), the pointer is on the frame itself,
+  // a little way in from where it crossed its edge: never left on what it passed over on the way.
+  window.addEventListener(
+    'pointerover',
+    (e) => {
+      const frame = e.target;
+      if (!mouseOn || !(frame instanceof HTMLIFrameElement || frame instanceof HTMLFrameElement || frame instanceof HTMLObjectElement || frame instanceof HTMLEmbedElement)) return;
+      const r = frame.getBoundingClientRect();
+      pending = { x: Math.min(Math.max(e.clientX, r.left + 3), r.right - 3), y: Math.min(Math.max(e.clientY, r.top + 3), r.bottom - 3) };
+      sendMouse();
+    },
+    { passive: true, capture: true },
+  );
 
   let keysOn = false;
   let spaceDown = false;

@@ -307,3 +307,23 @@ test('steps find what was used by words a person reads, and by its row or its pa
     await expect(found, code).toHaveCount(1);
   }
 });
+
+test('while writing a test, pointing reaches a value inside a web component, and an embedded frame is pointed at as itself', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => {
+    const host = document.createElement('open-card');
+    host.attachShadow({ mode: 'open' }).innerHTML = '<div style="padding:24px;border:1px solid"><h4>Customer</h4><span id="who">Hello, Ada (VIP)</span></div>';
+    const section = document.createElement('section');
+    section.innerHTML = '<h4>Payment</h4><iframe title="Pay" srcdoc="<p>Paid by Ada</p>" style="width:240px;height:80px"></iframe>';
+    document.querySelector('main')!.prepend(host, section);
+  });
+  const hoverOn = async (target: ReturnType<typeof app.locator>) => {
+    const b = (await target.boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 3 });
+  };
+  await hoverOn(app.locator('open-card #who'));
+  await expect.poll(() => store<{ tag: string; text: string } | null>(page, 's.hover && { tag: s.hover.tag, text: s.hover.text }')).toEqual({ tag: 'span', text: 'Hello, Ada (VIP)' });
+  await hoverOn(app.locator('iframe[title="Pay"]'));
+  await expect.poll(() => store<string | null>(page, 's.hover && s.hover.tag')).toBe('iframe');
+});
