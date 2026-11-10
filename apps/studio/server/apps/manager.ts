@@ -95,7 +95,10 @@ export class AppManager {
 
   constructor(private deps: ManagerDeps) {
     this.registry = new AppRegistry(deps.dataDir);
-    this.runner = new AppRunner((run) => deps.emit('apps', { kind: 'run', run }));
+    this.runner = new AppRunner(
+      (run) => deps.emit('apps', { kind: 'run', run }),
+      (id, url) => void this.moved(id, url),
+    );
     this.proxy = new AppProxy({ studio: deps.studio, port: deps.proxyPort, stateFile: `${deps.dataDir}/proxy-ports.json` });
     this.launcher = this.registry.launcher;
   }
@@ -258,6 +261,33 @@ export class AppManager {
     const path = usual.pathname === '/' ? '' : usual.pathname;
     if (actual.origin !== usual.origin) this.registry.setEnv(app.id, { ...env, url: actual.origin + path });
     return actual.origin + path + usual.search;
+  }
+
+  /**
+   * A running app said later where it really listens (its web server's "Local" line after its API's address, or a
+   * restart on another port): its address is kept, and its proxy and workspace follow it.
+   */
+  private async moved(id: string, url: string): Promise<void> {
+    const app = this.registry.get(id);
+    const ws = this.spaces.get(id);
+    const env = app?.envs.find((e) => e.id === (ws?.env.id ?? app.env));
+    if (!app || !env || env.kind !== 'local') return;
+    const actual = new URL(url);
+    const usual = new URL(env.url);
+    if (actual.origin === usual.origin) return;
+    const path = usual.pathname === '/' ? '' : usual.pathname;
+    this.registry.setEnv(id, { ...env, url: actual.origin + path });
+    this.deps.emit('apps', { kind: 'linked', app: this.registry.get(id) });
+    if (!ws || ws.env.id !== env.id) return;
+    const now = actual.origin + path + usual.search;
+    ws.project.url = now;
+    ws.env = { ...ws.env, url: actual.origin + path };
+    ws.app = this.registry.get(id) ?? ws.app;
+    if (ws.env.connection === 'proxy') await this.proxy.open(now, `${id}/${env.id}`);
+    else {
+      ws.frameUrl = now;
+      ws.project.frame = now;
+    }
   }
 
   /**

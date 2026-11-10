@@ -27,6 +27,11 @@ const URL_IN = /(https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::\d{
 const LOCAL_LINE = /\blocal\b\s*:?\s+https?:\/\//i;
 /** "Dev server running at http://localhost:4321 (pid 1234)": a server moved to the background (astro dev --background). */
 const BACKGROUND = /\brunning at https?:\/\/\S+ \(pid (\d+)\)/i;
+/**
+ * How long its output must stay quiet before an address it printed without a "Local" line is taken: a command that
+ * runs several servers (its API, then its web server) prints the API's address first and the "Local" line later.
+ */
+const QUIET_MS = 3000;
 
 /** Quiet, non-interactive dev servers: no browser opening, no telemetry prompts. */
 const CHILD_ENV = {
@@ -43,7 +48,7 @@ const CHILD_ENV = {
   NUXT_TELEMETRY_DISABLED: '1',
 };
 
-/** A local address a dev server printed, and whether it was on its "Local" line. */
+/** A local address a dev server printed, and whether it was on its "Local" line (or one saying where it moved). */
 export interface Seen {
   url: string;
   local: boolean;
@@ -56,6 +61,8 @@ interface Run extends AppRun {
   seen: Seen[];
   /** The end of its output that isn't a whole line yet (an address can be cut in two). */
   partial: string;
+  /** When it last printed something. */
+  printedAt: number;
   /** The pid of a server the command said it moved to the background; `adopted` once the command has exited. */
   background: number | null;
   adopted: number | null;
@@ -69,7 +76,10 @@ export function addressesIn(text: string): Seen[] {
     const m = URL_IN.exec(line);
     if (!m || /\bnetwork\b/i.test(line)) continue;
     const url = m[1].replace('0.0.0.0', 'localhost').replace(/[).,]+$/, '');
-    if (!out.some((s) => s.url === url)) out.push({ url, local: LOCAL_LINE.test(line) });
+    const local = LOCAL_LINE.test(line) || BACKGROUND.test(line);
+    const known = out.find((s) => s.url === url);
+    if (!known) out.push({ url, local });
+    else known.local ||= local;
   }
   return out;
 }
@@ -90,11 +100,18 @@ export const urlFromOutput = (text: string): string | null => pickUrl(addressesI
  * (a first page can take long to compile), or `down`. A local dev server's own certificate is fine here.
  */
 function check(url: string, ms: number): Promise<number | 'busy' | 'down'> {
+  return answer(url, ms).then((a) => (typeof a === 'string' ? a : a.status));
+}
+
+/** The same, and whether what answered is a page (not an error, not JSON or a script: an API, a tool). */
+function answer(url: string, ms: number): Promise<{ status: number; page: boolean } | 'busy' | 'down'> {
   return new Promise((resolve) => {
     let connected = false;
     const req = (url.startsWith('https:') ? https : http).get(url, { timeout: ms, rejectUnauthorized: false, headers: { accept: 'text/html' } }, (res) => {
       res.resume();
-      resolve(res.statusCode ?? 500);
+      const status = res.statusCode ?? 500;
+      const type = String(res.headers['content-type'] ?? '');
+      resolve({ status, page: status < 400 && (!type || /html/i.test(type)) });
     });
     req.on('socket', (socket) => socket.once('connect', () => (connected = true)));
     const gone = () => resolve(connected ? 'busy' : 'down');
@@ -198,7 +215,14 @@ export class AppRunner {
   private runs = new Map<string, Run>();
   private flush = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(private emit: (run: AppRun) => void) {}
+  /**
+   * @param moved told when a running app says it listens elsewhere than where the studio found it (its "Local" line
+   * came later, or it restarted on another port).
+   */
+  constructor(
+    private emit: (run: AppRun) => void,
+    private moved?: (id: string, url: string) => void,
+  ) {}
 
   private view(r: Run): AppRun {
     return { app: r.app, status: r.status, command: r.command, url: r.url, startedAt: r.startedAt, exitCode: r.exitCode, log: r.log.slice(-60) };
@@ -221,7 +245,7 @@ export class AppRunner {
   private run(id: string): Run {
     let r = this.runs.get(id);
     if (!r) {
-      r = { app: id, status: 'stopped', command: null, url: null, startedAt: null, exitCode: null, log: [], proc: null, server: null, seen: [], partial: '', background: null, adopted: null, watch: null };
+      r = { app: id, status: 'stopped', command: null, url: null, startedAt: null, exitCode: null, log: [], proc: null, server: null, seen: [], partial: '', printedAt: 0, background: null, adopted: null, watch: null };
       this.runs.set(id, r);
     }
     return r;
@@ -235,6 +259,7 @@ export class AppRunner {
   /** Output lines, sent to the studio a few times a second at most. */
   private append(r: Run, chunk: string): void {
     const text = chunk.replace(ANSI, '');
+    r.printedAt = Date.now();
     const whole = (r.partial + text).split(/\r?\n/);
     r.partial = whole.pop() ?? '';
     this.read(r, whole);
@@ -255,7 +280,19 @@ export class AppRunner {
 
   /** What whole lines of output say: the addresses it listens at, and a server it moved to the background. */
   private read(r: Run, lines: string[]): void {
-    for (const seen of addressesIn(lines.join('\n'))) if (!r.seen.some((s) => s.url === seen.url)) r.seen.push(seen);
+    for (const seen of addressesIn(lines.join('\n'))) {
+      const known = r.seen.find((s) => s.url === seen.url);
+      if (!known) r.seen.push(seen);
+      else if (seen.local && !known.local) known.local = true;
+      else continue;
+      // Running already: a "Local" line it prints now is where it is (it came after another address, or it restarted).
+      if (r.status === 'running' && seen.local && seen.url !== r.url && r.proc) {
+        r.url = seen.url;
+        this.append(r, `It says it listens at ${seen.url}: the studio uses that address now.\n`);
+        this.emit(this.view(r));
+        this.moved?.(r.app, seen.url);
+      }
+    }
     if (r.status !== 'running') r.url = pickUrl(r.seen) ?? r.url;
     for (const line of lines) {
       const bg = BACKGROUND.exec(line);
@@ -308,7 +345,7 @@ export class AppRunner {
     const r = this.run(app.id);
     if (r.status === 'running' || r.status === 'starting') return this.view(r);
     if (!app.root) throw new Error('This app has no folder on this computer to start.');
-    Object.assign(r, { url: null, exitCode: null, startedAt: Date.now(), seen: [], partial: '', background: null });
+    Object.assign(r, { url: null, exitCode: null, startedAt: Date.now(), seen: [], partial: '', printedAt: Date.now(), background: null });
     if (app.framework === 'static' && !app.start) {
       const port = await freePort(5300);
       const server = staticServer(app.root);
@@ -360,10 +397,12 @@ export class AppRunner {
   }
 
   /**
-   * Mark it running once its address answers: the one it printed (any answer, an error page too, and it gets time
-   * to compile its first page), else `fallbackUrl`, where it usually runs (with a page). When time is up, every other
-   * address it printed is tried, and one that took the request and is still working on it counts. Resolves with where
-   * it is, or null: it stopped, or nothing answered (it is still running then).
+   * Mark it running once its address answers. Its "Local" address (any answer, an error page too, and it gets time to
+   * compile its first page) wins. Without one, `fallbackUrl`, where it usually runs, counts when it answers; and an
+   * address it printed counts only once its output has gone quiet (its web server's "Local" line may come after its
+   * API's address) and only when it answers with a page: an API's 404 or JSON is never taken for the app. When time is
+   * up, every other address it printed is tried. Resolves with where it is, or null: it stopped, or nothing answered
+   * (it is still running then).
    */
   async ready(id: string, fallbackUrl: string | null, ms = 90_000): Promise<string | null> {
     const r = this.runs.get(id);
@@ -377,27 +416,39 @@ export class AppRunner {
       if (r.status !== 'running') this.set(r, 'running');
       return url;
     };
+    // The studio's own static server: it is where the studio put it.
+    if (r.server && r.url) return answered(r.url);
+    // An address it printed without a "Local" line, once nothing more is coming for now.
+    const settled = () => Date.now() - r.printedAt >= QUIET_MS || !r.proc;
+    const isPage = (a: Awaited<ReturnType<typeof answer>>) => typeof a === 'object' && a.page;
     const until = Date.now() + ms;
     let busy: string | null = null;
     while (Date.now() < until) {
       if (!going()) return null;
-      const printed = r.url;
-      const url = printed ?? fallbackUrl;
-      if (url) {
-        const state = await check(url, printed ? Math.max(2500, Math.min(30_000, until - Date.now())) : 2500);
-        if (typeof state === 'number' && (printed || state < 500)) return answered(url);
-        busy = printed && state === 'busy' ? printed : null;
+      const local = r.seen.find((s) => s.local)?.url;
+      if (local) {
+        const state = await check(local, Math.max(2500, Math.min(30_000, until - Date.now())));
+        if (typeof state === 'number') return answered(local);
+        busy = state === 'busy' ? local : null;
+      } else {
+        if (fallbackUrl) {
+          const state = await check(fallbackUrl, 2500);
+          if (typeof state === 'number' && state < 500) return answered(fallbackUrl);
+        }
+        const printed = pickUrl(r.seen);
+        if (printed && settled() && going() && isPage(await answer(printed, 2500))) return answered(printed);
       }
       await new Promise((res) => setTimeout(res, 400));
     }
     // Time is up: whatever else it printed may be it (a plugin's endpoint on the port it uses, without a "Local" line).
-    const tried = new Set([r.url, fallbackUrl]);
+    const tried = new Set([busy, fallbackUrl]);
     for (const s of r.seen) {
       const url = s.local || new URL(s.url).pathname === '/' ? s.url : new URL(s.url).origin;
       if (tried.has(url)) continue;
       tried.add(url);
       if (!going()) return null;
-      if (typeof (await check(url, 2500)) === 'number') return answered(url);
+      const state = await answer(url, 2500);
+      if (s.local ? typeof state === 'object' : isPage(state)) return answered(url);
     }
     if (busy) this.append(r, 'It is still working on its first page: the studio shows it as it comes.\n');
     return busy ? answered(busy) : null;

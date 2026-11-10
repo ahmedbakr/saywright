@@ -99,6 +99,63 @@ describe('starting a dev server', { timeout: 60_000 }, () => {
     await runner.stop('mcp');
   });
 
+  it('is not settled on another address it printed first (its API): its "Local" line a while later wins', async () => {
+    // Like `concurrently "node api.js" "vite"`: the API says where it listens at once and answers 404 JSON there; the
+    // web server's "Local" line comes two seconds later.
+    const api = http.createServer((req, res) => {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(`{"error":"Cannot GET ${req.url}"}`);
+    });
+    await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', () => resolve()));
+    cleanups.push(() => api.close());
+    const apiUrl = `http://localhost:${(api.address() as AddressInfo).port}`;
+    const web = await site();
+    cleanups.push(web.close);
+    const start = script('fullstack.mjs', `console.log('[api] API listening on ${apiUrl}');\nsetTimeout(() => console.log('[web]   ➜  Local:   ${web.url}/'), 2000);\nsetInterval(() => {}, 1000);\n`);
+    await runner.start(app('fullstack', start));
+    expect(await runner.ready('fullstack', `http://localhost:${await closedPort()}`, 20_000)).toBe(`${web.url}/`);
+    expect(runner.get('fullstack').url).toBe(`${web.url}/`);
+    await runner.stop('fullstack');
+  });
+
+  it('prefers the app’s own address, when it answers with a page, to another address it printed without a "Local" line', async () => {
+    const other = await site();
+    const own = await site();
+    cleanups.push(other.close, own.close);
+    const start = script('tool.mjs', `console.log('Tool ready at ${other.url}');\nsetInterval(() => {}, 1000);\n`);
+    await runner.start(app('tool', start));
+    expect(await runner.ready('tool', own.url, 20_000)).toBe(own.url);
+    await runner.stop('tool');
+  });
+
+  it('never settles on a printed address that answers with something that is not a page', async () => {
+    const api = http.createServer((_req, res) => {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => api.listen(0, '127.0.0.1', () => resolve()));
+    cleanups.push(() => api.close());
+    const start = script('apionly.mjs', `console.log('API on http://localhost:${(api.address() as AddressInfo).port}');\nsetInterval(() => {}, 1000);\n`);
+    await runner.start(app('apionly', start));
+    expect(await runner.ready('apionly', null, 5000)).toBeNull();
+    await runner.stop('apionly');
+  });
+
+  it('keeps reading where it listens once it runs: a "Local" line printed later corrects the address', async () => {
+    const first = await site();
+    const later = await site();
+    cleanups.push(first.close, later.close);
+    const moves: string[] = [];
+    const watching = new AppRunner(() => undefined, (_id, url) => moves.push(url));
+    cleanups.push(() => watching.stopAll());
+    const start = script('later.mjs', `console.log('Tool ready at ${first.url}');\nsetTimeout(() => console.log('  ➜  Local:   ${later.url}/'), 5000);\nsetInterval(() => {}, 1000);\n`);
+    await watching.start(app('later', start));
+    expect(await watching.ready('later', null, 20_000)).toBe(first.url);
+    expect(await until(() => watching.get('later').url === `${later.url}/`, 10_000)).toBe(true);
+    expect(moves).toEqual([`${later.url}/`]);
+    await watching.stop('later');
+  });
+
   it('when time is up, tries every address it printed before giving up', async () => {
     const real = await site();
     cleanups.push(real.close);
