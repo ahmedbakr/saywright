@@ -64,6 +64,27 @@ npx @saywright/studio doctor      # in a checkout: npm run doctor
 | “Couldn’t verify” | The test passed, but the run doesn't prove it: the Test tab says why (a step or check that didn't run, a pass only on a retry, a test changed since it failed). |
 | The accessibility checks couldn't run | The page's Content Security Policy blocked them. Pages shown through the studio's proxy don't have that problem. |
 
+## Networks
+
+### A company proxy
+
+AI requests go through the proxy in `HTTPS_PROXY` or `HTTP_PROXY` when the studio is started from a shell where it is set: the command runs itself again once with Node's proxy support on (`NODE_USE_ENV_PROXY=1`), and keeps this computer (`localhost`, `127.0.0.1`, `::1`) out of the proxy, so your app, Ollama and LM Studio are reached directly. It says so in one line when it starts. This needs Node.js 22.21 or newer (or 24.11 or newer): on older ones requests go out directly and fail with “Couldn’t reach …”. Details: [Configuration](configuration.md#behind-a-company-proxy).
+
+| Problem | What to do |
+| --- | --- |
+| “Couldn’t reach …” for every AI provider, behind a proxy | Check that `HTTPS_PROXY` is set in the shell that starts the studio (not only in `.env.local`), that the start line mentions it, and that `node --version` is 22.21 or newer. A proxy that inspects HTTPS with its own certificate also needs `NODE_EXTRA_CA_CERTS=<its certificate file>`. |
+| A model download fails behind a proxy | Downloads fall back to `curl`, which follows `HTTPS_PROXY` itself. Install `curl`, or download them elsewhere and point `SAYWRIGHT_SPEECH_DIR` at them ([Configuration](configuration.md#saywright)). |
+| Your app or Ollama isn't reached since the proxy was set | Something has replaced `NO_PROXY` after the studio started. Start the studio again from your shell. |
+
+### Containers, WSL, Codespaces, a remote machine
+
+The studio listens on `127.0.0.1` only, and answers only requests addressed to `localhost`: it can change your code and run commands, so nothing else on the network may reach it. There is no option to listen elsewhere. Where the studio runs on another machine than your browser, forward its ports to the same ports on your computer, so your browser still opens `http://localhost:7357`: 7357, your app's port (5173, 3000…) and, for apps shown through the studio's proxy, the proxy's ports from 5281.
+
+- **SSH**: `ssh -L 7357:localhost:7357 -L 5173:localhost:5173 -L 5281:localhost:5281 you@machine`, then open `http://localhost:7357` on your computer.
+- **VS Code (Remote SSH, Dev Containers, Codespaces in the desktop app)**: the Ports panel forwards each port to `localhost` on your computer. Codespaces in a web browser gives each port a `github.dev` address instead, which the studio refuses: use the desktop app.
+- **WSL 2**: Windows forwards `localhost` to WSL 2 by default, so `http://localhost:7357` opens in Windows. If it doesn't, turn on `localhostForwarding` (or `networkingMode=mirrored`) in `.wslconfig`.
+- **A container**: run the studio, your app and the browser it tests in the same container, or forward 7357 from it as above. Publishing the port with `-p 7357:7357` doesn't help: the studio listens on the container's `127.0.0.1`.
+
 ## Reporting a problem
 
 Open an [issue](https://github.com/ahmedbakr/saywright/issues) with what you did, what you expected, what happened, and the output of `npx @saywright/studio doctor`. Security problems: see [SECURITY.md](../SECURITY.md) instead.

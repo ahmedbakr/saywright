@@ -12,6 +12,7 @@ import { createServer } from 'vite';
 import { moveOldModels, SHOP_DIR, STUDIO_DIR } from './lib/paths.mjs';
 import { ensurePlugin } from './lib/plugin.mjs';
 import { c } from './lib/term.mjs';
+import { nodeMessage, nodeSupported, withEnvProxy } from '../apps/studio/bin/node-env.mjs';
 
 const args = process.argv.slice(2);
 const has = (name) => args.includes(`--${name}`);
@@ -22,11 +23,13 @@ const value = (name) => {
 };
 
 // The same versions as the package's engines (and bin/saywright.mjs).
-const [major, minor] = process.versions.node.split('.').map(Number);
-if (!((major === 22 && minor >= 18) || (major === 24 && minor >= 11) || major > 24)) {
-  console.error(c.red(`✗ Saywright needs Node.js 22.18 or newer (or 24.11 or newer); this is ${process.versions.node}. Install the current LTS from https://nodejs.org, then run npm install again.`));
+if (!nodeSupported()) {
+  console.error(c.red(`✗ ${nodeMessage()} Install the current LTS from https://nodejs.org, then run npm install again.`));
   process.exit(1);
 }
+// Behind a company proxy: run again once, so AI requests go through it (see apps/studio/bin/node-env.mjs).
+const reran = await withEnvProxy([process.argv[1], ...args]);
+if (reran !== null) process.exit(reran);
 
 // The plugin is built on install; rebuild it if it was cleaned or its sources changed (after a pull).
 if (!ensurePlugin({ log: () => console.log(c.dim('… Building the Saywright Vite plugin')) })) process.exit(1);
@@ -52,6 +55,8 @@ async function waitFor(url, ms) {
 }
 process.on('SIGINT', () => void shutdown(0));
 process.on('SIGTERM', () => void shutdown(0));
+// A closed terminal too: the dev servers the studio started are in process groups of their own.
+process.on('SIGHUP', () => void shutdown(129));
 
 let targetUrl = value('target') ?? process.env.SAYWRIGHT_TARGET_URL;
 if (value('root')) process.env.SAYWRIGHT_TARGET_ROOT = path.resolve(value('root'));

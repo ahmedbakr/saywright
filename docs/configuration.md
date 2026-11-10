@@ -186,7 +186,17 @@ When the studio runs Claude Code, Codex or Gemini CLI for your plan, it leaves t
 | `HOME`, `USERPROFILE` | Where GitHub clones go by default (`~/saywright-apps`). |
 | `E2E_STUDIO_PORT`, `E2E_SHOP_PORT`, `PW_CHROMIUM_PATH` | The end-to-end tests: see [CONTRIBUTING.md](../CONTRIBUTING.md#tests). |
 
-Downloads use Node's `fetch` and fall back to `curl`, which honours `HTTPS_PROXY` and similar proxy settings.
+### Behind a company proxy
+
+| Variable | What it does |
+| --- | --- |
+| `HTTPS_PROXY`, `HTTP_PROXY` (either case) | The proxy that requests to the AI providers go through. |
+| `NO_PROXY` | Addresses reached directly. The studio adds `localhost,127.0.0.1,::1` to it. |
+| `NODE_USE_ENV_PROXY` | Node's own switch for the variables above. When it is set, the studio leaves things as they are. |
+
+Node's `fetch`, which the studio's AI requests use, ignores the proxy variables unless Node is started with `NODE_USE_ENV_PROXY=1`. So when `HTTPS_PROXY` or `HTTP_PROXY` is set and `NODE_USE_ENV_PROXY` isn't, the command that starts the studio (`npx @saywright/studio`, and `npm run dev` in a checkout) runs itself again once with `NODE_USE_ENV_PROXY=1`, and with `localhost,127.0.0.1,::1` added to `NO_PROXY`: the AI providers are reached through the proxy, while your app's dev server, the studio's proxy, Ollama and LM Studio stay direct. One line at the start says so (it names the variable, never its value). Set the variables in your shell: the studio reads `.env.local` too late for this.
+
+This works with Node.js 22.21 and newer, and 24.11 and newer. On Node.js 22.18 to 22.20 the line says the AI requests go out directly: update Node to use the proxy. The other commands (`connect`, `setup`, `doctor`, `mcp`) aren't run again. Downloads (`setup`, Settings → Voice) use Node's `fetch` and fall back to `curl`, which honours `HTTPS_PROXY` and similar settings itself.
 
 ## `.env` and `.env.local`
 
