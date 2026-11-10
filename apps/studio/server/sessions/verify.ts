@@ -34,6 +34,7 @@ function lookFor(issue: SessionIssue): string[] {
   return [key];
 }
 
+const secs = (ms: number) => `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
 const fixed = (why: string, whyAr: string): VerifyResult => ({ verdict: 'fixed', why, whyAr });
 const still = (why: string, whyAr: string): VerifyResult => ({ verdict: 'still', why, whyAr });
 const unknown = (why: string, whyAr: string): VerifyResult => ({ verdict: 'unknown', why, whyAr });
@@ -79,8 +80,26 @@ export function noEffect(original: SessionAnalysis, replay: SessionAnalysis, iss
   return again.filter((s) => s.after?.text === text)[nth] ? null : step;
 }
 
+/**
+ * How long after the step a problem came after it took to show the first time, and how long the replay listened
+ * after the same step (until its next step, or its end). Null when the problem came before any step.
+ */
+export function listened(original: SessionAnalysis, replay: SessionAnalysis, issue: SessionIssue): { lag: number; heard: number } | null {
+  const steps = playable(original);
+  let i = -1;
+  for (let k = 0; k < steps.length && steps[k].t <= issue.t; k++) i = k;
+  if (i < 0) return null;
+  const again = playable(replay);
+  const step = again[i];
+  if (!step) return { lag: issue.t - steps[i].t, heard: 0 };
+  const end = replay.end ?? Math.max(step.t, ...replay.timeline.map((x) => x.t));
+  return { lag: issue.t - steps[i].t, heard: (again[i + 1]?.t ?? end) - step.t };
+}
+
 function verifyIssues(original: SessionAnalysis, replay: SessionAnalysis, outcome: ReplayOutcome): Record<string, VerifyResult> {
   const failed = outcome.steps.failed;
+  // The app's saved data (storage, cookies) wasn't what it was when the session was recorded: a problem that came of it may not come again.
+  const otherData = !!original.startState && !!replay.startState && original.startState !== replay.startState;
   // Nothing arrived from the app: no page, no action. Nothing can be said to be gone.
   const recorded = replay.pages.length > 0 || replay.timeline.length > 0;
   const reachedUntil = failed ? failed.t : Infinity;
@@ -137,6 +156,22 @@ function verifyIssues(original: SessionAnalysis, replay: SessionAnalysis, outcom
     const idle = noEffect(original, replay, o);
     if (idle) {
       out[o.id] = unknown(`The step before it, ${idle.description}, changed nothing on screen in the replay (it did the first time), so it can’t tell.`, `الخطوة التي سبقته، ${idle.descriptionAr ?? idle.description}، لم تغيّر شيئًا على الشاشة في الإعادة (وغيّرت في المرة الأولى)، فتعذّر الحكم.`);
+      continue;
+    }
+    // Not heard as long as it took to show the first time: it may have come after the replay stopped listening.
+    const heard = listened(original, replay, o);
+    if (heard && heard.heard < heard.lag + 500) {
+      out[o.id] = unknown(
+        `It came ${secs(heard.lag)} after its step the first time; the replay listened for ${secs(heard.heard)}, so it can’t tell.`,
+        `ظهر بعد خطوته بـ${secs(heard.lag)} في المرة الأولى، واستمعت الإعادة ${secs(heard.heard)} فقط، فتعذّر الحكم.`,
+      );
+      continue;
+    }
+    if (otherData) {
+      out[o.id] = unknown(
+        'Couldn’t confirm: the app started from different saved data than when you recorded (its storage or cookies), and it didn’t happen in the replay.',
+        'تعذّر التأكيد: بدأ التطبيق من بيانات محفوظة غير التي سجّلت بها (التخزين أو ملفات تعريف الارتباط)، ولم يحدث في الإعادة.',
+      );
       continue;
     }
     out[o.id] = fixed('It didn’t happen in the replay.', 'لم يحدث في الإعادة.');

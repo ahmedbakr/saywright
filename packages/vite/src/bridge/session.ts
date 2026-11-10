@@ -85,6 +85,38 @@ function eventTime(e: Event): number {
   return e.timeStamp > 0 ? performance.timeOrigin + e.timeStamp : now();
 }
 
+/**
+ * A fingerprint of the app's saved data: the keys and values of localStorage and sessionStorage (the studio's own
+ * left out) and the names of its cookies, hashed. Nothing of them is kept, only whether two starts had the same.
+ */
+export function savedState(): string {
+  const parts: string[] = [];
+  const read = (store: Storage | undefined, tag: string) => {
+    try {
+      if (!store) return;
+      for (let i = 0; i < store.length; i++) {
+        const k = store.key(i);
+        if (k && !k.startsWith('saywright')) parts.push(`${tag}${k}=${store.getItem(k) ?? ''}`);
+      }
+    } catch {
+      /* storage blocked */
+    }
+  };
+  read(globalThis.localStorage, 'l:');
+  read(globalThis.sessionStorage, 's:');
+  try {
+    for (const c of document.cookie.split(';')) if (c.trim()) parts.push(`c:${c.split('=')[0].trim()}`);
+  } catch {
+    /* no cookies here */
+  }
+  let h = 0x811c9dc5;
+  for (const ch of parts.sort().join('\n')) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193);
+  }
+  return `${parts.length}:${(h >>> 0).toString(36)}`;
+}
+
 function readJson<T>(key: string): T | null {
   try {
     const raw = sessionStorage.getItem(key);
@@ -315,6 +347,8 @@ export class SessionRecorder {
       lang: navigator.language,
       reload: resumed && nav?.type === 'reload',
       timing: nav && nav.loadEventEnd > 0 ? { ttfb: Math.round(nav.responseStart), dcl: Math.round(nav.domContentLoadedEventEnd), load: Math.round(nav.loadEventEnd) } : undefined,
+      // What the app had saved when the session started: a replay compares its own start with it.
+      ...(resumed ? {} : { state: savedState() }),
     }, now(), true);
     // Events a previous page load couldn't send before it went away (this session's only).
     const pending = readJson<Pending>(PENDING_KEY);
@@ -380,14 +414,34 @@ export class SessionRecorder {
 
   private enrich(target: SessionTarget, el: Element): void {
     try {
-      const loc = el.isConnected ? buildLocator(el, { cheap: true }) : locatorFromInfo(target.role, target.label, target.text, target.tag);
-      target.locator = loc.code;
-      target.description = loc.description;
-      if (loc.within) target.within = loc.within;
+      if (!target.locator) {
+        const loc = el.isConnected ? buildLocator(el, { cheap: true }) : locatorFromInfo(target.role, target.label, target.text, target.tag);
+        target.locator = loc.code;
+        target.description = loc.description;
+        if (loc.within) target.within = loc.within;
+      }
       if (!target.src) target.src = reactSource(this.fibers.get(target) ?? el);
     } catch {
       /* best effort */
     }
+  }
+
+  /**
+   * The locator of what a click or a key acts on, taken now, before the app's handler runs: by idle time the element
+   * may be gone (a row deleted), and what is left of it (“Delete”) would find every row's button. Taken now, it is the
+   * one locator that finds only this one (by its row's own words, else which of the same it is).
+   */
+  private locateNow(target: SessionTarget, el: Element): void {
+    own(() => {
+      try {
+        const loc = buildLocator(el, { cheap: true });
+        target.locator = loc.code;
+        target.description = loc.description;
+        if (loc.within) target.within = loc.within;
+      } catch {
+        /* at idle time, as before */
+      }
+    });
   }
 
   /** What we know about an element right away, without forcing layout beyond its box. */
@@ -508,6 +562,7 @@ export class SessionRecorder {
     const t = eventTime(e);
     const el = this.interactive(e.target);
     const target = this.target(el);
+    this.locateNow(target, el);
     const x = Math.round(e.clientX);
     const y = Math.round(e.clientY);
     this.recordLater({ type: 'click', x, y, button: e.button, pointer: (e as PointerEvent).pointerType || 'mouse', el: target, count: e.detail || 1 }, t, [[target, el]]);
@@ -628,6 +683,7 @@ export class SessionRecorder {
     if (typing && e.key.startsWith('Arrow')) return;
     if (e.key === 'Enter' && el && this.fieldTimers.has(el)) this.flushField(el);
     const target = el && el !== document.body ? this.target(el) : null;
+    if (target && el && (e.key === 'Enter' || e.key === ' ')) this.locateNow(target, el);
     const body: SessionEventBody = { type: 'key', key: shortcut ? e.key.toUpperCase() : e.key, mods, el: target };
     if (target && el) this.recordLater(body, eventTime(e), [[target, el]]);
     else this.record(body, eventTime(e));

@@ -3,8 +3,8 @@
  * session, compared with the first one problem by problem.
  */
 import { describe, expect, it } from 'vitest';
-import { EMPTY_COUNTS, type ReplayOutcome, type ReportFinding, type SessionDetail, type SessionMeta, type SessionReport } from '../../shared/session';
-import { plannedChecks } from '../../src/core/replay';
+import { EMPTY_COUNTS, replayReason, type ReplayOutcome, type ReportFinding, type SessionDetail, type SessionMeta, type SessionReport } from '../../shared/session';
+import { listenAfter, plannedChecks } from '../../src/core/replay';
 import { analyze } from '../../server/sessions/analyze';
 import { localReport } from '../../server/sessions/report';
 import type { StoredEvent } from '../../server/sessions/store';
@@ -247,5 +247,38 @@ describe('a replay calls nothing fixed without evidence the steps did what they 
     const v = verify(before, report, before, outcome({ steps: { total: 2, done: pay, failed: { i: pay, t: before.steps[pay].t, description: before.steps[pay].description, reason: 'disabled' } } }), 'r3');
     expect(v.issues[dead.id]).toMatchObject({ verdict: 'still' });
     expect(v.issues[dead.id].why).toMatch(/still disabled/);
+  });
+});
+
+describe('a replay calls nothing fixed that it couldn’t have seen', () => {
+  const save = el('Save profile', 'src/Profile.tsx:9:5');
+  const late = { seq: ++seq, t: at(4000), page: 'p', type: 'error', kind: 'rejection', message: 'Cannot read properties of undefined (reading map)' };
+  const first = (state?: string, events: object[] = [late]) => analyze({ ...meta('l'), endedAt: T0 + 6000 }, [{ ...page, ...(state ? { state } : {}) }, click(1000, save), ...events] as unknown as StoredEvent[], [], []);
+  const again = (end: number, state?: string) => analyze({ ...meta('r'), endedAt: T0 + end }, [{ ...page, ...(state ? { state } : {}) }, click(1000, save)] as unknown as StoredEvent[], [], []);
+  const verdictOf = (a: ReturnType<typeof first>, r: ReturnType<typeof again>) => Object.values(verify(a, null, r, outcome({ steps: { total: 1, done: 1 } }), 'r').issues)[0];
+
+  it('an error that came 3 s after its step is not fixed when the replay stopped listening 1.2 s after it', () => {
+    const v = verdictOf(first(), again(2200));
+    expect(v.verdict).toBe('unknown');
+    expect(v.why).toBe('It came 3.0 s after its step the first time; the replay listened for 1.2 s, so it can’t tell.');
+    // Listened long enough: gone is gone.
+    expect(verdictOf(first(), again(6000)).verdict).toBe('fixed');
+  });
+
+  it('the replay listens after a step as long as what followed it took the first time, plus a margin, within reason', () => {
+    expect(listenAfter([{ t: 1000 }, { t: 9000 }], [{ t: 4000 }])).toEqual([4500, 0]);
+    expect(listenAfter([{ t: 1000 }], [{ t: 60_000 }])).toEqual([15_000]);
+    expect(listenAfter([{ t: 1000 }], [])).toEqual([0]);
+  });
+
+  it('a problem that didn’t come again when the app started from other saved data is “couldn’t confirm”, not fixed', () => {
+    const v = verdictOf(first('3:abc'), again(6000, '4:def'));
+    expect(v.verdict).toBe('unknown');
+    expect(v.why).toMatch(/^Couldn’t confirm: the app started from different saved data than when you recorded/);
+    expect(verdictOf(first('3:abc'), again(6000, '3:abc')).verdict).toBe('fixed');
+  });
+
+  it('a step that matches several elements now stops the replay, with why', () => {
+    expect(replayReason('ambiguous', 'en')).toBe('it matches several elements now, so the replay didn’t guess which one');
   });
 });

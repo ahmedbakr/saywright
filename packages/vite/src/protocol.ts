@@ -181,7 +181,12 @@ export interface SessionTarget {
  * and the microphone line up; `seq` counts events within one page load (`page`).
  */
 export type SessionEventBody =
-  | { type: 'page'; url: string; title: string; referrer: string; viewport: [number, number, number]; ua: string; lang: string; reload: boolean; timing?: { ttfb: number; dcl: number; load: number } }
+  /**
+   * `state`: at the start of a session (not a page load during it), a fingerprint of the app's saved data (the keys
+   * and values of localStorage and sessionStorage, the names of its cookies, hashed: none of them is kept), so a
+   * replay can tell whether it started from the same data.
+   */
+  | { type: 'page'; url: string; title: string; referrer: string; viewport: [number, number, number]; ua: string; lang: string; reload: boolean; timing?: { ttfb: number; dcl: number; load: number }; state?: string }
   /** `disabled`: the press landed on a disabled control, which ignores it. */
   | { type: 'click'; x: number; y: number; button: number; pointer: string; el: SessionTarget; count: number; disabled?: boolean }
   /** `masked`: a secret (`value` is a dot per character); `secret`: the name a test would read it under (PASSWORD). */

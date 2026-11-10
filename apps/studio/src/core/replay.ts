@@ -146,6 +146,22 @@ function targetsOf(items: { kind: string; t: number; issue?: string }[], a: Sess
   return out;
 }
 
+/** The longest a replay waits after a step for what came of it the first time. */
+const MAX_LISTEN_MS = 15_000;
+
+/**
+ * How long to listen after each step (and after the last, at `steps.length`): as long as the problems that followed
+ * it the first time took to show, plus a margin, within reason. An error that came 3 s after a click is still on its
+ * way 1.2 s after it in the replay: stopping there would call it fixed.
+ */
+export function listenAfter(steps: { t: number }[], issues: { t: number }[]): number[] {
+  return steps.map((s, i) => {
+    const end = steps[i + 1]?.t ?? Infinity;
+    const lag = Math.max(0, ...issues.filter((g) => g.t >= s.t && g.t < end).map((g) => g.t - s.t));
+    return lag ? Math.min(MAX_LISTEN_MS, lag + 1500) : 0;
+  });
+}
+
 export class Replayer {
   running: string | null = null;
   private stopped = false;
@@ -205,6 +221,7 @@ export class Replayer {
     this.stopped = false;
     const steps = a.steps.filter((s): s is SessionStep & { locator: string } => s.kind !== 'navigate' && !!s.locator);
     const plan = plannedChecks(d).sort((x, y) => x.t - y.t);
+    const listen = listenAfter(steps, a.issues);
     const checks: ReplayCheck[] = [];
     const view: ReplayView = { id: d.meta.id, name: d.meta.name, phase: 'starting', step: 0, total: steps.length, description: 'Opening the page the session started on', target: null };
     this.host.show({ ...view });
@@ -282,15 +299,16 @@ export class Replayer {
         view.target = null;
         this.host.show({ ...view });
         // As long as the tester waited before the next step (within reason): the app's response arrives meanwhile.
+        // And at least as long as what came of it took to show the first time.
         const gap = steps[i + 1] ? steps[i + 1].t - s.t : 1200;
-        await sleep(Math.max(500, Math.min(1800, gap)));
+        await sleep(Math.max(500, Math.min(1800, gap), steps[i + 1] ? listen[i] : 0));
       }
       if (!failed) await checkUpTo(Infinity);
       Object.assign(view, { phase: 'finishing', description: 'Comparing with the session', target: null });
       this.host.show({ ...view });
       this.host.point(null, false);
-      // Errors and requests that come a moment after the last step.
-      await sleep(1200);
+      // Errors and requests that come after the last step: as long as they took the first time.
+      await sleep(Math.max(1200, failed ? 0 : (listen[steps.length - 1] ?? 0)));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Where it stopped: what comes after can't be judged.

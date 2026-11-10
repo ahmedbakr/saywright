@@ -84,6 +84,11 @@ export function Verification({
           </>
         )}
       </p>
+      {v.steps.done > 0 && (
+        <p className="mt-1 text-[12px] text-fg-3" data-verify-changed>
+          {t.replayChanged}
+        </p>
+      )}
       {v.fresh.length > 0 && (
         <div className="mt-3 rounded-[10px] bg-warn-soft px-3 py-2" data-verify-fresh>
           <div className="mb-1 flex items-center gap-1.5 text-[12px] font-semibold text-warn">

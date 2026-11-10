@@ -273,13 +273,18 @@ function elementsFor(calls: Call[], like?: Like): Element[] | null {
   return set;
 }
 
-/** The element a recorded locator points at now: the first visible match. */
+/**
+ * The element a recorded locator points at now: its only visible match. When it matches several (every row's
+ * “Delete”), the replay doesn't guess which, as Playwright wouldn't: acting on the first could change another record.
+ */
 export function find(code: string, like?: Like): { el: Element | null; reason?: string } {
   const calls = parseLocator(code);
   if (!calls) return { el: null, reason: 'unreadable' };
   const all = elementsFor(calls, like);
   if (!all) return { el: null, reason: 'unreadable' };
-  const el = all.find(isVisible) ?? null;
+  const shown = all.filter(isVisible);
+  if (shown.length > 1) return { el: null, reason: 'ambiguous' };
+  const el = shown[0] ?? null;
   return el ? { el } : { el: null, reason: all.length ? 'hidden' : 'missing' };
 }
 

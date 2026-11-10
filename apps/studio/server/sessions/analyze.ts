@@ -284,6 +284,7 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
     }
   }
   if (pages.length) pages[pages.length - 1].ms = end - pages[pages.length - 1].t;
+  const startState = (events.find((e) => e.type === 'page' && !!(e as { state?: string }).state) as { state?: string } | undefined)?.state;
 
   // ---- grouping helpers ----
   const groups = new Map<string, SessionIssue>();
@@ -737,6 +738,8 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
     transcript: linked,
     shots,
     ...(screens.length ? { screens } : {}),
+    ...(startState ? { startState } : {}),
+    end,
     files: Array.from(fileRefs.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 15)

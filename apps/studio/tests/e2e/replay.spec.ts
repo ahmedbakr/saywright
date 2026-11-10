@@ -243,3 +243,31 @@ test('an element found by its place in the code is found again after a fix moves
   const found = await replay({ tag: before.tag, name: before.name, text: before.text });
   expect(found).toMatchObject({ ok: true, text: 'Free returns within 30 days' });
 });
+
+test('a row’s button is recorded by its row before the click removes it, and a step that matches several is not guessed', async ({ page }) => {
+  await openStudio(page);
+  const frame = page.frames().find((f) => f.url().startsWith(SHOP_URL))!;
+  await page.getByRole('button', { name: 'Record session', exact: true }).click();
+  await page.getByPlaceholder('What are you testing? (optional)').fill('Delete a row');
+  await page.getByRole('button', { name: 'Start recording' }).click();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  // Every row has a “Delete” button; deleting a row removes it at once.
+  await frame.evaluate(() => {
+    const list = document.createElement('ul');
+    list.id = 'rows';
+    list.innerHTML = ['Alpha', 'Beta', 'Gamma'].map((n) => `<li><span>${n}</span> <button>Delete</button></li>`).join('');
+    document.body.prepend(list);
+    list.addEventListener('click', (e) => (e.target as Element).closest('li')?.remove());
+  });
+  await frame.locator('#rows li', { hasText: 'Beta' }).getByRole('button', { name: 'Delete' }).click();
+  await expect(frame.locator('#rows li')).toHaveCount(2);
+  await page.waitForTimeout(800);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  const id = await sessionNamed('Delete a row');
+  const steps = ((await (await fetch(`${STUDIO}/api/sessions/${id}`)).json()) as { analysis: { steps: { kind: string; locator?: string }[] } }).analysis.steps;
+  expect(steps.find((s) => s.kind === 'click')?.locator).toContain('Beta');
+  // The same “Delete” on every row: the replay doesn't press the first one.
+  const replay = (loc: string) => page.evaluate((l) => (window as unknown as { __saywright: { bridge: { replay: (...a: unknown[]) => Promise<{ ok: boolean; error?: string }> } } }).__saywright.bridge.replay(l, { kind: 'click' }), loc);
+  expect(await replay("page.getByRole('button', { name: 'Delete' })")).toMatchObject({ ok: false, error: 'ambiguous' });
+  await expect(frame.locator('#rows li')).toHaveCount(2);
+});

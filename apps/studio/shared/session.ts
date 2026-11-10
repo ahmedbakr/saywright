@@ -254,6 +254,10 @@ export interface SessionAnalysis {
   screens?: ScreenText[];
   /** Source files the session touched, most referenced first. */
   files: { path: string; refs: number }[];
+  /** When the session ended, on the clock of the events' `t` (how long a replay listened after its last step). */
+  end?: number;
+  /** A fingerprint of the app's saved data when the session started (never the data itself): see the page event's `state`. */
+  startState?: string;
   /**
    * What a long, noisy session left out to stay readable: problems past the first 200 of a kind (counted here by
    * kind), and moments not listed in the timeline (repeats of a problem past its evidence, routine actions).
@@ -386,6 +390,7 @@ const REPLAY_REASONS: Record<string, { en: string; ar: string }> = {
   stopped: { en: 'you stopped it', ar: 'أوقفتَها أنت' },
   timeout: { en: 'the app didn’t answer', ar: 'لم يستجب التطبيق' },
   disconnected: { en: 'the app wasn’t connected', ar: 'لم يكن التطبيق متصلًا' },
+  ambiguous: { en: 'it matches several elements now, so the replay didn’t guess which one', ar: 'يطابق الآن عدة عناصر، فلم تخمّن الإعادة أيّها' },
 };
 
 export const replayReason = (code: string, lang: 'en' | 'ar'): string => REPLAY_REASONS[code]?.[lang] ?? code;
