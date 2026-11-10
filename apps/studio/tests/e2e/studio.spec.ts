@@ -533,7 +533,11 @@ test('command palette, modes and theme', async ({ page }) => {
 });
 
 test('voice settings offer the missing on-device model’s download, and this install’s command', async ({ page }) => {
-  await page.route('**/models/moonshine/tiny/encoder_model.onnx', (r) => r.fulfill({ status: 404 }));
+  // The studio is asked whether the model is there (never the file itself: a 404 would be in the console on every load).
+  const requests: string[] = [];
+  page.on('request', (r) => void requests.push(new URL(r.url()).pathname));
+  let downloaded = false;
+  await page.route('**/api/voice-model', (r) => (r.request().method() === 'POST' ? ((downloaded = true), r.fulfill({ json: { ready: true, mb: 28, setup: 'npm run setup' } })) : downloaded ? r.fallback() : r.fulfill({ json: { ready: false, mb: 28, setup: 'npm run setup' } })));
   await openStudio(page, { onboarded: true, theme: 'dark', voice: { engine: 'auto' } });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
@@ -541,9 +545,8 @@ test('voice settings offer the missing on-device model’s download, and this in
   await expect(missing).toContainText('Download the voice model (28 MB)', { timeout: 20_000 });
   // Run from this repository: its own setup script (an npm install says npx @saywright/studio setup).
   await expect(missing).toContainText('or run npm run setup');
+  expect(requests.filter((p) => p.startsWith('/models/'))).toEqual([]);
   // The download itself is the server's (stood in for here); then the model loads.
-  await page.unroute('**/models/moonshine/tiny/encoder_model.onnx');
-  await page.route('**/api/voice-model', (r) => (r.request().method() === 'POST' ? r.fulfill({ json: { ready: true, mb: 28, setup: 'npm run setup' } }) : r.fallback()));
   await missing.getByRole('button', { name: /Download the voice model/ }).click();
   await expect(page.locator('[data-model="ready"]')).toBeVisible({ timeout: 30_000 });
 });

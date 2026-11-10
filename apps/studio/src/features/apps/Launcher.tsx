@@ -47,9 +47,10 @@ export const FRAMEWORK_LABEL: Record<string, string> = {
 export function AppIcon({ app, className }: { app: Pick<LinkedApp, 'name' | 'icon'>; className?: string }) {
   const [broken, setBroken] = useState(false);
   if (app.icon && !broken) return <img src={app.icon} alt="" onError={() => setBroken(true)} className={cn('size-9 shrink-0 rounded-[9px] bg-white object-contain p-1 ring-1 ring-inset ring-line', className)} />;
+  // The first letter or digit of each word: “Tidewell (sample shop)” is TS, not T(.
   const letters = app.name
     .split(/[\s_-]+/)
-    .map((w) => w[0])
+    .map((w) => /[\p{L}\p{N}]/u.exec(w)?.[0] ?? '')
     .join('')
     .slice(0, 2)
     .toUpperCase();
@@ -277,7 +278,7 @@ function AppCard({ app, current, first }: { app: LinkedApp; current: boolean; fi
         </div>
       )}
       <div className="mt-auto flex items-center gap-2 pt-4">
-        <span className="text-[11.5px] text-fg-3">{current ? 'Open now' : `Opened ${ago(app.openedAt)}`}</span>
+        <span className="text-[11.5px] text-fg-3">{current ? 'Open now' : app.openedAt > app.createdAt ? `Opened ${ago(app.openedAt)}` : `Linked ${ago(app.createdAt)}`}</span>
         <Button
           className="ms-auto"
           variant={current && !stopped ? 'secondary' : 'primary'}

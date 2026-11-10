@@ -99,9 +99,9 @@ class AsrClient {
     this.setState('loading');
     let reason = '';
     try {
-      const head = await fetch(`${MODEL_BASE}/encoder_model.onnx`, { method: 'HEAD' });
-      // A dev server answers a missing file with its page (200, text/html): that isn't the model either.
-      if (!head.ok || /text\/html/.test(head.headers.get('content-type') ?? '')) throw new Error(NOT_DOWNLOADED);
+      // Asked of the studio, not of the file: a missing file would be a 404 the browser writes in the console on every load.
+      const model = (await fetch('/api/voice-model').then((r) => (r.ok ? r.json() : null))) as { ready?: boolean } | null;
+      if (!model?.ready) throw new Error(NOT_DOWNLOADED);
       const worker = new Worker(new URL('./asr.worker.ts', import.meta.url), { type: 'module' });
       this.worker = worker;
       const ok = await new Promise<boolean>((resolve) => {
