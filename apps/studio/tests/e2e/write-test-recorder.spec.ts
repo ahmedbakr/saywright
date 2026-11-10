@@ -181,7 +181,8 @@ test('a click in a page’s first moments is a step', async ({ page }) => {
     await writeTestOnAccount(page);
     const app = page.frameLocator('iframe');
     await app.locator('body').evaluate(() => (location.href = '/quick.html'));
-    // As soon as the button is there: the page is a few milliseconds old.
+    // As soon as the studio has seen the new page (which turns its recording on): the page is a few milliseconds old.
+    await expect.poll(() => store<string>(page, 's.app.url'), { intervals: [20] }).toContain('/quick.html');
     await app.getByRole('button', { name: 'Go now' }).click();
     await expect.poll(async () => (await steps(page)).filter((s) => s.kind === 'click').map((s) => s.description)).toEqual(['Click the “Go now” button']);
   } finally {
