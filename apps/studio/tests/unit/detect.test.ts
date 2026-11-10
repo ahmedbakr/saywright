@@ -100,6 +100,13 @@ describe('how a folder’s pages reach the studio', () => {
     });
     expect(probeFolder(tagged)).toMatchObject({ connection: 'script' });
     expect(probeFolder(tagged).notes.join(' ')).toMatch(/without the proxy/);
+    // The studio the tag names, by either of this computer's names: as it is.
+    expect(probeFolder(tagged, 'http://127.0.0.1:7357').notes.join(' ')).toMatch(/without the proxy/);
+    // A tag written for a studio at another address says so before the app is linked, with what to do.
+    const elsewhere = probeFolder(tagged, 'http://localhost:7400').notes.join(' ');
+    expect(elsewhere).toMatch(/loads the studio from http:\/\/localhost:7357, not from this one \(http:\/\/localhost:7400\)/);
+    expect(elsewhere).toMatch(/connect/);
+    expect(elsewhere).not.toMatch(/without the proxy/);
     const plain = tree({ 'package.json': { name: 'plain', scripts: { dev: 'next dev' }, dependencies: { next: '15.0.0' } }, 'app/layout.tsx': 'export default function Root({ children }) { return <html><body>{children}</body></html>; }\n' });
     expect(probeFolder(plain)).toMatchObject({ connection: 'proxy' });
   });

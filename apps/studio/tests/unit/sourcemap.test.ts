@@ -5,6 +5,7 @@
  */
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -63,6 +64,22 @@ describe('source maps are followed only at the app’s own address', () => {
     expect(await new SourceMapper(new Project(root, `http://localhost:${app.port}`)).map(`${app.url}/src/App.tsx:2:1`)).toBe('src/App.tsx:2:1');
   });
 
+  it('follows them at an app on this computer served over https with its own development certificate', async () => {
+    const tls = path.join(import.meta.dirname, '../fixtures/tls');
+    const server = https.createServer({ cert: fs.readFileSync(path.join(tls, 'localhost-cert.pem')), key: fs.readFileSync(path.join(tls, 'localhost-key.pem')) }, (req, res) => {
+      res.statusCode = req.url === '/src/App.tsx' ? 200 : 404;
+      res.end(req.url === '/src/App.tsx' ? inline('App.tsx') : 'Not found');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    try {
+      const at = `https://localhost:${(server.address() as AddressInfo).port}`;
+      expect(await new SourceMapper(new Project(root, at)).map(`${at}/src/App.tsx:2:1`)).toBe('src/App.tsx:2:1');
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it('asks nothing of any other server, whatever the page says its code is at', async () => {
     const mapper = new SourceMapper(new Project(root, app.url));
     other.asked.length = 0;
@@ -93,6 +110,13 @@ describe('source maps are followed only at the app’s own address', () => {
 describe('source maps are read only in the app’s folder', () => {
   it('maps a built file of the app through the map beside it', async () => {
     expect(await new SourceMapper(new Project(root, app.url)).map(`${path.join(root, 'dist/chunk.js')}:2:1`)).toBe('src/App.tsx:2:1');
+  });
+
+  it('reads a chunk named with a count, or with the module it was built for (Turbopack’s server components)', async () => {
+    const mapper = new SourceMapper(new Project(root, app.url));
+    const chunk = path.join(root, 'dist/chunk.js');
+    expect(await mapper.map(`${chunk}?7:2:1`)).toBe('src/App.tsx:2:1');
+    expect(await mapper.map(`${chunk}?id=%5Bproject%5D/app/layout.tsx+%5Bapp-rsc%5D+(ecmascript)?0:3:1`)).toBe('src/App.tsx:3:1');
   });
 
   it('reads no file elsewhere on the disk, by its path, a file:// address or a link from inside the app', async () => {

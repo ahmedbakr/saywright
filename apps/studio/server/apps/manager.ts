@@ -292,6 +292,11 @@ export class AppManager {
     }
   }
 
+  /** Where this studio is served. */
+  studioAt(): string {
+    return this.deps.studio();
+  }
+
   /**
    * Whether the app's script tag loads the studio's script from another address than this studio's; its notes then
    * say so, and what to do. Read in its folder, or in its page for an app linked by its address.

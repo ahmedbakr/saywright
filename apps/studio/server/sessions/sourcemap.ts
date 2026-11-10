@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isInside, workspaceRoot } from '../../../../packages/vite/src/workspace.ts';
+import { appFetch } from '../apps/local-tls.ts';
 import { inProject } from '../locate.ts';
 import type { Project } from '../project.ts';
 
@@ -177,7 +178,8 @@ export class SourceMapper {
       if (!this.own(where)) return null;
       try {
         // A dev server doesn't send its own code elsewhere: a redirect isn't followed (it could lead anywhere).
-        const res = await fetch(where, { signal: AbortSignal.timeout(4000), redirect: 'manual' });
+        // (An app on this computer served over https is asked with its own development certificate.)
+        const res = await appFetch(where, { signal: AbortSignal.timeout(4000), redirect: 'manual' });
         if (!res.ok || Number(res.headers.get('content-length') ?? 0) > MAX_BYTES || !res.body) return null;
         const parts: Buffer[] = [];
         let size = 0;
@@ -241,8 +243,9 @@ export class SourceMapper {
     if (!m) return null;
     let where = m[1];
     if (where.startsWith('file://')) where = decodeURIComponent(where.slice(7));
-    // Bundlers add cache-busting queries to file paths ("chunk._.js?7").
-    if (!/^https?:\/\//.test(where)) where = where.replace(/\?[^/]*$/, '');
+    // Bundlers add queries to file paths: a cache-busting count ("chunk._.js?7"), or the module a chunk was built
+    // for, which has slashes of its own (Turbopack: "chunk._.js?id=[project]/app/layout.tsx+[app-rsc]+(ecmascript)?0").
+    if (!/^https?:\/\//.test(where)) where = where.replace(/(\.[cm]?js)\?.*$/s, '$1').replace(/\?[^/]*$/, '');
     // Relative paths from the browser are relative to the project (Vite serves files at their path).
     if (!/^https?:\/\//.test(where) && !path.isAbsolute(where)) where = path.join(this.project.root, where);
     if (/^https?:\/\//.test(where) ? this.own(where) : this.mine(where)) {

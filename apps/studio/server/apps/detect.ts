@@ -385,7 +385,7 @@ export function htmlTitle(dir: string): string | null {
   }
 }
 
-export function probeFolder(input: string): AppProbe {
+export function probeFolder(input: string, studio?: string): AppProbe {
   const root = path.resolve(input.replace(/^~(?=$|\/)/, os.homedir()));
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`No folder at ${root}`);
   const pkg = readPkg(root);
@@ -395,6 +395,8 @@ export function probeFolder(input: string): AppProbe {
   const { start, port, guessed } = devCommandOf(root, pkg, runs, framework);
   const plugin = hasPlugin(root);
   const script = !plugin && hasScriptTag(root);
+  // A tag written for a studio at another address (another port, a teammate's): its pages would wait for that one.
+  const elsewhere = script && studio ? otherStudio(scriptTagIn(root)?.studios ?? [], studio) : null;
   const canAddPlugin = VITE_BASED.has(framework) && !plugin && !!declaredDeps(root).react;
   const candidates = pkg ? workspaceApps(root, pkg) : undefined;
   if (!pkg && framework === 'static') notes.push('No package.json: the studio serves this folder as a static site.');
@@ -403,6 +405,7 @@ export function probeFolder(input: string): AppProbe {
   if (pkg && !start && framework !== 'static' && framework !== 'php') notes.push('No dev, start or serve script: start the app yourself and give its address.');
   if (candidates?.length && !start) notes.push(`A monorepo with ${candidates.length} app${candidates.length === 1 ? '' : 's'}: pick one.`);
   if (canAddPlugin) notes.push('A Vite + React app: adding the Saywright plugin maps every element to its exact line of code.');
+  else if (elsewhere) notes.push(`Its script tag loads the studio from ${elsewhere}, not from this one (${studio}): it is shown through the studio’s proxy. Run “npx @saywright/studio connect” in its folder to point the tag here.`);
   else if (script) notes.push('Its pages load the studio’s script: shown as it is, without the proxy.');
   else if (!plugin && pkg) notes.push('Shown through the studio’s proxy: no change to your code needed.');
   if (start && pmNote) notes.push(pmNote);

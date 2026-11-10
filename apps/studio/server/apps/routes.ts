@@ -51,7 +51,7 @@ export function appRoutes(router: Router, deps: AppRouteDeps): void {
     const body = (req.body ?? {}) as { folder?: unknown; url?: unknown };
     const folder = str(body.folder, 1000);
     const url = str(body.url, 1000);
-    if (folder) return { probe: wrap(() => probeFolder(folder)) };
+    if (folder) return { probe: wrap(() => probeFolder(folder, apps.studioAt())) };
     if (url) return { probe: await wrapAsync(() => probeUrl(url)) };
     throw new HttpError(400, 'Give a folder or a URL');
   });
