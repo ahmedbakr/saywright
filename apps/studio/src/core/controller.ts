@@ -1142,7 +1142,8 @@ class Controller {
       return void this.keep('key');
     }
     if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-      if (previews(s).length) {
+      // With nothing waiting, the last change kept can still be undone: undo() offers it.
+      if (previews(s).length || s.changes.find((c) => c.status !== 'undone')?.undoable) {
         e.preventDefault();
         void this.undo('key');
       }
@@ -1513,7 +1514,24 @@ class Controller {
 
   /** Undo the newest preview, or (from the Changes tab) one change with the newer ones built on it. */
   async undo(via: string, force = false, id?: string): Promise<void> {
-    if (!id && !previews(get()).length) return this.notify('Nothing to undo.', 'info');
+    if (!id && !previews(get()).length) {
+      // Nothing waits, but the last change was kept and can still be undone: offered, never done unasked.
+      const last = get().changes.find((c) => c.status !== 'undone');
+      if (last?.status !== 'kept' || !last.undoable) return this.notify('Nothing to undo.', 'info');
+      set({
+        island: {
+          kind: 'message',
+          tone: 'info',
+          text: `Nothing is waiting. Undo the last change you kept (“${last.title}”)?`,
+          sticky: true,
+          actions: [
+            { label: 'Undo it', primary: true, run: () => (set({ island: { kind: 'idle' } }), void this.undo(via, false, last.id)) },
+            { label: 'Leave it', run: () => set({ island: { kind: 'idle' } }) },
+          ],
+        },
+      });
+      return;
+    }
     try {
       const r = await api.post<{ undone: Change[] }>('/changes/undo', { id, via, force });
       play('undo');

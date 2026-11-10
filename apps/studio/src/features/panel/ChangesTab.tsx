@@ -37,7 +37,7 @@ export function ChangesTab() {
       <AnimatePresence initial={false}>
         {changes.map((c) => (
           <motion.div key={c.id} layout initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}>
-            <ChangeCard change={c} defaultOpen={c.status === 'preview' && c.id === pending[0]?.id} newer={c.status === 'preview' ? pending.filter((p) => p.createdAt > c.createdAt) : []} />
+            <ChangeCard change={c} defaultOpen={c.status === 'preview' && c.id === pending[0]?.id} newer={c.status !== 'undone' ? pending.filter((p) => p.id !== c.id && p.createdAt >= c.createdAt) : []} />
           </motion.div>
         ))}
       </AnimatePresence>
@@ -45,12 +45,17 @@ export function ChangesTab() {
   );
 }
 
-/** `newer`: previews made after this one. Undoing it undoes them too (they may build on it), so that is asked first. */
+/**
+ * `newer`: previews made after this one. Undoing it undoes them too (they may build on it), so that is asked first. A
+ * kept change can be undone too while the studio still has its earlier code (`undoable`): the most recent ones.
+ */
 function ChangeCard({ change: c, defaultOpen, newer }: { change: Change; defaultOpen: boolean; newer: Change[] }) {
   const [open, setOpen] = useState(defaultOpen);
   const [confirming, setConfirming] = useState(false);
   const added = c.files.reduce((n, f) => n + f.added, 0);
   const removed = c.files.reduce((n, f) => n + f.removed, 0);
+  const undoable = c.status === 'preview' || (c.status === 'kept' && !!c.undoable);
+  const saved = c.status === 'kept' && c.files.length === 1 ? `Saved in ${fileName(c.files[0].path)}.` : '';
   return (
     <div className={cn('rounded-[10px] bg-raised ring-1 ring-inset', c.status === 'preview' ? 'ring-ai-line/40' : 'ring-line')} data-change={c.id}>
       <button onClick={() => setOpen(!open)} className="flex w-full items-start gap-2.5 px-3 pb-2 pt-2.5 text-left">
@@ -95,7 +100,7 @@ function ChangeCard({ change: c, defaultOpen, newer }: { change: Change; default
                   <DiffView file={f} />
                 </div>
               ))}
-              {c.status === 'preview' && confirming && (
+              {undoable && confirming && (
                 <div className="rounded-[8px] bg-warn-soft px-2.5 py-2 text-[12px] leading-relaxed text-fg-2 ring-1 ring-inset ring-warn/25" data-undo-newer>
                   Undoing this also undoes {newer.length === 1 ? 'the preview' : `the ${newer.length} previews`} made after it, which may build on it: {newer.map((n) => `“${n.title}”`).join(', ')}.
                   <div className="mt-1.5 flex justify-end gap-1">
@@ -108,17 +113,24 @@ function ChangeCard({ change: c, defaultOpen, newer }: { change: Change; default
                   </div>
                 </div>
               )}
-              {c.status === 'preview' && !confirming && (
-                <div className="flex justify-end gap-1 pt-1">
+              {undoable && !confirming && (
+                <div className="flex items-center justify-end gap-1 pt-1">
+                  {saved && <span className="mr-auto text-[11.5px] text-fg-3">{saved}</span>}
                   <Button size="sm" variant="ghost" icon={<Undo2 />} onClick={() => (newer.length ? setConfirming(true) : void controller.undoChange(c.id))} title={newer.length ? `Also undoes ${newer.length === 1 ? 'the preview' : `the ${newer.length} previews`} made after it` : undefined}>
                     {newer.length ? `Undo (and ${newer.length} newer)` : 'Undo'}
                   </Button>
-                  <Button size="sm" variant="primary" icon={<Check />} onClick={() => void controller.keepChange(c.id)}>
-                    Keep
-                  </Button>
+                  {c.status === 'preview' && (
+                    <Button size="sm" variant="primary" icon={<Check />} onClick={() => void controller.keepChange(c.id)}>
+                      Keep
+                    </Button>
+                  )}
                 </div>
               )}
-              {c.status === 'kept' && c.files.length === 1 && <div className="text-[11.5px] text-fg-3">Saved in {fileName(c.files[0].path)}.</div>}
+              {c.status === 'kept' && !undoable && (
+                <div className="text-[11.5px] text-fg-3" data-not-undoable>
+                  {saved && `${saved} `}It can no longer be undone here (the studio keeps what Undo needs for your most recent kept changes only): undo it in your editor or with git.
+                </div>
+              )}
             </div>
           </motion.div>
         )}

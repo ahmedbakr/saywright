@@ -247,6 +247,40 @@ test('the Changes tab keeps and undoes like the rest of the studio: a file edite
   expect(await store<string>(page, 's.changes[0].status')).toBe('kept');
 });
 
+test('a change just kept can still be undone: from its card, and when “undo” finds nothing waiting', async ({ page }) => {
+  await openStudio(page, { onboarded: true, theme: 'dark', ui: { panelOpen: true, panelTab: 'changes', device: 'fill', commitOnKeep: false } });
+  const file = 'src/components/CouponField.tsx';
+  const before = shopFile(file);
+  const apply = await appPoint(page, 'coupon-apply');
+  await page.mouse.click(apply.x, apply.y);
+  const bar = page.getByRole('textbox', { name: 'Describe a change' });
+  await bar.fill('rename to Use code');
+  await bar.press('Enter');
+  await expectIsland(page, /Rename/);
+  await page.locator('[data-change]').first().getByRole('button', { name: 'Keep' }).click();
+  await expectIsland(page, /Kept/);
+  // Typed “undo” with nothing waiting offers the change just kept, and does it only when asked.
+  await bar.fill('undo');
+  await bar.press('Enter');
+  await expectIsland(page, /Nothing is waiting\. Undo the last change you kept \(“Rename/);
+  expect(shopFile(file)).not.toBe(before);
+  await page.locator('[data-island]').getByRole('button', { name: 'Undo it' }).click();
+  await expectIsland(page, /Undone/);
+  expect(shopFile(file)).toBe(before);
+
+  // A kept change's card has its own Undo.
+  await bar.fill('make it bigger');
+  await bar.press('Enter');
+  await expectIsland(page, /size sm → md/);
+  const card = page.locator('[data-change]').first();
+  await card.getByRole('button', { name: 'Keep' }).click();
+  await expectIsland(page, /Kept/);
+  await expect(card).toContainText('Kept');
+  await card.getByRole('button', { name: 'Undo' }).click();
+  await expectIsland(page, /Undone/);
+  expect(shopFile(file)).toBe(before);
+});
+
 test('undoing an older preview in the Changes tab says which newer ones go with it, and asks first', async ({ page }) => {
   await openStudio(page, { onboarded: true, theme: 'dark', ui: { panelOpen: true, panelTab: 'changes', device: 'fill', commitOnKeep: false } });
   const before = shopFile('src/components/CouponField.tsx');

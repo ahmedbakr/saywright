@@ -29,6 +29,8 @@ Every change is a **preview**. It is already in your code and in your running ap
 
 Previews stack: “bigger”, then “and red”, then “keep it” keeps both; undo removes the newest first. If a file was edited elsewhere after the preview, undo refuses rather than lose that work. Previews survive a restart of the studio: they come back still waiting for keep or undo.
 
+A change you kept can still be undone while the studio runs: its card in the **Changes** tab has an **Undo** button, and “undo” (or <kbd>Ctrl</kbd>+<kbd>Z</kbd>) with nothing waiting offers to undo the last change you kept. The studio keeps what Undo needs for your most recent kept changes only (the last 20, within a size limit); an older one says on its card that it can no longer be undone here, so undo it in your editor or with git.
+
 Nothing is committed unless you turn on **Settings → General → Commit when you keep a change** (in a git repository): each kept change then becomes a commit with what you said, holding only that change's files. When one of those files also has changes of yours that aren't committed (staged or not), or the repository is one above the app that doesn't track its folder (a home folder kept in git), the change is kept and not committed, and the studio says why. When git refuses the commit (a hook, no identity), what was staged for it is unstaged again and git's reason is shown.
 
 ## Modes: Edit, Use, Write test
@@ -149,7 +151,7 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 
 | Tab | What it has |
 | --- | --- |
-| **Changes** | Every preview and decision, with what you said and a word-level diff. Keep or undo any of them. |
+| **Changes** | Every preview and decision, with what you said and a word-level diff. Keep or undo any preview, and undo a recently kept change. |
 | **Inspect** | The selected element: its component, file and line, props and source. Click a design-system value to preview it. |
 | **Test** | Write test: the recorded steps and checks, the generated Playwright test and its result. |
 | **Experts** | Page reviews for SEO, content, UI/UX and accessibility ([Experts](experts.md)). |
@@ -170,7 +172,7 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 | --- | --- |
 | <kbd>Space</kbd> (hold) | Talk; let go to send. Tap it for hands-free (sends when you pause). |
 | <kbd>Enter</kbd> | Keep the preview |
-| <kbd>Ctrl</kbd>+<kbd>Z</kbd> (<kbd>⌘</kbd>+<kbd>Z</kbd>) | Undo the preview |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> (<kbd>⌘</kbd>+<kbd>Z</kbd>) | Undo the preview (with none waiting: offers to undo the last kept change) |
 | <kbd>Esc</kbd> | Close what is on top; with nothing open, stop, then clear the selection |
 | <kbd>/</kbd> | Type a request (while the keyboard is in the studio: after you click or type in your app, click the command bar instead) |
 | <kbd>1</kbd> to <kbd>4</kbd> | Run a suggestion shown above the command bar |
