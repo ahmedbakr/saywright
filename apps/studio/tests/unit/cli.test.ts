@@ -256,7 +256,8 @@ describe('connect', () => {
   it('says itself that a script tag in a page built for production must be removed before you deploy', async () => {
     const dir = app({ 'public/index.html': '<!doctype html>\n<html>\n  <head>\n    <title>CRA</title>\n  </head>\n</html>\n' }, { 'react-scripts': '5' });
     expect(await main(['connect', dir], ctx)).toBe(0);
-    expect(out.join('\n')).toMatch(/Added the Saywright script: public\/index\.html/);
+    // (The file is named as this computer writes paths.)
+    expect(out.join('\n')).toMatch(/Added the Saywright script: public[\\/]index\.html/);
     expect(out.join('\n')).toMatch(/remove it before you deploy/i);
   });
 

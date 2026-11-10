@@ -111,8 +111,11 @@ describe('the command line', () => {
   });
 
   it('shortens the data folder to ~ only under the home folder', () => {
-    expect(shortHome('/home/alice/.saywright', '/home/al')).toBe('/home/alice/.saywright');
-    expect(shortHome('/home/al/.saywright', '/home/al')).toBe(`~${path.sep}.saywright`);
-    expect(shortHome('/home/al', '/home/al')).toBe('~');
+    // As this computer writes paths: a drive and backslashes on Windows, /home/al elsewhere.
+    const home = path.resolve('/home/al');
+    const other = path.join(path.resolve('/home/alice'), '.saywright');
+    expect(shortHome(other, home)).toBe(other);
+    expect(shortHome(path.join(home, '.saywright'), home)).toBe(`~${path.sep}.saywright`);
+    expect(shortHome(home, home)).toBe('~');
   });
 });
