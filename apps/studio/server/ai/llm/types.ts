@@ -103,8 +103,29 @@ export function noFallback(chat: ChatModel, ticket: Ticket): string {
   return chat.fallback && !ticket.fallback ? ' With the budget set to stop, it isn’t tried again on another model, whose cost can’t be held in advance: set the budget to warn in Settings → Usage and budget to allow that.' : '';
 }
 
+/**
+ * How long a provider may stay silent. A streamed answer may take as long as it likes, but no byte for `idleMs`
+ * means the provider stopped answering; a request that can't be streamed gets `wholeMs` in all. Mutable for the
+ * tests, which can't wait minutes.
+ */
+export const timing = { idleMs: 90_000, wholeMs: 5 * 60_000 };
+
+const seconds = (ms: number) => (ms >= 60_000 && ms % 60_000 === 0 ? `${ms / 60_000} minute${ms === 60_000 ? '' : 's'}` : `${Math.round(ms / 1000)} seconds`);
+
+/** A provider's HTTP error: the sentence a person reads, and what the adapter needs to decide what to do next. */
+export class ProviderHttpError extends AgentError {
+  constructor(
+    message: string,
+    code: AgentErrorCode,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(message, code);
+  }
+}
+
 /** A provider's HTTP error, in plain words, with what the person can do about it. */
-function httpError(provider: string, status: number, body: string, where = 'Settings → AI'): AgentError {
+function httpError(provider: string, status: number, body: string, where = 'Settings → AI'): ProviderHttpError {
   let detail = '';
   try {
     const j = JSON.parse(body) as { error?: { message?: string } | string; message?: string };
@@ -125,33 +146,123 @@ function httpError(provider: string, status: number, body: string, where = 'Sett
             : status >= 500
               ? `${provider} had a server problem. Try again.`
               : `${provider} couldn’t take that request${detail ? `: ${detail}` : ''}.`;
-  return new AgentError(text, code);
+  return new ProviderHttpError(text, code, status, body);
 }
 
-/** fetch with the request's abort signal and a time limit; connection failures become plain-language errors. */
-export async function post(provider: string, url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal, timeoutMs = 10 * 60_000): Promise<unknown> {
+/** Said when the connection broke after the provider had begun to answer (a Wi-Fi drop, a laptop waking up). */
+export const lostWhileAnswering = (provider: string) => new AgentError(`The connection to ${provider} was lost while it was answering. Try again.`, 'network');
+/** Said when a streamed answer went silent. */
+export const stoppedAnswering = (provider: string) => new AgentError(`${provider} stopped answering: nothing came for ${seconds(timing.idleMs)}. Try again.`, 'network');
+
+/**
+ * One request to a provider, with the request's abort signal honoured until the last byte is read. `idle`: the
+ * request fails when nothing arrives for that long (a stream); otherwise it fails when the whole answer took longer
+ * than `timing.wholeMs`. Connection failures become plain-language errors.
+ */
+async function send(provider: string, url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal | undefined, idle: boolean, read: (res: Response, alive: () => void) => Promise<unknown>): Promise<unknown> {
+  if (signal?.aborted) throw new AgentError('Stopped.', 'aborted');
   const ctl = new AbortController();
+  let why: 'idle' | 'whole' | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (kind: 'idle' | 'whole', ms: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      why = kind;
+      ctl.abort();
+    }, ms);
+  };
+  const alive = idle ? () => arm('idle', timing.idleMs) : () => undefined;
   const onAbort = () => ctl.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
-  let res: Response;
+  if (idle) alive();
+  else arm('whole', timing.wholeMs);
+  let began = false;
   try {
-    res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctl.signal });
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: ctl.signal });
+    } catch (err) {
+      const code = err instanceof Error && err.cause && typeof err.cause === 'object' && 'code' in err.cause ? String(err.cause.code) : '';
+      if (code === 'UND_ERR_HEADERS_TIMEOUT') why = 'whole';
+      throw err;
+    }
+    began = true;
+    alive();
+    if (!res.ok) {
+      const text = await res.text();
+      throw httpError(provider, res.status, text);
+    }
+    return await read(res, alive);
   } catch (err) {
+    if (err instanceof AgentError) throw err;
     if (signal?.aborted) throw new AgentError('Stopped.', 'aborted');
-    if (ctl.signal.aborted) throw new AgentError(`${provider} took too long to answer.`, 'network');
+    if (why === 'idle') throw stoppedAnswering(provider);
+    if (why === 'whole') throw new AgentError(`${provider} took longer than ${seconds(timing.wholeMs)} to answer. Try again, or ask for something smaller.`, 'network');
+    if (began) throw lostWhileAnswering(provider);
     throw new AgentError(`Can’t reach ${provider}${err instanceof Error && err.cause instanceof Error ? ` (${err.cause.message})` : ''}. Check the address and your connection.`, 'network');
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
+    // Whatever happened, the connection to the provider is closed: nothing may go on after an answer, an error or Stop.
+    ctl.abort();
   }
-  const text = await res.text();
-  if (!res.ok) throw httpError(provider, res.status, text);
+}
+
+const parseJson = (provider: string, text: string): unknown => {
   try {
     return JSON.parse(text);
   } catch {
     throw new AgentError(`${provider} sent an answer that isn’t JSON.`, 'other');
   }
+};
+
+/** One request whose answer comes whole (a provider that can't stream): `timing.wholeMs` for all of it. */
+export async function post(provider: string, url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<unknown> {
+  return send(provider, url, headers, body, signal, false, async (res) => parseJson(provider, await res.text()));
+}
+
+/**
+ * One streamed request (server-sent events): each event's data, parsed, goes to `onEvent` as it arrives, and the
+ * request fails when nothing arrives for `timing.idleMs`. A server that ignored the request to stream and answered
+ * with one JSON body returns that body (`whole`) instead.
+ */
+export async function stream(provider: string, url: string, headers: Record<string, string>, body: unknown, signal: AbortSignal | undefined, onEvent: (data: unknown) => void): Promise<{ whole?: unknown }> {
+  return send(provider, url, headers, body, signal, true, async (res, alive) => {
+    if (!/text\/event-stream/i.test(res.headers.get('content-type') ?? '') || !res.body) {
+      // Read in pieces so the idle timer sees a slow body arrive.
+      let text = '';
+      const decoder = new TextDecoder();
+      if (res.body)
+        for await (const chunk of res.body) {
+          alive();
+          text += decoder.decode(chunk as Uint8Array, { stream: true });
+        }
+      return { whole: parseJson(provider, text + decoder.decode()) };
+    }
+    const decoder = new TextDecoder();
+    let buf = '';
+    const flush = (block: string) => {
+      const data = block
+        .split(/\r?\n/)
+        .filter((l) => l.startsWith('data:'))
+        .map((l) => l.slice(5).replace(/^ /, ''))
+        .join('\n');
+      if (!data || data === '[DONE]') return;
+      onEvent(parseJson(provider, data));
+    };
+    for await (const chunk of res.body) {
+      alive();
+      buf += decoder.decode(chunk as Uint8Array, { stream: true });
+      let m: RegExpExecArray | null;
+      while ((m = /\r?\n\r?\n/.exec(buf))) {
+        flush(buf.slice(0, m.index));
+        buf = buf.slice(m.index + m[0].length);
+      }
+    }
+    buf += decoder.decode();
+    if (buf.trim()) flush(buf);
+    return {};
+  }) as Promise<{ whole?: unknown }>;
 }
 
 /** The schema as plain JSON Schema (draft 2020-12), shared definitions inlined. */

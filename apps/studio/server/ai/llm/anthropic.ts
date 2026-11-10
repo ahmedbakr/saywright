@@ -13,7 +13,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { BetaMessageStreamParams } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { AgentError } from '../types.ts';
-import type { ChatModel, ChatRequest, ChatResult, Msg, ToolCall } from './types.ts';
+import { lostWhileAnswering, stoppedAnswering, timing, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 type Client = Pick<Anthropic, 'beta'>;
 
@@ -59,7 +59,9 @@ export class AnthropicModel implements ChatModel {
 
   constructor(
     readonly model: string,
-    private client: () => Client = () => new Anthropic({ maxRetries: 2, timeout: 10 * 60_000 }),
+    // Each attempt waits at most the idle time for the answer to begin, and is tried three times in all: a request
+    // to an address that never answers ends in minutes, not a quarter of an hour.
+    private client: () => Client = () => new Anthropic({ maxRetries: 2, timeout: timing.idleMs }),
   ) {}
 
   get fallback(): boolean {
@@ -80,10 +82,40 @@ export class AnthropicModel implements ChatModel {
       ...(this.fallback && req.fallback !== false ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
     };
     let msg: Anthropic.Beta.BetaMessage;
+    // Stop, and silence: a stream with no event for `timing.idleMs` is given up on.
+    const ctl = new AbortController();
+    const onAbort = () => ctl.abort();
+    req.signal?.addEventListener('abort', onAbort, { once: true });
+    if (req.signal?.aborted) ctl.abort();
+    let idle = false;
+    let began = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        idle = true;
+        ctl.abort();
+      }, timing.idleMs);
+    };
     try {
-      msg = await this.client().beta.messages.stream(params, { signal: req.signal }).finalMessage();
+      const s = this.client().beta.messages.stream(params, { signal: ctl.signal });
+      const beat = () => {
+        began = true;
+        arm();
+      };
+      // (A stand-in client in the tests may give only the final message.)
+      if (typeof s.on === 'function') s.on('connect', beat).on('streamEvent', beat);
+      msg = await s.finalMessage();
     } catch (err) {
-      throw anthropicError(err);
+      if (req.signal?.aborted) throw new AgentError('Stopped.', 'aborted');
+      if (idle) throw stoppedAnswering('Anthropic');
+      const e = anthropicError(err);
+      // A stream that broke after it began (not an error Anthropic answered with) is a lost connection.
+      if (began && !(err instanceof Anthropic.APIError && err.status) && (e.code === 'other' || e.code === 'network')) throw lostWhileAnswering('Anthropic');
+      throw e;
+    } finally {
+      clearTimeout(timer);
+      req.signal?.removeEventListener('abort', onAbort);
     }
     const calls: ToolCall[] = [];
     const text: string[] = [];

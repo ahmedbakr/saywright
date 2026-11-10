@@ -6,7 +6,7 @@
  * about the same code on the same cache.
  */
 import { AgentError } from '../types.ts';
-import { jsonSchemaOf, parseArgs, post, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { jsonSchemaOf, lostWhileAnswering, parseArgs, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 interface OutputItem {
   type: string;
@@ -20,6 +20,7 @@ interface OutputItem {
 interface ResponseBody {
   model: string;
   status?: string;
+  error?: { message?: string; code?: string } | null;
   incomplete_details?: { reason?: string } | null;
   output: OutputItem[];
   usage?: {
@@ -76,7 +77,20 @@ export class OpenAIModel implements ChatModel {
       ...(req.json ? { text: { format: { type: 'json_schema', name: req.json.name, schema: strictSchema(jsonSchemaOf(req.json.schema)), strict: true } } } : {}),
       ...(req.cacheKey ? { prompt_cache_key: req.cacheKey } : {}),
     };
-    const res = (await post('OpenAI', `${this.baseUrl}/responses`, { Authorization: `Bearer ${key}` }, body, req.signal)) as ResponseBody;
+    // Streamed, so a long answer is never cut by a time limit (only silence is); the last event carries the whole response.
+    let final: ResponseBody | undefined;
+    let failed: string | undefined;
+    const out = await stream('OpenAI', `${this.baseUrl}/responses`, { Authorization: `Bearer ${key}` }, { ...body, stream: true }, req.signal, (e) => {
+      const ev = e as { type?: string; response?: ResponseBody; message?: string };
+      if (ev.type === 'response.completed' || ev.type === 'response.incomplete' || ev.type === 'response.failed') final = ev.response;
+      else if (ev.type === 'error') failed = ev.message ?? 'an error';
+    });
+    const res = (out.whole as ResponseBody | undefined) ?? final;
+    if (failed || res?.status === 'failed' || res?.error) {
+      const said = (failed ?? res?.error?.message ?? '').replace(/\.+$/, '');
+      throw new AgentError(`OpenAI couldn’t answer${said ? `: ${said}` : ''}.`, 'other');
+    }
+    if (!res) throw lostWhileAnswering('OpenAI');
 
     const text: string[] = [];
     const calls: ToolCall[] = [];

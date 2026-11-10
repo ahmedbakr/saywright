@@ -117,6 +117,9 @@ Saywright is also an MCP server: Claude Code, Cursor, Codex, VS Code and Claude 
 | A plan shows *Sign in needed* | Run `claude`, `codex login` or `gemini` once in a terminal and sign in. |
 | “Your plan’s limit is reached” | Wait for the plan's limit to reset, or route the work to an API key or a local model in **Settings → AI → Advanced**. |
 | “Couldn’t reach …” | The provider or your network is down. Saywright stops quickly instead of retrying for minutes; try again, or route the work elsewhere. |
+| “… stopped answering: nothing came for 90 seconds” | Answers are streamed, so a long one (a local model writing a report) can take as long as it needs; a provider that sends nothing for 90 seconds is given up on. Try again; for a local model, check it is still running. |
+| “The connection to … was lost while it was answering” | Your network dropped (or the computer slept) in mid-answer. Try again. |
+| “… took longer than five minutes to answer” | A server that can't stream (some local servers can't with tools) gets five minutes per answer. Ask for something smaller, or use a faster model. |
 | Requests are refused with a budget message | The budget is set to **Stop** and a limit is reached: raise it or reset the count in **Settings → Usage and budget**. |
 | “Claude declined this request” | Rephrase it. With the budget set to **Stop**, Claude doesn't try another model for it; with **Warn** it does. |
 | “… isn’t saved as UTF-8, and this change adds a character its encoding can’t hold” | Nothing was written. Save that file as UTF-8 in your editor (“Save with encoding”), then ask again. |

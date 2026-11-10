@@ -5,7 +5,7 @@
  * that can't do that is asked for plain JSON, which the caller checks.
  */
 import { AgentError } from '../types.ts';
-import { jsonSchemaOf, parseArgs, post, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { jsonSchemaOf, parseArgs, post, ProviderHttpError, stream, strictSchema, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 type ContentPart = { type: string; text?: string; image_url?: { url: string } };
 
@@ -21,6 +21,8 @@ interface ChatMessage {
 interface CompletionBody {
   model?: string;
   choices?: { message?: ChatMessage; finish_reason?: string }[];
+  /** Some servers answer a failure with a 200 and this (OpenRouter, for an upstream failure; also inside a stream). */
+  error?: { message?: string } | string;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -63,6 +65,55 @@ function encode(system: string, messages: Msg[], vision: boolean): ChatMessage[]
   return out;
 }
 
+/** One streamed chunk. */
+interface CompletionChunk {
+  model?: string;
+  choices?: { delta?: { content?: string | null; refusal?: string | null; reasoning_content?: string | null; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }; finish_reason?: string | null }[];
+  usage?: CompletionBody['usage'];
+  error?: CompletionBody['error'];
+}
+
+/** The chunks of a streamed answer, put together into the one body a server that doesn't stream would have sent. */
+function assemble(chunks: CompletionChunk[]): CompletionBody {
+  let content = '';
+  let refusal = '';
+  let reasoning = '';
+  let finish: string | undefined;
+  let model: string | undefined;
+  let usage: CompletionBody['usage'];
+  let any = false;
+  const calls: { id: string; type: 'function'; function: { name: string; arguments: string } }[] = [];
+  for (const c of chunks) {
+    if (c.error) return { error: c.error };
+    model ??= c.model;
+    if (c.usage) usage = c.usage;
+    const ch = c.choices?.[0];
+    if (!ch) continue;
+    any = true;
+    if (ch.finish_reason) finish = ch.finish_reason;
+    const d = ch.delta ?? {};
+    if (d.content) content += d.content;
+    if (d.refusal) refusal += d.refusal;
+    if (d.reasoning_content) reasoning += d.reasoning_content;
+    for (const t of d.tool_calls ?? []) {
+      const i = t.index ?? calls.length;
+      const call = (calls[i] ??= { id: '', type: 'function', function: { name: '', arguments: '' } });
+      if (t.id) call.id = t.id;
+      if (t.function?.name) call.function.name += t.function.name;
+      if (t.function?.arguments) call.function.arguments += t.function.arguments;
+    }
+  }
+  if (!any) return { model, usage };
+  const message: ChatMessage = { role: 'assistant', content: content || null, ...(refusal ? { refusal } : {}), ...(reasoning ? { reasoning_content: reasoning } : {}), ...(calls.length ? { tool_calls: calls.filter(Boolean) } : {}) };
+  return { model, usage, choices: [{ message, finish_reason: finish }] };
+}
+
+/**
+ * Servers that turned down a streamed request (some local servers do, especially with tools), by address: they get
+ * one answer whole from then on, for as long as the studio runs.
+ */
+const unstreamed = new Set<string>();
+
 interface CompatibleOptions {
   /** Shown in errors: "OpenRouter", "Ollama"… */
   label: string;
@@ -99,14 +150,31 @@ export class CompatibleModel implements ChatModel {
       messages: encode(system, req.messages, this.vision),
       ...(req.tools?.length ? { tools: req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } })) } : {}),
       max_tokens: req.maxTokens,
-      stream: false,
       ...json,
       ...(this.opts.openrouter ? { usage: { include: true } } : {}),
       ...(req.effort && this.opts.openrouter ? { reasoning: { effort: req.effort } } : {}),
     };
     const headers: Record<string, string> = key ? { Authorization: `Bearer ${key}` } : {};
     if (this.opts.openrouter) Object.assign(headers, { 'HTTP-Referer': 'https://github.com/ahmedbakr/saywright', 'X-Title': 'Saywright' });
-    const res = (await post(this.opts.label, `${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`, headers, body, req.signal)) as CompletionBody;
+    const url = `${this.opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+    let res: CompletionBody;
+    if (unstreamed.has(url)) res = (await post(this.opts.label, url, headers, { ...body, stream: false }, req.signal)) as CompletionBody;
+    else {
+      const chunks: CompletionChunk[] = [];
+      try {
+        // Streamed, so a long answer (a local model writing a report) is never cut by a time limit: only silence is.
+        const out = await stream(this.opts.label, url, headers, { ...body, stream: true, stream_options: { include_usage: true } }, req.signal, (c) => void chunks.push(c as CompletionChunk));
+        res = (out.whole as CompletionBody | undefined) ?? assemble(chunks);
+      } catch (err) {
+        if (!(err instanceof ProviderHttpError) || !refusesStreaming(err)) throw err;
+        unstreamed.add(url);
+        res = (await post(this.opts.label, url, headers, { ...body, stream: false }, req.signal)) as CompletionBody;
+      }
+    }
+    if (res.error) {
+      const said = typeof res.error === 'string' ? res.error : res.error.message;
+      throw new AgentError(`${this.opts.label} couldn’t answer${said ? `: ${said.replace(/\.+$/, '')}` : ''}.`, 'other');
+    }
 
     const choice = res.choices?.[0];
     if (!choice?.message) throw new AgentError(`${this.opts.label} sent no answer.`, 'other');
@@ -132,4 +200,9 @@ export class CompatibleModel implements ChatModel {
       ...(typeof u.cost === 'number' ? { usd: u.cost } : {}),
     };
   }
+}
+
+/** A request turned down because it asked to stream (or for usage in the stream), not for what it asked. */
+function refusesStreaming(err: ProviderHttpError): boolean {
+  return err.status === 501 || ([400, 404, 415, 422, 500].includes(err.status) && /stream/i.test(err.body));
 }

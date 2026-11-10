@@ -4,7 +4,7 @@
  * reasoning between steps). Long prompts are cached by Gemini automatically.
  */
 import { AgentError } from '../types.ts';
-import { jsonSchemaOf, post, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
+import { jsonSchemaOf, lostWhileAnswering, stream, type ChatModel, type ChatRequest, type ChatResult, type Msg, type ToolCall } from './types.ts';
 
 interface GPart {
   text?: string;
@@ -20,7 +20,36 @@ interface GContent {
   parts: GPart[];
 }
 
+/**
+ * A streamed answer's chunks as one response: parts in the order they came (each keeps its thought signature),
+ * the last finish reason, usage and model version.
+ */
+function assemble(chunks: GResponse[]): GResponse {
+  const parts: GPart[] = [];
+  const out: GResponse = {};
+  for (const c of chunks) {
+    const cand = c.candidates?.[0];
+    if (cand?.content?.parts) parts.push(...cand.content.parts);
+    if (cand?.finishReason) out.candidates = [{ finishReason: cand.finishReason }];
+    if (c.promptFeedback) out.promptFeedback = c.promptFeedback;
+    if (c.usageMetadata) out.usageMetadata = c.usageMetadata;
+    if (c.modelVersion) out.modelVersion = c.modelVersion;
+    if (c.error) out.error = c.error;
+  }
+  // Text that came in pieces is one part again, as a single answer would have it (a signature stays where it was).
+  const merged: GPart[] = [];
+  for (const p of parts) {
+    const prev = merged.at(-1);
+    const plain = (x: GPart) => typeof x.text === 'string' && Object.keys(x).every((k) => k === 'text' || k === 'thought');
+    if (prev && plain(prev) && plain(p) && !!prev.thought === !!p.thought) merged[merged.length - 1] = { ...prev, text: prev.text! + p.text! };
+    else merged.push({ ...p });
+  }
+  out.candidates = [{ ...out.candidates?.[0], content: { role: 'model', parts: merged } }];
+  return out;
+}
+
 interface GResponse {
+  error?: { message?: string; status?: string };
   candidates?: { content?: GContent; finishReason?: string }[];
   promptFeedback?: { blockReason?: string };
   modelVersion?: string;
@@ -63,7 +92,13 @@ export class GeminiModel implements ChatModel {
         ...(req.json ? { responseMimeType: 'application/json', responseJsonSchema: jsonSchemaOf(req.json.schema) } : {}),
       },
     };
-    const res = (await post('Gemini', `${this.baseUrl}/models/${encodeURIComponent(this.model)}:generateContent`, { 'x-goog-api-key': key }, body, req.signal)) as GResponse;
+    // Streamed, so a long answer is never cut by a time limit (only silence is).
+    const chunks: GResponse[] = [];
+    const out = await stream('Gemini', `${this.baseUrl}/models/${encodeURIComponent(this.model)}:streamGenerateContent?alt=sse`, { 'x-goog-api-key': key }, body, req.signal, (c) => void chunks.push(c as GResponse));
+    const whole = out.whole as GResponse | GResponse[] | undefined;
+    if (!whole && !chunks.length) throw lostWhileAnswering('Gemini');
+    const res = assemble(whole ? (Array.isArray(whole) ? whole : [whole]) : chunks);
+    if (res.error) throw new AgentError(`Gemini couldn’t answer${res.error.message ? `: ${res.error.message.replace(/\.+$/, '')}` : ''}.`, 'other');
 
     const cand = res.candidates?.[0];
     const content: GContent = cand?.content ?? { role: 'model', parts: [] };

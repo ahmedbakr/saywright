@@ -88,6 +88,14 @@ export async function createStudioApi(layout: StudioLayout) {
   fs.mkdirSync(dataDir, { recursive: true });
   const hub = new EventHub();
   const inflight = new Map<string, AbortController>();
+  /** A request's own stop: Stop in the page, or the page that asked going away (its tab closed, the studio reloaded). */
+  const hangupAborts = (res: ServerResponse): AbortController => {
+    const ctl = new AbortController();
+    res.on('close', () => {
+      if (!res.writableFinished) ctl.abort();
+    });
+    return ctl;
+  };
   let studioOrigin = STUDIO_URL;
 
   const settingsFile = path.join(dataDir, 'studio.json');
@@ -313,7 +321,7 @@ export async function createStudioApi(layout: StudioLayout) {
     return apps.state();
   });
 
-  router.post('/intent', async (req): Promise<IntentResult> => {
+  router.post('/intent', async (req, res): Promise<IntentResult> => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const text = asString(body.text, 'text', 2000).trim();
     if (!text) throw new HttpError(400, 'Say or type something first');
@@ -377,7 +385,7 @@ export async function createStudioApi(layout: StudioLayout) {
     }
     const model = fake ? agent.model : aiLabel();
 
-    const ctl = new AbortController();
+    const ctl = hangupAborts(res);
     inflight.set(requestId, ctl);
     try {
       // The page at the app's own address (not the studio proxy's it is shown through).
@@ -535,7 +543,7 @@ export async function createStudioApi(layout: StudioLayout) {
     return { ok };
   });
 
-  router.post('/fix', async (req): Promise<IntentResult> => {
+  router.post('/fix', async (req, res): Promise<IntentResult> => {
     const body = (req.body ?? {}) as { path?: unknown; failure?: unknown; refs?: unknown; requestId?: unknown; text?: unknown; input?: unknown };
     const rel = asString(body.path, 'path', 300);
     const failure = asString(body.failure ?? '', 'failure', 4000);
@@ -550,7 +558,7 @@ export async function createStudioApi(layout: StudioLayout) {
     const model = fake ? agent.model : aiLabel();
     const requestId = typeof body.requestId === 'string' ? body.requestId.slice(0, 40) : String(Date.now());
     const progress = (step: string, detail?: string) => hub.emit('progress', { requestId, step, detail });
-    const ctl = new AbortController();
+    const ctl = hangupAborts(res);
     inflight.set(requestId, ctl);
     const started = Date.now();
     try {

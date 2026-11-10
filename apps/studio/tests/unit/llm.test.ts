@@ -125,7 +125,7 @@ describe('OpenAI (Responses API)', () => {
 describe('Gemini', () => {
   it('sends the key in its header, declarations as JSON Schema, and its own turns back with their signatures', async () => {
     let step = 0;
-    routes.set('/gemini/models/gemini-4-argon:generateContent', (body) => {
+    routes.set('/gemini/models/gemini-4-argon:streamGenerateContent', (body) => {
       step++;
       if (step === 1) {
         return {
@@ -156,7 +156,7 @@ describe('Gemini', () => {
   });
 
   it('reports a blocked answer as declined', async () => {
-    routes.set('/gemini-block/models/m:generateContent', () => ({ candidates: [{ finishReason: 'SAFETY', content: { role: 'model', parts: [] } }] }));
+    routes.set('/gemini-block/models/m:streamGenerateContent', () => ({ candidates: [{ finishReason: 'SAFETY', content: { role: 'model', parts: [] } }] }));
     const agent = new ModelAgent(new GeminiModel('m', () => 'k', `${base}/gemini-block`), 'low', {}, 'Gemini');
     await expect(agent.run({ text: 'x', refs: [], mode: 'edit' }, { project: tempShop(), progress: () => undefined })).rejects.toThrow(/Gemini declined/);
   });
