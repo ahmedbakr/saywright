@@ -29,6 +29,9 @@ afterEach(() => {
   saved = undefined;
 });
 
+/** A line the stand-in printed, as the command it was given. */
+const asked = (line: string) => line.replace(/"/g, '').trim();
+
 const app = (files: Record<string, string | object> = {}) => tree({ 'package.json': { name: 'bare', type: 'module' }, 'tests/saywright/opens.spec.ts': SPEC, ...files });
 const project = (dir: string) => new Project(dir, 'http://localhost:5999', undefined, true);
 
@@ -69,8 +72,8 @@ describe('adding Playwright to the app', () => {
     // The stand-in installs nothing: the command ran, and the app still has no Playwright.
     expect(await addPlaywright(project(dir), (l) => lines.push(l))).toBe(false);
     expect(lines[0]).toBe('$ yarn add -D @playwright/test');
-    // What the stand-in was asked (Windows hands a .cmd its arguments in quotes), and where.
-    expect(lines.some((l) => /^yarn add -D "?@playwright\/test"?$/.test(l))).toBe(true);
+    // What the stand-in was asked (Windows hands a .cmd each of its arguments in quotes), and where.
+    expect(lines.map(asked)).toContain('yarn add -D @playwright/test');
     expect(lines.some((l) => l.startsWith('in ') && l.endsWith(path.basename(dir)))).toBe(true);
     expect(lines.at(-1)).toMatch(/still/);
     // Once it is there (as the real command leaves it), the same call says yes.
@@ -85,7 +88,7 @@ describe('adding Playwright to the app', () => {
     standIns(['npm'], 1);
     const lines: string[] = [];
     expect(await addPlaywright(project(dir), (l) => lines.push(l))).toBe(false);
-    expect(lines.some((l) => /^npm install --save-dev "?@playwright\/test"?$/.test(l))).toBe(true);
+    expect(lines.map(asked)).toContain('npm install --save-dev @playwright/test');
     expect(lines.at(-1)).toMatch(/npm install --save-dev @playwright\/test/);
   });
 
