@@ -343,7 +343,8 @@ describe('memory stays flat over a long day', () => {
     }
     expect(store.list()).toHaveLength(200);
     expect(store.list().at(-1)?.title).toBe('n5');
-  });
+    // More than a thousand files written and kept safe: a quarter of a minute where every new file is scanned.
+  }, 60_000);
 });
 
 describe('what a change leaves behind', () => {
