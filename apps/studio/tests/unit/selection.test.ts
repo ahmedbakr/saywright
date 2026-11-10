@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ElementInfo } from '@saywright/vite/protocol';
-import { afterHold, afterTap, MAX_PICKED, picked, clickMeaning, replaced, selectedOf, type Picked } from '../../src/core/selection';
+import { afterHold, afterTap, MAX_PICKED, PICKED_FULL, picked, pickedFull, clickMeaning, replaced, selectedOf, type Picked } from '../../src/core/selection';
 
 const el = (id: number, name = `El${id}`): ElementInfo => ({ id, src: `src/App.tsx:${id}:1`, name, tag: 'div', label: name, text: '', role: null, rect: { x: 0, y: 0, w: 10, h: 10 }, index: 0 });
 const A = el(1, 'Pay');
@@ -57,11 +57,16 @@ describe('holding the pinch (or ⇧ click)', () => {
     expect(afterHold(two, null)).toBe(two);
   });
 
-  it('keeps at most a handful, dropping the oldest', () => {
+  it('keeps at most a handful, and refuses one more rather than letting one go', () => {
     let p = NONE;
-    for (let i = 1; i <= MAX_PICKED + 3; i++) p = afterHold(p, el(i));
-    expect(selectedOf(p)).toHaveLength(MAX_PICKED);
-    expect(selectedOf(p)[0].id).toBe(4);
+    for (let i = 1; i <= MAX_PICKED; i++) p = afterHold(p, el(i));
+    expect(pickedFull(p, el(MAX_PICKED + 1))).toBe(true);
+    expect(afterHold(p, el(MAX_PICKED + 1))).toBe(p);
+    expect(selectedOf(p).map((e) => e.id)).toEqual(Array.from({ length: MAX_PICKED }, (_, i) => i + 1));
+    // Taking one out still works when the selection is full.
+    expect(pickedFull(p, el(1))).toBe(false);
+    expect(selectedOf(afterHold(p, el(1)))).toHaveLength(MAX_PICKED - 1);
+    expect(PICKED_FULL).toBe(`At most ${MAX_PICKED} elements can be picked together. ⇧ click one of them to take it out first.`);
   });
 });
 

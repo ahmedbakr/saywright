@@ -59,9 +59,18 @@ export function afterTap(p: Picked, target: ElementInfo | null): Picked {
   return p;
 }
 
-/** After a ⇧ click (or “add this”) on `target`: added, or taken out. */
+/** Adding `target` would go over the limit: it isn't picked, and the studio says why (`PICKED_FULL`). */
+export function pickedFull(p: Picked, target: ElementInfo | null): boolean {
+  const now = selectedOf(p);
+  return !!target && now.length >= MAX_PICKED && !now.some((e) => e.id === target.id);
+}
+
+/** What the studio says when one more element would go over the limit. */
+export const PICKED_FULL = `At most ${MAX_PICKED} elements can be picked together. ⇧ click one of them to take it out first.`;
+
+/** After a ⇧ click (or “add this”) on `target`: added, or taken out; never one over the limit (nothing picked is let go without a word). */
 export function afterHold(p: Picked, target: ElementInfo | null): Picked {
-  if (!target) return p;
+  if (!target || pickedFull(p, target)) return p;
   const now = selectedOf(p);
   const next = toggled(now, target);
   return picked(next, next.length > now.length ? target : p.selection);

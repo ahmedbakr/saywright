@@ -20,7 +20,7 @@ import { BridgeClient } from './bridge';
 import { looksLikeCheck, parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
 import { findingBrief } from './evidence';
 import { DEFAULT_FUSION, PointerTrack, implicitTargets, resolveDeictics } from './fusion';
-import { afterHold, afterTap, picked, replaced, selectedOf, type Picked } from './selection';
+import { afterHold, afterTap, PICKED_FULL, picked, pickedFull, replaced, selectedOf, type Picked } from './selection';
 import { Autopilot, type AutopilotOptions } from './autopilot';
 import { Replayer, findingCheck, namedCheck } from './replay';
 import { MAX_WAITING, RequestQueue, type RequestJob } from './requests';
@@ -746,6 +746,7 @@ class Controller {
     const run = (async () => {
       const hit = (a ? await this.bridge.probeAt(a.x, a.y, 0, alt) : null) ?? get().hover;
       const now: Picked = { selection: get().selection, pins: get().pins };
+      if (shift && pickedFull(now, hit)) return this.notify(PICKED_FULL, 'info');
       this.setPicked(shift ? afterHold(now, hit) : afterTap(now, hit));
     })();
     this.picking = run;
@@ -784,7 +785,9 @@ class Controller {
 
   /** Add to the selection, or take out of it: ⇧ click, “add this”. */
   toggleSelected(el: ElementInfo): void {
-    this.setPicked(afterHold({ selection: get().selection, pins: get().pins }, el));
+    const now: Picked = { selection: get().selection, pins: get().pins };
+    if (pickedFull(now, el)) return this.notify(PICKED_FULL, 'info');
+    this.setPicked(afterHold(now, el));
   }
 
   /** Take one element out of the selection. */
