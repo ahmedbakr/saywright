@@ -396,7 +396,8 @@ export async function createStudioApi(layout: StudioLayout) {
     inflight.set(requestId, ctl);
     try {
       // The page at the app's own address (not the studio proxy's it is shown through).
-      const out = await agent.run({ text, refs, mode: 'edit', pageUrl: pageUrl ? appAddress(current, pageUrl) : undefined, brief }, { project, progress, signal: ctl.signal });
+      // The person's own words count as asking for a file by name; a brief the studio built from a report never does.
+      const out = await agent.run({ text, refs, mode: 'edit', pageUrl: pageUrl ? appAddress(current, pageUrl) : undefined, brief, own: brief ? undefined : text }, { project, progress, signal: ctl.signal });
       model = answeredLabel(agent, model);
       const latencyMs = Date.now() - started;
       if (out.kind === 'change') {
@@ -572,7 +573,7 @@ export async function createStudioApi(layout: StudioLayout) {
     try {
       const testCode = project.read(rel);
       const out = await agent.run(
-        { text: text || 'Fix the bug this test shows.', refs: await mapRefs(body.refs), mode: 'fix', test: { path: rel, code: testCode, failure } },
+        { text: text || 'Fix the bug this test shows.', refs: await mapRefs(body.refs), mode: 'fix', test: { path: rel, code: testCode, failure }, own: input !== 'button' && text ? text : undefined },
         { project, progress, signal: ctl.signal },
       );
       model = answeredLabel(agent, model);

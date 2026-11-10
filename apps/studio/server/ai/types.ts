@@ -13,6 +13,12 @@ export interface AgentInput {
   test?: { path: string; code: string; failure: string };
   /** Work the studio prepared, longer than anything said: findings and suggestions from a test session's report. */
   brief?: string;
+  /**
+   * The person's own typed or spoken sentence for this request, when there is one. Requests the studio builds itself
+   * from page-derived text (Fix with AI on a finding or a failing test, Implement selected, expert fixes) have none:
+   * page text can never name a file that runs outside the page (see guardedFile).
+   */
+  own?: string;
 }
 
 export type AgentOutput =

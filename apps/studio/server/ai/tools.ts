@@ -63,6 +63,35 @@ export async function listFilesTool(project: Project, dir = ''): Promise<string>
   return [...shown, ...(files.length > shown.length ? [`(${thousands(shown.length)} of ${thousands(files.length)} files; list a folder (dir) to see the others.)`] : [])].join('\n');
 }
 
+/**
+ * Files that run on the person's computer outside the page (the dev server, the build, installs, git, CI): a change
+ * to one is executed before anybody keeps it. By class, with the words that clearly ask for that kind of change.
+ */
+const GUARDED: { test: (base: string, rel: string) => boolean; words: RegExp }[] = [
+  { test: (b) => /^(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|\.npmrc|\.yarnrc(\.yml)?)$/i.test(b), words: /\b(dependency|dependencies|install|npm script|package script)\b/i },
+  {
+    test: (b) => /^((vite|vitest|next|webpack|rollup|astro|svelte|nuxt|remix|tailwind|postcss|babel|esbuild|playwright|jest|eslint|metro|turbo)\.config\.[cm]?[jt]s|tsconfig.*\.json|jsconfig.*\.json|\.babelrc|\.postcssrc.*)$/i.test(b),
+    words: /\b(config|configuration|alias|aliases|plugin|plugins|port|proxy)\b/i,
+  },
+  {
+    test: (b, rel) => /(^|\/)(\.github|\.husky|\.git\/hooks|\.circleci)\//i.test(rel) || /^(\.gitlab-ci\.yml|dockerfile.*|docker-compose.*|compose\.ya?ml|makefile|.*\.(sh|bash|zsh|ps1|bat|cmd)|\.gitattributes|\.gitignore|lefthook\.ya?ml)$/i.test(b),
+    words: /\b(ci|workflow|pipeline|hook|hooks|docker|makefile|script)\b/i,
+  },
+];
+
+/**
+ * Why an edit to `rel` isn't made for this request, or null: a file that runs outside the page is changed only when
+ * the person's own sentence names it (its base name) or clearly asks for that kind of change.
+ */
+export function guardedFile(rel: string, own: string | undefined): string | null {
+  const clean = rel.replace(/\\/g, '/').replace(/^\.\//, '');
+  const base = clean.slice(clean.lastIndexOf('/') + 1);
+  const g = GUARDED.find((x) => x.test(base, clean));
+  if (!g) return null;
+  if (own && (own.toLowerCase().includes(base.toLowerCase()) || g.words.test(own))) return null;
+  return `${clean} runs on the person’s computer outside the page (the dev server, the build or git runs it before anyone keeps a preview), so it is changed only when they ask for it by name. Don’t change it: say in one sentence what it needs, like “This needs a change to ${base}; say so and I’ll make it.”`;
+}
+
 interface EditSpec {
   path: string;
   old_string: string;

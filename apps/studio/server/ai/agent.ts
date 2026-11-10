@@ -16,7 +16,7 @@ import type { AiEffort } from '../../shared/api.ts';
 import { systemPrompt, userMessage } from './context.ts';
 import { inputTokens } from './llm/tokens.ts';
 import { noFallback, unwatched, type Admit, type ChatModel, type ChatResult, type Msg, type ToolCall, type ToolDef } from './llm/types.ts';
-import { applyEditSpecs, listFilesTool, readFileTool, searchCode } from './tools.ts';
+import { applyEditSpecs, guardedFile, listFilesTool, readFileTool, searchCode } from './tools.ts';
 import { AgentError, type AgentContext, type AgentInput, type AgentOutput, type AgentProvider } from './types.ts';
 
 const MAX_STEPS = 10;
@@ -110,8 +110,12 @@ export class ModelAgent implements AgentProvider {
   /** The model that answered the last request, as its provider named it (a fallback can answer for the one asked). */
   answeredBy: string | null = null;
 
+  /** The person's own sentence for the request being run (see AgentInput.own). */
+  private own: string | undefined;
+
   async run(input: AgentInput, ctx: AgentContext): Promise<AgentOutput> {
     this.answeredBy = null;
+    this.own = input.own;
     const { project, progress, signal } = ctx;
     const system = systemPrompt(project);
     const messages: Msg[] = [{ role: 'user', parts: [{ type: 'text', text: userMessage(input, project) }] }];
@@ -193,6 +197,12 @@ export class ModelAgent implements AgentProvider {
         const why = p.shape.success ? 'Another propose_change in the same turn didn’t match the expected shape' : `The change didn't match the expected shape: ${p.shape.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`;
         errors.set(p.call.id, refused(why));
       }
+      return { errors };
+    }
+    // A file that runs outside the page, which the person didn't ask to change: refused, so the model says so instead.
+    const guarded = good.flatMap((g) => g.edits).map((e) => guardedFile(e.path, this.own)).find(Boolean);
+    if (guarded) {
+      for (const c of calls) errors.set(c.id, refused(guarded));
       return { errors };
     }
     try {
