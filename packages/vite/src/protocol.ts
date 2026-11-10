@@ -215,7 +215,8 @@ export type SessionEventBody =
    * `repeat`: the event stands for itself and this many more quick, successful requests to the same address, with the same status, within a
    * second of one recorded on its own; `ms` is their average.
    */
-  | { type: 'net'; via: 'fetch' | 'xhr'; method: string; url: string; status: number; ok: boolean; ms: number; size?: number; error?: string; body?: string; ctype?: string; stack?: string; repeat?: number }
+  /** `wants: 'data'`: the app asked for JSON (its Accept header, or an XHR's json response type). */
+  | { type: 'net'; via: 'fetch' | 'xhr'; method: string; url: string; status: number; ok: boolean; ms: number; size?: number; error?: string; body?: string; ctype?: string; stack?: string; repeat?: number; wants?: 'data' }
   | { type: 'perf'; metric: 'lcp' | 'cls' | 'inp' | 'longtask' | 'fcp'; value: number; el?: SessionTarget | null; detail?: string }
   /** Several fast clicks on the same spot: the user expected something to happen. */
   | { type: 'rage'; x: number; y: number; clicks: number; el: SessionTarget }

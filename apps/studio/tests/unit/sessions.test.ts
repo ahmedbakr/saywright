@@ -207,10 +207,17 @@ describe('scores next to a written report', () => {
 
 describe('what the evidence means', () => {
   it('flags a data request answered with the app’s page (a missing API route)', () => {
-    const a = analyze(meta(), [ev(0, { type: 'net', via: 'fetch', method: 'GET', url: '/api/orders', status: 200, ok: true, ms: 12, ctype: 'text/html' }), ev(10, { type: 'net', via: 'fetch', method: 'GET', url: '/about.html', status: 200, ok: true, ms: 5, ctype: 'text/html' })], [], []);
+    const a = analyze(meta(), [ev(0, { type: 'net', via: 'fetch', method: 'GET', url: '/api/orders', status: 200, ok: true, ms: 12, ctype: 'text/html', wants: 'data' }), ev(10, { type: 'net', via: 'fetch', method: 'GET', url: '/about.html', status: 200, ok: true, ms: 5, ctype: 'text/html' })], [], []);
     const html = a.issues.filter((g) => g.kind === 'network');
     expect(html).toHaveLength(1);
     expect(html[0].title).toBe('GET /api/orders returns a web page instead of data');
+  });
+
+  it('leaves alone an HTML fragment the app asked for, unless its code then failed to read it as JSON', () => {
+    const fragment = ev(0, { type: 'net', via: 'fetch', method: 'GET', url: '/frag/cart', status: 200, ok: true, ms: 12, ctype: 'text/html' });
+    expect(analyze(meta(), [fragment], [], []).issues).toEqual([]);
+    const failed = analyze(meta(), [fragment, ev(40, { type: 'error', kind: 'rejection', message: `Unexpected token '<', "<!doctype "... is not valid JSON` })], [], []);
+    expect(failed.issues.map((g) => g.title)).toContain('GET /frag/cart returns a web page instead of data');
   });
 
   it('counts every request and error the app’s page summarised, and says how many it had to drop', () => {

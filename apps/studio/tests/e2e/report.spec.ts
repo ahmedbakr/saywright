@@ -231,3 +231,48 @@ test('a request still waiting when the session stops is in the report; an empty 
   await expect(page.locator('[data-nothing-to-judge]')).toContainText('Nothing to judge yet');
   await expect(page.getByText('No technical problems found')).toHaveCount(0);
 });
+
+test('quick clicks that each change something, drawing on a canvas, a download and an HTML fragment asked for are no problems', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('saywright.session.prefs', JSON.stringify({ lang: 'en', mic: false, screen: false, video: false, countdown: 0 })));
+  await page.route('**/frag/cart', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<ul><li>Linen napkins × 1</li></ul>' }));
+  await openStudio(page);
+  const frame = page.frames().find((f) => f.url().startsWith(SHOP_URL))!;
+  await page.getByRole('button', { name: 'Record session', exact: true }).click();
+  await page.getByPlaceholder('What are you testing? (optional)').fill('Clean use');
+  await page.getByRole('button', { name: 'Start recording' }).click();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  await frame.evaluate(() => {
+    const box = document.createElement('div');
+    box.innerHTML = `<button id="plus" aria-label="Increase quantity">+</button> Qty <span id="qty">1</span>
+      <button id="view">View cart</button><div id="cart"></div>
+      <canvas id="pad" width="200" height="80" style="cursor:crosshair"></canvas>
+      <button id="invoice">Download invoice</button>`;
+    document.body.prepend(box);
+    document.getElementById('plus')!.onclick = () => (document.getElementById('qty')!.textContent = String(Number(document.getElementById('qty')!.textContent) + 1));
+    document.getElementById('view')!.onclick = async () => (document.getElementById('cart')!.innerHTML = await (await fetch('/frag/cart')).text());
+    const pad = document.getElementById('pad') as HTMLCanvasElement;
+    pad.onclick = (e) => pad.getContext('2d')!.fillRect(e.offsetX, e.offsetY, 4, 4);
+    document.getElementById('invoice')!.onclick = () => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(['invoice'], { type: 'text/plain' }));
+      a.download = 'invoice.txt';
+      a.click();
+    };
+  });
+  await frame.locator('#view').click();
+  for (let i = 0; i < 4; i++) await frame.locator('#plus').click();
+  await frame.locator('#pad').click({ position: { x: 20, y: 20 } });
+  await frame.locator('#invoice').click();
+  await page.waitForTimeout(1800);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  let id = '';
+  await expect
+    .poll(async () => {
+      const { sessions } = (await (await fetch(`${STUDIO}/api/sessions`)).json()) as { sessions: { id: string; name: string; status: string }[] };
+      id = sessions.find((s) => s.name === 'Clean use')?.id ?? '';
+      return sessions.find((s) => s.id === id)?.status;
+    }, { timeout: 60_000 })
+    .toBe('ready');
+  const d = (await (await fetch(`${STUDIO}/api/sessions/${id}`)).json()) as { analysis: { issues: { kind: string; title: string }[] } };
+  expect(d.analysis.issues.filter((i) => i.kind === 'network' || i.kind === 'frustration').map((i) => i.title)).toEqual([]);
+});

@@ -239,7 +239,10 @@ export class SessionRecorder {
   private requests = 0;
   /** Requests sent and not answered yet: one still open when the session stops, after a while, never answered. */
   private open = new Map<object, { via: 'fetch' | 'xhr'; method: string; url: string; t: number; site: Error }>();
-  private lastClicks: { t: number; x: number; y: number }[] = [];
+  private lastClicks: { t: number; x: number; y: number; changes: number; requests: number }[] = [];
+  /** Changes to the page (counted by a MutationObserver) and things done that change nothing on it (a file made to download). */
+  private changes = 0;
+  private effects = 0;
   private submits = new EnterSubmits();
   private rageAt = 0;
   private fieldTimers = new Map<Element, ReturnType<typeof setTimeout>>();
@@ -563,6 +566,15 @@ export class SessionRecorder {
         return r;
       };
     }
+    // What changes the page: quick clicks that each change something aren't rage.
+    new MutationObserver(() => void this.changes++).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+    if (typeof URL.createObjectURL === 'function') {
+      const make = URL.createObjectURL.bind(URL);
+      URL.createObjectURL = (obj: Blob | MediaSource) => {
+        this.effects++;
+        return make(obj);
+      };
+    }
     this.patchConsole();
     this.patchFetch();
     this.patchXhr();
@@ -593,10 +605,13 @@ export class SessionRecorder {
     const y = Math.round(e.clientY);
     this.recordLater({ type: 'click', x, y, button: e.button, pointer: (e as PointerEvent).pointerType || 'mouse', el: target, count: e.detail || 1 }, t, [[target, el]]);
 
-    // Rage: three or more clicks within a second on (nearly) the same spot.
+    // Rage: three or more clicks within a second on (nearly) the same spot, that did nothing (a “+” that counts up
+    // each time is quick use, not frustration): no change in the page, no request, since the first of them.
     this.lastClicks = this.lastClicks.filter((c) => t - c.t < 1000 && Math.hypot(c.x - x, c.y - y) < 40);
-    this.lastClicks.push({ t, x, y });
-    if (this.lastClicks.length >= 3 && t - this.rageAt > 1500) {
+    this.lastClicks.push({ t, x, y, changes: this.changes, requests: this.requests + this.effects });
+    const first = this.lastClicks[0];
+    const idle = first.changes === this.changes && first.requests === this.requests + this.effects;
+    if (this.lastClicks.length >= 3 && idle && t - this.rageAt > 1500) {
       this.rageAt = t;
       const rage = this.target(el);
       this.recordLater({ type: 'rage', x, y, clicks: this.lastClicks.length, el: rage }, t, [[rage, el]]);
@@ -609,11 +624,14 @@ export class SessionRecorder {
     if (isField(el) || el instanceof HTMLLabelElement) return;
     // Links that open elsewhere (a new tab, a download, another site, mail) change nothing here by design.
     const link = el.closest('a[href]') as HTMLAnchorElement | null;
-    if (link && (link.target === '_blank' || link.hasAttribute('download') || link.origin !== location.origin || /^(mailto|tel|sms):/.test(link.protocol))) return;
+    if (link && (link.target === '_blank' || link.hasAttribute('download') || link.origin !== location.origin || /^(mailto|tel|sms|blob|data):/.test(link.protocol))) return;
+    // A drawing surface draws without changing the page; a file made for download changes nothing either.
+    if (el.closest('canvas')) return;
     const clickable = el.matches(INTERACTIVE) || getComputedStyle(el).cursor === 'pointer';
     if (!clickable) return;
     const url = location.href;
     const requests = this.requests;
+    const effects = this.effects;
     const focused = document.activeElement;
     const sx = scrollX;
     const sy = scrollY;
@@ -625,7 +643,7 @@ export class SessionRecorder {
     mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
     setTimeout(() => {
       mo.disconnect();
-      if (!this.active || changed || location.href !== url || this.requests !== requests || scrollX !== sx || scrollY !== sy) return;
+      if (!this.active || changed || location.href !== url || this.requests !== requests || this.effects !== effects || scrollX !== sx || scrollY !== sy) return;
       if (document.activeElement !== focused && document.activeElement !== el) return;
       const target = this.target(el);
       this.recordLater({ type: 'dead', x, y, el: target }, t, [[target, el]]);
@@ -885,6 +903,14 @@ export class SessionRecorder {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (!self.active || PLUMBING_URL.test(url)) return original.call(this, input, init);
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      // Whether the app asked for data (JSON): a web page in answer is then wrong; an HTML fragment asked for is not.
+      let wants: 'data' | undefined;
+      try {
+        const accept = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)).get('accept') ?? '';
+        if (/json/i.test(accept)) wants = 'data';
+      } catch {
+        /* headers it can't read */
+      }
       const t = now();
       // Where the app made the request: the browser keeps the frames, and only a request that goes wrong turns them into text.
       const site = new Error();
@@ -906,7 +932,7 @@ export class SessionRecorder {
         const size = Number(res.headers.get('content-length')) || undefined;
         const ctype = res.headers.get('content-type')?.split(';')[0].trim().slice(0, 60) || undefined;
         const suspect = !res.ok || ctype === 'text/html';
-        self.net({ type: 'net', via: 'fetch', method, url: shortUrl(url), status: res.status, ok: res.ok, ms, size, body, ctype, stack: suspect ? callSite(site) : undefined }, t);
+        self.net({ type: 'net', via: 'fetch', method, url: shortUrl(url), status: res.status, ok: res.ok, ms, size, body, ctype, stack: suspect ? callSite(site) : undefined, ...(wants ? { wants } : {}) }, t);
         return res;
       } catch (err) {
         self.open.delete(key);
@@ -941,7 +967,7 @@ export class SessionRecorder {
           if (!ok && (this.responseType === '' || this.responseType === 'text')) text = collapse(this.responseText, 800);
           const ctype = this.getResponseHeader('content-type')?.split(';')[0].trim().slice(0, 60) || undefined;
           const stack = !ok || ctype === 'text/html' ? callSite(site) : undefined;
-          self.net({ type: 'net', via: 'xhr', method: meta.method, url: shortUrl(meta.url), status: this.status, ok, ms: Math.round(now() - t), body: text, error: this.status === 0 ? 'network error' : undefined, ctype, stack }, t);
+          self.net({ type: 'net', via: 'xhr', method: meta.method, url: shortUrl(meta.url), status: this.status, ok, ms: Math.round(now() - t), body: text, error: this.status === 0 ? 'network error' : undefined, ctype, stack, ...(this.responseType === 'json' ? { wants: 'data' as const } : {}) }, t);
         });
       }
       return send.call(this, body);

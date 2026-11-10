@@ -288,6 +288,11 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
   if (pages.length) pages[pages.length - 1].ms = end - pages[pages.length - 1].t;
   const startState = (events.find((e) => e.type === 'page' && !!(e as { state?: string }).state) as { state?: string } | undefined)?.state;
 
+  // An app that loads HTML on purpose (a fragment it inserts) asked for it: a web page is wrong only when it asked for
+  // data, or its code then failed to read the answer as JSON (“Unexpected token '<'”).
+  const jsonFailures = events.filter((e) => (e.type === 'error' || e.type === 'console') && /JSON|Unexpected token\s*'?</i.test(String((e as { message?: string; text?: string }).message ?? (e as { text?: string }).text ?? ''))).map((e) => e.t);
+  const readAsJson = (t: number) => jsonFailures.some((x) => x >= t && x - t < 3000);
+
   // ---- grouping helpers ----
   const groups = new Map<string, SessionIssue>();
   const proof = new Map<SessionIssue, TimelineItem[]>();
@@ -536,7 +541,7 @@ function* analysis(meta: SessionMeta, events: StoredEvent[], transcript: Transcr
               src: stackSource(e.stack),
             }),
           );
-        } else if (e.ok && e.ctype === 'text/html' && !/\.html?(\?|$)/i.test(page.split('?')[0]) && page.split('?')[0] !== '/') {
+        } else if (e.ok && e.ctype === 'text/html' && !/\.html?(\?|$)/i.test(page.split('?')[0]) && page.split('?')[0] !== '/' && (e.wants === 'data' || readAsJson(e.t))) {
           // Dev servers answer unknown paths with the app's own page: the code asked for data and got a web page.
           netFailed++;
           ep.failed++;
