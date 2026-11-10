@@ -113,7 +113,7 @@ describe('Claude errors', () => {
     for (const [a, want] of cases) {
       const e = await claude(`/a${i++}`, a)
         .chat(ask)
-        .catch((x: Error) => x);
+        .then(() => new Error("answered"), (x: Error) => x);
       expect(e.message).toMatch(want);
       expect(e.message).not.toMatch(/\{|request_id|\.\.$/);
     }
@@ -124,7 +124,7 @@ describe('Claude errors', () => {
     const error = `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } })}\n\n`;
     const e = await claude('/ov', { status: 200, type: 'text/event-stream', body: start + error })
       .chat(ask)
-      .catch((x: Error) => x);
+      .then(() => new Error("answered"), (x: Error) => x);
     expect(e.message).toBe('Anthropic is overloaded right now. Try again in a minute.');
   });
 });
