@@ -46,9 +46,9 @@ What it adds depends on the app:
 
 | App | What `connect` changes |
 | --- | --- |
-| **Vite** (including React Router and Remix on Vite) | Installs `@saywright/vite` with the app's own package manager, then adds `saywright()` to the plugins in the Vite config, in the config's own style. |
+| **Vite** (including Vue, React Router and Remix on Vite) | Installs `@saywright/vite` with the app's own package manager, then adds `saywright()` to the plugins in the Vite config, in the config's own style. The plugin runs on the dev server only: nothing of it is built. Where the config's plugins can't be found for sure (a list kept in a variable, a CommonJS `vite.config.cjs`: the plugin needs an ES module config), it changes nothing and prints the lines to add by hand. |
 | **Next.js** | Adds one development-only script tag to the root layout (`app/layout`) or `pages/_document`. |
-| **Other apps with an HTML page** (Create React App, webpack, Angular…) | Adds the script tag at the top of the page's `<head>` (`public/index.html`, `index.html` or `src/index.html`), so session recording starts before the app's own scripts. This tag isn't removed from production builds: the comment above it says to remove it before you deploy. Anywhere the studio isn't running, it fails to load and the page carries on. |
+| **Other apps with an HTML page** (Create React App, webpack, Angular…) | Adds the script tag at the top of the page's `<head>` (`public/index.html`, `index.html` or `src/index.html`), so session recording starts before the app's own scripts. This tag isn't removed from production builds: `connect` says so, and the comment above it says to remove it before you deploy. Anywhere the studio isn't running, it fails to load and the page carries on. |
 | **SvelteKit, Astro, Nuxt, Docusaurus** and others without an HTML page | Nothing: the studio shows them through its proxy. |
 | **A folder of plain HTML** (with or without a `package.json`), **a PHP app** | Nothing: the studio shows every page through its proxy. |
 | **A monorepo's top folder** | Nothing: it lists the apps inside, to connect one of them. |

@@ -1,7 +1,8 @@
 /**
  * `saywright connect <app folder>`: connect an app to the studio, once.
  *
- *   Vite            adds the @saywright/vite plugin (element ↔ exact source line for React, test sessions)
+ *   Vite            adds the @saywright/vite plugin (element ↔ exact source line for React, test sessions), in Vue
+ *                   on Vite too; a CommonJS config is left as it is (the plugin is an ES module)
  *   Next.js         adds one development-only script tag to the root layout
  *   Others          with an HTML page (Create React App, webpack, Angular…): the script tag in that page; without one
  *                   (SvelteKit, Astro, Nuxt, Docusaurus…) nothing to add: the studio shows them through its proxy
@@ -15,12 +16,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { STUDIO_URL } from '@saywright/vite/protocol';
-import { declaredDeps, devCommandOf, FRAMEWORK_NAME, frameworkOf, htmlTitle, installedPackage, packageManagerFor, portGuess, readPkg, VITE_BASED, viteConfigIn, workspaceApps } from '../server/apps/detect.ts';
+import { declaredDeps, devCommandOf, FRAMEWORK_NAME, frameworkOf, htmlTitle, installedPackage, loadsBridge, packageManagerFor, portGuess, readPkg, VITE_BASED, viteConfigIn, workspaceApps } from '../server/apps/detect.ts';
 import { diffFile } from '../server/diff.ts';
 import { connectedTargets } from '../server/apps/connected.ts';
 import { ASSIGNED_URL } from '../server/apps/registry.ts';
 import type { CliContext } from './index.ts';
-import { addImport } from './source.ts';
+import { addJsxScript, addPageScript, addVitePlugin } from './source.ts';
 import { c, fail, warn } from './term.ts';
 
 const HELP = `
@@ -118,8 +119,6 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
     fail(`${pm} ${args.join(' ')} failed.`, `Run it yourself in ${root}.`);
     return false;
   };
-  /** The studio's script tag. */
-  const marked = (src: string) => /\/saywright\.js/.test(src);
   /** A script tag added before, pointing at another studio address: point it here. */
   const retarget = (file: string, src: string) => {
     const next = src.replace(/https?:\/\/[^"'\s]+\/saywright\.js/g, scriptUrl);
@@ -127,22 +126,19 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
   };
 
   let how: 'plugin' | 'script' | 'proxy';
+  /** The script tag a page built for production keeps: said here as well as in the comment above it. */
+  let shipsTag = false;
   if (viteConfig) {
     how = 'plugin';
+    const file = path.basename(viteConfig);
     const before = fs.readFileSync(viteConfig, 'utf8');
-    let src = before;
-    let what = '';
-    if (!src.includes('@saywright/vite')) {
-      if (!/plugins\s*:\s*\[/.test(src)) {
-        fail(`Couldn't find "plugins: [" in ${path.basename(viteConfig)}. Add saywright() to your plugins by hand:`, `import saywright from '@saywright/vite';\n  plugins: [saywright(), react()]`);
-        return 1;
-      }
-      // In the file's own style: its quotes, and one plugin a line when it lists them so.
-      const q = /^import [^\n]*"[^"\n]+";?\s*$/m.test(src) && !/^import [^\n]*'[^'\n]+';?\s*$/m.test(src) ? '"' : "'";
-      // Its semicolons too: none after its imports, none after this one.
-      const semi = /^import [^\n]*['"][^'"\n]+['"][ \t]*$/m.test(src) && !/^import [^\n]*['"][^'"\n]+['"];/m.test(src) ? '' : ';';
-      src = addImport(src, `import saywright from ${q}@saywright/vite${q}${semi}`).replace(/plugins\s*:\s*\[([ \t]*\n([ \t]*))?/, (m, nl?: string, indent?: string) => (nl ? `${m}saywright(),\n${indent}` : `${m}saywright(), `));
-      what = 'Added the saywright() plugin';
+    // Where the plugin goes is found before anything is installed: a config it can't go in safely is left as it is.
+    const edit = addVitePlugin(before, viteConfig);
+    if (edit.kind === 'manual') {
+      const byHand = `import saywright from '@saywright/vite';\n  plugins: [saywright(), …your other plugins]`;
+      if (edit.commonjs) fail(`${file} is a CommonJS file (require and module.exports), and the Saywright plugin needs an ES module config. ${file} is left as it is.`, `Write the config as an ES module (vite.config.mjs, with import and export default), then add:\n  ${byHand}`);
+      else fail(`Couldn’t add the plugin to ${file} safely: ${edit.why}. ${file} is left as it is. Add saywright() to your plugins by hand:`, byHand);
+      return 1;
     }
     // The package first: if installing fails, the config isn't left importing a plugin that isn't there. In a
     // monorepo it may be installed for the whole workspace already.
@@ -152,7 +148,7 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
       changes.push(`${dry ? 'Installs' : 'Installed'} @saywright/vite with ${pm}`);
       if (!run(pm === 'npm' ? ['install', '-D', spec] : ['add', '-D', spec])) return 1;
     }
-    if (src !== before) write(viteConfig, src, what);
+    if (edit.kind === 'edit' && edit.code !== before) write(viteConfig, edit.code, edit.repaired ? 'Added the saywright() plugin to the config’s own plugins' : 'Added the saywright() plugin');
   } else if (framework === 'next') {
     how = 'script';
     const layout = first('src/app/layout.tsx', 'app/layout.tsx', 'src/app/layout.jsx', 'app/layout.jsx', 'src/app/layout.js', 'app/layout.js');
@@ -164,27 +160,31 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
       return 1;
     }
     const src = fs.readFileSync(file, 'utf8');
-    if (marked(src)) retarget(file, src);
-    else if (layout) {
-      if (!/<body[^>]*>/.test(src)) {
-        fail(`No <body> in ${path.relative(root, layout)}. Add this inside your root layout's <body>:`, tag);
+    if (loadsBridge(src)) retarget(file, src);
+    else {
+      const edit = addJsxScript(src, layout ? 'body' : 'head', tag);
+      if ('refused' in edit) {
+        fail(`Couldn’t add the Saywright script to ${path.relative(root, file)}: ${edit.refused}. It is left as it is. Add this inside your root layout’s ${layout ? '<body>' : '<Head>'}:`, tag);
         return 1;
       }
-      // On a line of its own, indented like what follows the <body> tag; no line of spaces left behind.
-      const added = src.replace(/<body([^>]*)>([ \t]*\n([ \t]*))?/, (m: string, _attrs: string, nl?: string, indent?: string) => (nl !== undefined ? `${m.slice(0, m.length - nl.length)}\n${indent}${tag}${nl}` : `${m}\n        ${tag}\n        `));
-      write(layout, added, 'Added the Saywright script (development only)');
-    } else write(file, src.replace(/<Head([^>]*)>/, (m) => `${m}\n          ${tag}`), 'Added the Saywright script (development only)');
+      if (edit.code !== src) write(file, edit.code, 'Added the Saywright script (development only)');
+    }
   } else if (page && framework !== 'static') {
     how = 'script';
-    let src = fs.readFileSync(page, 'utf8');
-    if (marked(src)) retarget(page, src);
+    const src = fs.readFileSync(page, 'utf8');
+    if (loadsBridge(src)) retarget(page, src);
     else {
       // First in the head, and not deferred: the session recorder is in place before the app's own scripts run, so
       // nothing they do is missed (after a reload too). It only loads where the studio runs (your computer); anywhere
       // else the request fails at once and the page carries on.
-      const tag = `<!-- Saywright (development): remove before you deploy -->\n    <script src="${scriptUrl}"></script>`;
-      src = /<head[^>]*>/i.test(src) ? src.replace(/<head[^>]*>/i, (m) => `${m}\n    ${tag}`) : src.replace(/<\/head>/i, `  ${tag}\n  </head>`);
-      write(page, src, 'Added the Saywright script');
+      const lines = ['<!-- Saywright (development): remove before you deploy -->', `<script src="${scriptUrl}"></script>`];
+      const edit = addPageScript(src, lines);
+      if ('refused' in edit) {
+        fail(`Couldn’t add the Saywright script to ${path.relative(root, page)}: ${edit.refused}. It is left as it is. Add this first in its <head>:`, lines.join('\n  '));
+        return 1;
+      }
+      write(page, edit.code, 'Added the Saywright script');
+      shipsTag = true;
     }
   } else {
     // Pages the framework renders itself (no HTML file to add a tag to), a folder of pages (a tag in one page would
@@ -211,6 +211,7 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
   console.log(`  ${c.dim('·')} App: ${where}`);
   if (dry) for (const e of edits) printDiff(path.relative(root, e.file), e.before, e.after);
   if (start && values.start === undefined && !noStart && pmNote) warn(pmNote);
+  if (shipsTag) warn(`The script tag ${dry ? 'would go' : 'is'} in ${path.relative(root, page!)}, which goes into your production build too: remove it before you deploy.`, 'Anywhere the studio isn’t running it fails to load and the page carries on, but a visitor’s browser still asks for it.');
   if (!values.url && dev.guessed) warn(`${portGuess(dev.guessed, framework, dev.port)}.`, start ? 'The studio finds the real one when it starts the app.' : 'Connect it again with --url and the address it runs at.');
   const mapping =
     framework === 'static' || framework === 'php'

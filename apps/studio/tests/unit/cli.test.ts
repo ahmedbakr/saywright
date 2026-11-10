@@ -205,6 +205,55 @@ describe('connect', () => {
     expect(html.match(/saywright\.js/g)).toHaveLength(1);
   });
 
+  it('puts the plugin in the config’s own plugins, not a PostCSS list above them, and says only what it did', async () => {
+    const config = `import { defineConfig } from 'vite';\nimport react from '@vitejs/plugin-react';\nimport autoprefixer from 'autoprefixer';\n\nexport default defineConfig({\n  css: { postcss: { plugins: [autoprefixer()] } },\n  plugins: [react()],\n});\n`;
+    const dir = app({ 'vite.config.ts': config }, { vite: '^8', '@saywright/vite': '^0.1.0' });
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    const after = fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf8');
+    expect(after).toContain('postcss: { plugins: [autoprefixer()] }');
+    expect(after).toContain('plugins: [saywright(), react()]');
+    expect(out.join('\n')).toMatch(/Added the saywright\(\) plugin: vite\.config\.ts/);
+    out = [];
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf8')).toBe(after);
+    expect(out.join('\n')).not.toMatch(/Added/);
+  });
+
+  it('leaves a CommonJS config as it is, says the plugin needs an ES module config, and how to add it by hand', async () => {
+    const config = `const { defineConfig } = require('vite');\nconst react = require('@vitejs/plugin-react');\n\nmodule.exports = defineConfig({\n  plugins: [react()],\n});\n`;
+    const dir = app({ 'vite.config.cjs': config }, { vite: '^8', '@saywright/vite': '^0.1.0' });
+    expect(await main(['connect', dir], ctx)).toBe(1);
+    expect(fs.readFileSync(path.join(dir, 'vite.config.cjs'), 'utf8')).toBe(config);
+    expect(out.join('\n')).toMatch(/ES module/);
+    expect(out.join('\n')).toContain(`import saywright from '@saywright/vite';`);
+    expect(out.join('\n')).not.toMatch(/Connected/);
+    expect(fs.existsSync(path.join(ctx.layout.dataDir, 'target.json'))).toBe(false);
+  });
+
+  it('gives a Vue app on Vite the plugin, not a script tag that would be built', async () => {
+    const dir = app({ 'vite.config.js': `import { defineConfig } from 'vite';\nimport vue from '@vitejs/plugin-vue';\n\nexport default defineConfig({\n  plugins: [vue()],\n});\n`, 'index.html': '<!doctype html><html><head><title>Tasks</title></head><body></body></html>' }, { vite: '^8', vue: '^3', '@vitejs/plugin-vue': '^6', '@saywright/vite': '^0.1.0' });
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'vite.config.js'), 'utf8')).toContain('plugins: [saywright(), vue()]');
+    expect(fs.readFileSync(path.join(dir, 'index.html'), 'utf8')).not.toContain('saywright');
+  });
+
+  it('says itself that a script tag in a page built for production must be removed before you deploy', async () => {
+    const dir = app({ 'public/index.html': '<!doctype html>\n<html>\n  <head>\n    <title>CRA</title>\n  </head>\n</html>\n' }, { 'react-scripts': '5' });
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(out.join('\n')).toMatch(/Added the Saywright script: public\/index\.html/);
+    expect(out.join('\n')).toMatch(/remove it before you deploy/i);
+  });
+
+  it('adds the tag to a Next.js document whose Head has another name, and claims nothing it didn’t add', async () => {
+    const doc = `import Document, { Html, Head as NextHead, Main, NextScript } from 'next/document';\n\nexport default class MyDocument extends Document {\n  render() {\n    return (\n      <Html>\n        <NextHead />\n        <body>\n          <Main />\n          <NextScript />\n        </body>\n      </Html>\n    );\n  }\n}\n`;
+    const dir = app({ 'pages/_document.js': doc }, { next: '^16' });
+    expect(await main(['connect', dir], ctx)).toBe(0);
+    expect(fs.readFileSync(path.join(dir, 'pages/_document.js'), 'utf8')).toMatch(/<NextHead>\n\s+\{process\.env\.NODE_ENV === 'development' && <script/);
+    const none = app({ 'app/layout.tsx': `export default function Root({ children }) {\n  return children;\n}\n` }, { next: '^16' });
+    expect(await main(['connect', none], ctx)).toBe(1);
+    expect(out.join('\n')).not.toMatch(/Added the Saywright script \(development only\): app/);
+  });
+
   it('refuses a folder that isn’t an app', async () => {
     expect(await main(['connect', fs.mkdtempSync(path.join(os.tmpdir(), 'empty-'))], ctx)).toBe(1);
     expect(out.join('\n')).toMatch(/No package.json/);

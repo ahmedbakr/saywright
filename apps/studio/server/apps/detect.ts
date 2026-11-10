@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AppProbe, Connection, FolderListing, Framework, PackageManager } from '../../shared/apps.ts';
+import { loadsPlugin } from './vite-config.ts';
 
 interface Pkg {
   name?: string;
@@ -32,9 +33,10 @@ export function readPkg(dir: string): Pkg | null {
 
 const first = (dir: string, ...files: string[]) => files.map((f) => path.join(dir, f)).find((f) => fs.existsSync(f)) ?? null;
 const VITE_CONFIGS = ['vite.config.ts', 'vite.config.mts', 'vite.config.js', 'vite.config.mjs', 'vite.config.cjs'];
-/** The studio's script tag in a page, and the Vite plugin's package in a config. */
-const BRIDGE_SCRIPT = /\/saywright\.js\b/;
-const PLUGIN_PACKAGE = /@saywright\/vite\b/;
+/** A tag that loads the studio's script, as a page or a layout writes it (`<script src="http://localhost:7357/saywright.js">`). */
+const BRIDGE_TAG = /<script\b[^>]*?\bsrc\s*=[^>]*?\/saywright\.js\b/i;
+/** Whether a page's or a layout's code loads the studio's script: a tag for it, not a mention of its address or a tag in a comment. */
+export const loadsBridge = (text: string) => BRIDGE_TAG.test(text.replace(/<!--[\s\S]*?-->|\{\s*\/\*[\s\S]*?\*\/\s*\}/g, ''));
 const ASTRO_CONFIGS = ['astro.config.mjs', 'astro.config.ts', 'astro.config.mts', 'astro.config.js'];
 
 /** The app's Vite config file, if it has one. */
@@ -160,8 +162,11 @@ export function packageManagerFor(dir: string): { uses: PackageManager; runs: Pa
   return { uses, runs: 'npm', note: `It uses ${uses}, which isn’t installed on this computer, so it runs with npm. To install its packages, install ${uses} (npm install -g ${uses}).` };
 }
 
-/** Frameworks built on Vite whose pages Vite's HTML hooks reach: the plugin works in them. */
-export const VITE_BASED = new Set<Framework>(['vite', 'react-router', 'remix']);
+/**
+ * Frameworks built on Vite whose pages Vite's HTML hooks reach: the plugin works in them (in a Vue app it connects
+ * the app and records sessions; exact lines are React's). It runs on the dev server only, so nothing of it is built.
+ */
+export const VITE_BASED = new Set<Framework>(['vite', 'vue', 'react-router', 'remix']);
 
 /** Said when a config works out its port in code: the usual port is a guess until the app says where it listens. */
 export const portGuess = (config: string, framework: Framework, port: number | null) => `${config} works out its port in code, so ${port} (${FRAMEWORK_NAME[framework]}’s usual one) is a guess`;
@@ -306,7 +311,7 @@ const SCRIPT_FILES = ['src/app/layout.tsx', 'app/layout.tsx', 'src/app/layout.js
 export function hasScriptTag(dir: string): boolean {
   for (const rel of SCRIPT_FILES) {
     try {
-      if (BRIDGE_SCRIPT.test(fs.readFileSync(path.join(dir, rel), 'utf8').slice(0, 200_000))) return true;
+      if (loadsBridge(fs.readFileSync(path.join(dir, rel), 'utf8').slice(0, 200_000))) return true;
     } catch {
       /* not there */
     }
@@ -314,12 +319,11 @@ export function hasScriptTag(dir: string): boolean {
   return false;
 }
 
-/** Whether a Vite config already loads the studio's plugin. */
+/** Whether a Vite config already loads the studio's plugin: in its own plugins, not in a comment or another list. */
 export function hasPlugin(dir: string): boolean {
   const config = first(dir, ...VITE_CONFIGS);
   if (!config) return false;
-  const src = fs.readFileSync(config, 'utf8');
-  return PLUGIN_PACKAGE.test(src);
+  return loadsPlugin(fs.readFileSync(config, 'utf8'), config);
 }
 
 /** A static site's name: its home page's title, up to the first separator ("Shop | Brand" → "Shop"). */
@@ -429,7 +433,7 @@ export async function probeUrl(input: string): Promise<AppProbe> {
       .then((r) => r.ok && /json/.test(r.headers.get('content-type') ?? ''))
       .catch(() => false);
   }
-  const script = BRIDGE_SCRIPT.test(html);
+  const script = loadsBridge(html);
   const connection: Connection = plugin ? 'plugin' : script ? 'script' : 'proxy';
   if (connection === 'proxy') notes.push(frameBlocked ? 'It refuses to be shown in a frame; the studio’s proxy takes care of that.' : 'Shown through the studio’s proxy, which adds the studio to its pages.');
   if (!local) notes.push('A deployed site: test sessions, replays and audits work; code changes need its folder linked too.');
