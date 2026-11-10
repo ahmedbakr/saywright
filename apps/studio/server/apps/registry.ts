@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AppEnv, AppProbe, LinkedApp } from '../../shared/apps.ts';
+import { readJson, writeJson } from '../fsx.ts';
 import { isLocalHost } from './detect.ts';
 
 interface RegistryFile {
@@ -50,25 +51,64 @@ export function envFor(url: string, connection: AppEnv['connection'], label?: st
   };
 }
 
+/** The apps a file's contents hold, or null when it isn't an app list (damaged, or something else's file). */
+function appsIn(raw: unknown): LinkedApp[] | null {
+  const apps = (raw as Partial<RegistryFile> | undefined)?.apps;
+  return Array.isArray(apps) ? apps.filter((a) => a && typeof a.id === 'string' && Array.isArray(a.envs) && a.envs.length) : null;
+}
+
 export class AppRegistry {
   private data: RegistryFile = { version: 1, apps: [], last: null };
   private readonly file: string;
+  /** The apps the file held when this studio last read or wrote it: what another studio added or removed since shows against it. */
+  private onDisk = new Set<string>();
 
   constructor(readonly dataDir: string) {
     this.file = path.join(dataDir, 'apps.json');
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<RegistryFile>;
-      if (Array.isArray(raw.apps)) this.data = { version: 1, apps: raw.apps.filter((a) => a && typeof a.id === 'string' && Array.isArray(a.envs) && a.envs.length), last: raw.last ?? null, launcher: raw.launcher, cloneDir: raw.cloneDir };
-    } catch {
-      /* first run */
+    // A damaged list is set aside and its last good copy used (readJson says so): every linked app, with its
+    // addresses and commands, is in this one file.
+    let raw = readJson<Partial<RegistryFile>>(this.file);
+    if (raw !== undefined && !appsIn(raw)) {
+      // It parses, but it isn't an app list: set aside the same way, never written over.
+      const aside = `${this.file}.broken-${Date.now()}`;
+      try {
+        fs.renameSync(this.file, aside);
+        console.warn(`[saywright] apps.json doesn’t hold an app list and was moved to ${aside}.`);
+      } catch {
+        console.warn(`[saywright] ${this.file} doesn’t hold an app list and couldn’t be moved aside.`);
+      }
+      raw = readJson<Partial<RegistryFile>>(`${this.file}.bak`);
     }
+    const apps = appsIn(raw);
+    if (apps) this.data = { version: 1, apps, last: raw?.last ?? null, launcher: raw?.launcher, cloneDir: raw?.cloneDir };
+    this.onDisk = new Set(this.data.apps.map((a) => a.id));
+  }
+
+  /**
+   * What another studio on the same data folder linked or unlinked since this one last looked is taken in before
+   * the list is written, so two studios (two ports, two projects) don't lose each other's apps. A damaged file is
+   * left to the next start to deal with.
+   */
+  private merge(): void {
+    let theirs: LinkedApp[] | null = null;
+    try {
+      theirs = appsIn(JSON.parse(fs.readFileSync(this.file, 'utf8')));
+    } catch {
+      return;
+    }
+    if (!theirs) return;
+    const mine = new Set(this.data.apps.map((a) => a.id));
+    const now = new Set(theirs.map((a) => a.id));
+    for (const app of theirs) if (!mine.has(app.id) && !this.onDisk.has(app.id)) this.data.apps.push(app);
+    this.data.apps = this.data.apps.filter((a) => now.has(a.id) || !this.onDisk.has(a.id));
+    if (this.data.last && !this.data.apps.some((a) => a.id === this.data.last)) this.data.last = null;
   }
 
   private save(): void {
     fs.mkdirSync(this.dataDir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
-    fs.renameSync(tmp, this.file);
+    this.merge();
+    writeJson(this.file, this.data);
+    this.onDisk = new Set(this.data.apps.map((a) => a.id));
   }
 
   list(): LinkedApp[] {
