@@ -3,7 +3,9 @@
  * (read_file, search_code, list_files) and proposes one change
  * (propose_change), which the studio shows as a live preview to keep or undo.
  * An edit that doesn't apply goes back to the model with the reason, so it can
- * correct itself.
+ * correct itself. A turn cut off at the length limit has none of its calls
+ * run, and the changes proposed in one turn land together or not at all: what
+ * the person previews is always the whole of what its title says.
  *
  * Token-safe by construction: the system prompt and every earlier step are
  * cached by the providers that cache; tool output is capped; it stops after a
@@ -80,6 +82,17 @@ interface AgentHooks {
 
 const cap = (s: string) => (s.length > MAX_TOOL_OUTPUT ? `${s.slice(0, MAX_TOOL_OUTPUT)}\n… (cut here; ask for a narrower range)` : s);
 
+/**
+ * What the model is told, once, when a turn that was calling tools stopped at the length limit. Nothing of that turn
+ * is run or sent back: a call cut in the middle can read as a complete, smaller one.
+ */
+const CUT_TURN =
+  'Your last answer was cut off at the length limit before it was complete. Nothing in it was run. Send it again so that it fits: one propose_change with smaller edits (replace only the lines that change, never a whole file). If everything that was asked cannot fit in one answer, propose the most important part now, with a title that names only that part, and say in the summary what is still to do.';
+/** What stands for the cut turn in the conversation when it had no words of its own. */
+const CUT_PLACEHOLDER = '(My answer was cut off at the length limit.)';
+
+type ToolResult = { id: string; name: string; output: string; error?: boolean };
+
 export class ModelAgent implements AgentProvider {
   readonly source = 'ai' as const;
   readonly model: string;
@@ -99,6 +112,8 @@ export class ModelAgent implements AgentProvider {
     const system = systemPrompt(project);
     const messages: Msg[] = [{ role: 'user', parts: [{ type: 'text', text: userMessage(input, project) }] }];
     progress('Thinking');
+    /** Whether the model was already told that a turn of its was cut off (it is told once). */
+    let cut = false;
     for (let step = 0; step < MAX_STEPS; step++) {
       if (signal?.aborted) throw new AgentError('Stopped.', 'aborted');
       const ticket = this.hooks.admit?.({ input: inputTokens({ system, messages, tools: TOOLS }), maxTokens: MAX_ANSWER, minTokens: MIN_ANSWER }) ?? unwatched(MAX_ANSWER);
@@ -112,19 +127,38 @@ export class ModelAgent implements AgentProvider {
       }
       ticket.settle(res, Date.now() - started);
       if (res.stop === 'refusal') throw new AgentError(`${this.name} declined this request. Try rephrasing it.${noFallback(this.chat, ticket)}`, 'refused');
+      /** The budget left this turn less room than a turn gets: then that, not the request's size, is why it was cut. */
+      const tight = ticket.maxTokens < MAX_ANSWER;
+      const room = (who: string) => `what is left of your budget let ${who} answer in only about ${Math.round(ticket.maxTokens / 1000)}K tokens`;
+      const outOfRoom = () => new AgentError(`${this.name} ran out of room before finishing: ${room('it')}. Raise the limit in Settings → Usage and budget, or try a smaller request.`, 'budget');
       if (!res.calls.length) {
+        // An answer that stops in mid-sentence is shown as what it is.
+        if (res.text && res.stop === 'length') return { kind: 'answer', text: `${res.text} … (Cut short: ${tight ? `${room(this.name)}. Raise the limit in Settings → Usage and budget for a full answer.` : 'the answer reached its length limit.'})` };
         if (res.text) return { kind: 'answer', text: res.text };
-        if (res.stop === 'length' && ticket.maxTokens < MAX_ANSWER) throw new AgentError(`${this.name} ran out of room before finishing: what is left of your budget let it answer in only about ${Math.round(ticket.maxTokens / 1000)}K tokens. Raise the limit in Settings → Usage and budget, or try a smaller request.`, 'budget');
+        if (res.stop === 'length' && tight) throw outOfRoom();
         if (res.stop === 'length') throw new AgentError(`${this.name} ran out of room before finishing. Try a smaller request.`, 'other');
         throw new AgentError(`${this.name} finished without a change or an answer. Try rephrasing.`, 'other');
       }
+      if (res.stop === 'length') {
+        // A turn cut off while it was calling tools: none of its calls is run. One cut in the middle can read as a
+        // whole, smaller change (a provider's parser closes what was left open), and would land under the title of
+        // all of it. The model is told once; cut again, the request stops with what the person can do.
+        if (cut) throw tight ? outOfRoom() : new AgentError('The change was too long for one answer: ask for it in smaller parts.', 'other');
+        cut = true;
+        progress('Retrying', 'the answer was cut off');
+        // In words only: the unfinished call itself is not sent back (providers refuse arguments that aren't JSON).
+        messages.push({ role: 'assistant', text: res.text || CUT_PLACEHOLDER, calls: [] }, { role: 'user', parts: [{ type: 'text', text: CUT_TURN }] });
+        continue;
+      }
       messages.push({ role: 'assistant', text: res.text, calls: res.calls, raw: res.raw });
-      const results: { id: string; name: string; output: string; error?: boolean }[] = [];
+      // Every change proposed in this turn, as one: the first alone would leave the others out without a word.
+      const proposals = res.calls.filter((c) => c.name === 'propose_change');
+      const proposed = proposals.length ? this.propose(proposals, ctx) : null;
+      if (proposed?.change) return proposed.change;
+      const results: ToolResult[] = [];
       for (const call of res.calls) {
         if (call.name === 'propose_change') {
-          const out = this.propose(call, ctx);
-          if (out.change) return out.change;
-          results.push({ id: call.id, name: call.name, output: out.error ?? 'The change could not be applied.', error: true });
+          results.push({ id: call.id, name: call.name, output: proposed?.errors.get(call.id) ?? 'The change could not be applied.', error: true });
           continue;
         }
         try {
@@ -138,15 +172,33 @@ export class ModelAgent implements AgentProvider {
     throw new AgentError(`${this.name} took too many steps without finishing. Try a smaller, more specific request.`, 'other');
   }
 
-  private propose(call: ToolCall, ctx: AgentContext): { change?: AgentOutput; error?: string } {
-    const parsed = ProposeChange.safeParse(call.args);
-    if (!parsed.success) return { error: `The change didn't match the expected shape: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}` };
+  /**
+   * The change a turn proposed. Several propose_change calls in one turn are one change, with every edit of each in
+   * the order given: all of it applies, or none of it does and each call is answered with why (`errors`, by call id),
+   * so nothing the model sent is left out without it being told.
+   */
+  private propose(calls: ToolCall[], ctx: AgentContext): { change?: AgentOutput; errors: Map<string, string> } {
+    const errors = new Map<string, string>();
+    /** Why a call wasn't applied, and, when the turn had several, that none of them was. */
+    const refused = (why: string) => (calls.length > 1 ? `${why.replace(/\.$/, '')}. None of this turn’s changes was applied: send one propose_change with every edit.` : why);
+    const parsed = calls.map((call) => ({ call, shape: ProposeChange.safeParse(call.args) }));
+    const good = parsed.flatMap((p) => (p.shape.success ? [p.shape.data] : []));
+    if (good.length < calls.length) {
+      for (const p of parsed) {
+        const why = p.shape.success ? 'Another propose_change in the same turn didn’t match the expected shape' : `The change didn't match the expected shape: ${p.shape.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`;
+        errors.set(p.call.id, refused(why));
+      }
+      return { errors };
+    }
     try {
-      const edits = applyEditSpecs(ctx.project, parsed.data.edits);
-      return { change: { kind: 'change', title: parsed.data.title.slice(0, 80), summary: parsed.data.summary, edits } };
+      const edits = applyEditSpecs(ctx.project, good.flatMap((g) => g.edits));
+      const summaries = [...new Set(good.map((g) => g.summary.trim()).filter(Boolean))];
+      return { change: { kind: 'change', title: titleOf(good.map((g) => g.title)), summary: good.length === 1 ? good[0].summary : summaries.join(' '), edits }, errors };
     } catch (err) {
       ctx.progress('Retrying', 'adjusting the edit');
-      return { error: err instanceof Error ? err.message : String(err) };
+      // The reason names the file of the edit that failed: every call of the turn gets it.
+      for (const call of calls) errors.set(call.id, refused(err instanceof Error ? err.message : String(err)));
+      return { errors };
     }
   }
 
@@ -171,6 +223,16 @@ export class ModelAgent implements AgentProvider {
         return `There is no tool called ${call.name}. Use read_file, search_code, list_files or propose_change.`;
     }
   }
+}
+
+/** A change's title, at most 80 characters: one call's own, or every call's when they fit, else the first and how many more. */
+function titleOf(titles: string[]): string {
+  const [first, ...rest] = titles.map((t) => t.trim());
+  if (!rest.length) return titles[0].slice(0, 80);
+  const all = [first, ...rest].join(' · ');
+  if (all.length <= 80) return all;
+  const more = ` (and ${rest.length} more)`;
+  return `${first.slice(0, 80 - more.length)}${more}`;
 }
 
 /** A short stable hash (for cache keys that shouldn't carry paths). */

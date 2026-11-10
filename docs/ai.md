@@ -75,6 +75,7 @@ Saywright sends as little as it can, as cheaply as it can:
 - **Targeted context.** The AI gets what you pointed at and the code around it instead of your whole app, and reads more only through tools, one file or search at a time. Tool results are capped at 32,000 characters, and a request stops after 10 tool rounds.
 - **Prompt caching** on every provider that offers it, where a prompt is sent again: a change request's instructions and the code already read are cached between rounds, and Autopilot's instructions between steps; cached input costs a tenth or less of new input on Claude models. One-off requests (reports, reviews, translations) aren't cached, since nothing would read the cache back.
 - **Structured answers.** Reports and reviews ask for JSON that matches a schema, with no tools, so there are no wasted rounds. A malformed answer gets one repair attempt, never a loop.
+- **Whole changes only.** An answer that stops at the model's length limit is never applied, even when what arrived reads as a complete, smaller change: the AI is told once to send it again so that it fits, and if that is cut too the request stops with “The change was too long for one answer: ask for it in smaller parts.” Changes the AI proposes side by side in one answer land as one preview with every edit, or not at all.
 - **Plans run lean.** The command-line apps run without saving a session, with only Saywright's MCP connection, and with retries capped, so a failing request stops quickly instead of retrying for minutes.
 - **A budget** (below) warns before you overspend, and can stop requests outright.
 
@@ -117,5 +118,7 @@ Saywright is also an MCP server: Claude Code, Cursor, Codex, VS Code and Claude 
 | “Couldn’t reach …” | The provider or your network is down. Saywright stops quickly instead of retrying for minutes; try again, or route the work elsewhere. |
 | Requests are refused with a budget message | The budget is set to **Stop** and a limit is reached: raise it or reset the count in **Settings → Usage and budget**. |
 | “Claude declined this request” | Rephrase it. With the budget set to **Stop**, Claude doesn't try another model for it; with **Warn** it does. |
+| “The change was too long for one answer” | Ask for it in smaller parts: one file or one behaviour at a time. Nothing was changed. |
+| An answer ends with “(Cut short: …)” | The model reached its length limit in mid-answer. Ask a narrower question; when the note names your budget, raise the limit in **Settings → Usage and budget**. |
 | An OpenAI-compatible provider doesn't list models | Add the model's name by hand under that connection. |
 | A local model makes no changes | Changes need a model that can call tools; most recent ones can. |
