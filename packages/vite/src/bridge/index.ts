@@ -4,6 +4,7 @@
  * and typing on the user's behalf, and records actions for bug reports.
  * Does nothing when the app is opened on its own (not in an iframe).
  */
+import { frameInsideApp } from './frames';
 import {
   NS,
   OLDEST_PROTOCOL,
@@ -359,6 +360,9 @@ if (!window.__saywrightBridge) {
   if (proxied) installProxyRewrites(proxied);
   // Paint and layout-shift timings from the start, for page reviews.
   watchVitals();
-  if (window.parent !== window) start();
+  // A frame inside the app is part of its page: only the app's own window resumes a session and records.
+  if (frameInsideApp(window)) {
+    /* nothing of its own */
+  } else if (window.parent !== window) start();
   else standalone();
 }
