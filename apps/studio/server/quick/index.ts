@@ -29,15 +29,34 @@ function expand(term: string, synonyms: Record<string, string[]>): string[] {
   return [term, ...(synonyms[term] ?? [])];
 }
 
-function pickSet(spec: ComponentSpec, terms: string[], synonyms: Record<string, string[]>): { prop: string; value: string } | null {
+function pickSet(spec: ComponentSpec, terms: string[], synonyms: Record<string, string[]>): { prop: string; value: string; term: string } | null {
   for (const term of terms) {
     for (const candidate of expand(term, synonyms)) {
       for (const [prop, def] of Object.entries(spec.props)) {
-        if (def.values.includes(candidate)) return { prop, value: candidate };
+        if (def.values.includes(candidate)) return { prop, value: candidate, term };
       }
     }
   }
   return null;
+}
+
+/** What an element may be called in a request beside its own name and words: "the button", "this heading". */
+const A_THING = new Set('button link heading title text label card badge row item icon image field input box section tab chip tag banner one element component'.split(' '));
+
+/**
+ * Whether the request's other words only name the element ("make the Delete button red": its words, its kind) or
+ * the prop being set ("the primary variant"). A word that does neither ("make this compact mode optional") asks for
+ * more than a value, and the whole request goes to the AI rather than half of it being done here.
+ */
+function onlyNames(terms: string[], picked: { prop: string; term: string }, ref: RefInfo, name: string, spec: ComponentSpec): boolean {
+  const known = new Set(
+    `${name} ${ref.name} ${ref.text ?? ''} ${picked.prop} ${Object.keys(spec.props).join(' ')}`
+      .toLowerCase()
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .split(/[^a-z0-9-]+/)
+      .filter(Boolean),
+  );
+  return terms.every((t) => t === picked.term || known.has(t) || A_THING.has(t));
 }
 
 function stepProp(spec: ComponentSpec, focus: 'size' | 'spacing'): [string, ComponentProp] | null {
@@ -129,7 +148,7 @@ export function quickEdit(text: string, refs: RefInfo[], project: Project): Quic
         case 'set': {
           if (!spec) return null;
           const pick = pickSet(spec, intent.terms, config.synonyms);
-          if (!pick) return null;
+          if (!pick || !onlyNames(intent.terms, pick, a, name, spec)) return null;
           const def = spec.props[pick.prop];
           if (current(props, pick.prop, def) === pick.value) {
             return { kind: 'message', tone: 'info', text: `${what} already uses ${pick.prop} “${pick.value}”.` };

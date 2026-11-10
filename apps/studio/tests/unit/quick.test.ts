@@ -47,6 +47,21 @@ describe('quickEdit on the sample shop', () => {
     expect(r?.kind === 'edit' && r.edits[0].after).toContain('<Button variant="danger" size="sm"');
   });
 
+  it('sets a value only when the rest of the request names the element or the prop, never when it asks for more', () => {
+    const p = tempShop();
+    const apply = [ref('this', srcOf(p, 'src/components/CouponField.tsx', '<Button variant="secondary"'), 'Button', 'Apply')];
+    for (const said of ['make the Apply button red', 'make it a ghost button', 'use the danger variant', 'ghost']) expect(quickEdit(said, apply, p)?.kind, said).toBe('edit');
+    // “link” is one of Button's variants, and “danger” one of its values: neither is what these ask for.
+    for (const said of ['make it link to /terms', 'make the danger zone collapsible', 'make this primary action optional', 'set the default to express', 'turn this into a dropdown']) expect(quickEdit(said, apply, p), said).toBeNull();
+  });
+
+  it('never resizes, renames, moves or removes for a question, a condition or a “don’t”', () => {
+    const p = tempShop();
+    const pay = [ref('this', srcOf(p, 'src/components/OrderSummary.tsx', '<Button size="lg"'), 'Button', 'Pay $98.00')];
+    for (const said of ["don't make it smaller", 'is this smaller than 44 pixels?', 'make this smaller on mobile', 'make it secondary when disabled', 'the label reads wrong, fix the typo', 'add a tooltip that says Secure payment', 'rename the CSS class to btn-primary'])
+      expect(quickEdit(said, pay, p), said).toBeNull();
+  });
+
   it('steps through ordered sizes and stops at the end', () => {
     const p = tempShop();
     const total = srcOf(p, 'src/components/OrderSummary.tsx', '<SummaryRow label="Total"');
