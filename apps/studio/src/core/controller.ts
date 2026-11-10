@@ -392,8 +392,12 @@ class Controller {
     };
     b.onProbe = (m) => {
       const s = get();
-      // Typing a check: what it is about stays outlined, wherever the mouse goes on the way to the keyboard.
-      if (s.typingAbout && s.mode === 'record') return;
+      // Typing a check: what it is about stays outlined while the mouse leaves the app for the keyboard; resting on
+      // something else in the app makes that what it is about.
+      if (s.typingAbout && s.mode === 'record') {
+        if (!m.hit) return;
+        set({ typingAbout: m.hit });
+      }
       if (!sameEl(s.hover, m.hit) || s.snapped !== m.snapped) set({ hover: m.hit, snapped: m.snapped });
       if (s.hover?.id !== m.hit?.id) sessions.pointed(m.hit, 'mouse');
       // “This” binds to what the mouse was on while it was said.
