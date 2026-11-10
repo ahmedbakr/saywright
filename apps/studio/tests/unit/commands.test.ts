@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { looksLikeCheck, normalize, parseClientCommand, parseExpectation } from '../../src/core/commands';
-import { checkNumbers, shouldBe, stateWord } from '../../shared/text';
+import { checkNumbers, shouldBe, stateWord, uncheckable } from '../../shared/text';
 
 const cmd = (t: string, failing = false) => parseClientCommand(t, { hasFailingTest: failing });
 
@@ -175,5 +175,13 @@ describe('spoken expectations (Write test mode)', () => {
 
   it('ignores ordinary requests', () => {
     expect(parseExpectation('make this bigger')).toBeNull();
+  });
+});
+
+describe('a check about an embedded frame', () => {
+  it('is refused with a sentence, and any other element is not', () => {
+    expect(uncheckable({ tag: 'iframe' })).toBe('What is inside an embedded frame can’t be checked from the page around it: a test can only check what this page shows itself.');
+    expect(uncheckable({ tag: 'IFRAME' })).not.toBeNull();
+    for (const tag of ['div', 'span', 'img', 'input', 'select']) expect(uncheckable({ tag })).toBeNull();
   });
 });

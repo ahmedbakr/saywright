@@ -17,6 +17,15 @@ export function stateWord(said: string): 'checked' | 'not checked' | null {
   return null;
 }
 
+/**
+ * Why a check can't be about this element, as a sentence; null when it can. An embedded frame (`<iframe>`) is
+ * another page: the test's locators work in the page around it, so nothing inside it can be checked from there.
+ */
+export function uncheckable(el: { tag: string }): string | null {
+  if (el.tag.toLowerCase() === 'iframe') return 'What is inside an embedded frame can’t be checked from the page around it: a test can only check what this page shows itself.';
+  return null;
+}
+
 /** What a check says should be, after the thing it is about: "should show “$80.80”", "should be checked". */
 export function shouldBe(e: { expected: string; field?: string; not?: boolean }, quote = (s: string) => `“${s}”`): string {
   if (e.field === 'checked') return e.expected === 'not checked' ? 'should not be checked' : 'should be checked';
