@@ -14,7 +14,7 @@
  *   (across reloads too, in sessionStorage), and the server drops duplicates,
  *   so nothing is lost or doubled.
  */
-import { dots, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
+import { dots, looksLikeCard, NAME_ATTR, scrubEvent, SRC_ATTR, type SessionBatch, type SessionEvent, type SessionEventBody, type SessionTarget } from '../protocol';
 import { annotatedAncestor, collapse, isField, isSecretField, labelText, pageAnnotated, publicText, roleOf, screenLines, screenText, secretNameOf, sourceHint, typesInto } from './dom';
 import { disarm, isGuardRefusal } from './guard';
 import { maskScreen } from './mask';
@@ -115,6 +115,13 @@ export function savedState(): string {
     h = Math.imul(h, 0x01000193);
   }
   return `${parts.length}:${(h >>> 0).toString(36)}`;
+}
+
+/** Whether a field says it takes a card number: autocomplete `cc-number`, or a placeholder of digits in fours. */
+function cardField(el: Element): boolean {
+  const auto = el.getAttribute('autocomplete') ?? '';
+  if (/\bcc-(?:number|csc)\b/i.test(auto)) return true;
+  return /^\s*(?:\d{4}[ -]?){3}\d{1,4}\s*$/.test(el.getAttribute('placeholder') ?? '');
 }
 
 function readJson<T>(key: string): T | null {
@@ -234,6 +241,8 @@ export class SessionRecorder {
   private fieldTimers = new Map<Element, ReturnType<typeof setTimeout>>();
   /** When each field being typed in was last typed in: its value is recorded at that moment, not when it is sent. */
   private fieldTimes = new Map<Element, number>();
+  /** Fields a secret was typed into: what is typed there after is a secret too. */
+  private secretFields = new WeakSet<Element>();
   private scrollTimers = new Map<EventTarget, ReturnType<typeof setTimeout>>();
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private trail: number[] = [];
@@ -625,7 +634,10 @@ export class SessionRecorder {
     this.fieldTimes.delete(el);
     if (!this.fieldTimers.delete(el) || !isField(el)) return;
     const value = 'value' in el ? String(el.value) : '';
-    const secret = isSecretField(el);
+    // A card number by its digits, whatever the field is called, even typed with pauses (each pause is recorded):
+    // once a field is found to hold one, every value typed into it after is masked too.
+    const secret = isSecretField(el) || this.secretFields.has(el) || looksLikeCard(value, cardField(el));
+    if (secret) this.secretFields.add(el);
     const target = this.target(el);
     this.recordLater({ type: 'input', el: target, value: secret ? dots(value) : collapse(value, 500), masked: secret, ...(secret ? { secret: secretNameOf(el) } : {}) }, typed, [[target, el]]);
   }

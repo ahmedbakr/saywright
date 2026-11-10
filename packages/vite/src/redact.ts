@@ -85,10 +85,32 @@ const SECRET_WORDS = new RegExp(
 /** The same in Arabic (password, secret code, verification code, card number, account number). */
 const SECRET_WORDS_AR = /كلمة (?:ال)?(?:مرور|سر)|(?:ال)?رمز (?:ال)?(?:سري|تحقق|التحقق|أمان|الأمان|المرور)|رقم (?:ال)?(?:بطاقة|حساب|سري)|آيبان/;
 
+/** The same in French, Spanish, German, Portuguese, Italian and Turkish: card numbers and codes, passwords, IBANs. */
+const SECRET_WORDS_OTHER =
+  /num[ée]ro de (?:la )?carte|carte (?:bancaire|de cr[ée]dit)|cryptogramme|code de s[ée]curit[ée]|mot de passe|n[úu]mero de (?:la )?tarjeta|tarjeta de (?:cr[ée]dito|d[ée]bito)|c[óo]digo de seguridad|contrase[ñn]a|kartennummer|kreditkarte|pr[üu]fnummer|sicherheitscode|passwort|kennwort|n[úu]mero do cart[ãa]o|cart[ãa]o de (?:cr[ée]dito|d[ée]bito)|c[óo]digo de seguran[çc]a|senha|numero (?:della )?carta|carta di credito|codice di sicurezza|kart numaras[ıi]|kredi kart[ıi]|g[üu]venlik kodu|[şs]ifre|parola/i;
+
 /** Whether a field described so (its type, name, id, autocomplete, label and placeholder, in one text) holds a secret. */
 export function isSecretHint(hint: string): boolean {
-  return SECRET_WORDS.test(words(hint)) || SECRET_WORDS_AR.test(hint);
+  return SECRET_WORDS.test(words(hint)) || SECRET_WORDS_AR.test(hint) || SECRET_WORDS_OTHER.test(hint);
 }
+
+/**
+ * Whether a typed value is (the start of) a card number by its digits alone, whatever its field is called: digits in
+ * groups of four (or Amex's 4-6-5) with at least twelve so far, as one is typed with pauses (“4000 0566 5566”), or 13
+ * to 19 digits that pass the Luhn check. `card`: the field says it takes one (autocomplete `cc-number`, a placeholder
+ * like “1234 1234 1234 1234”): then eight digits so far are enough.
+ */
+export function looksLikeCard(value: string, card = false): boolean {
+  const v = value.trim();
+  const d = v.replace(/[ -]/g, '');
+  if (!/^\d+$/.test(d) || d.length < 8 || d.length > 19) return false;
+  if (d.length >= 13 && maskSecrets(v) !== v) return true;
+  const grouped = /^\d{4}(?:[ -]\d{4})+(?:[ -]\d{1,4})?$/.test(v) || /^3[47]\d{2}[ -]\d{6}(?:[ -]\d{1,5})?$/.test(v);
+  return card ? grouped || (d.length >= 8 && /^[2-6]/.test(d)) : grouped && d.length >= 12;
+}
+
+/** Addresses inside a text (a stack trace, a message, a response): whole ones, and paths with a query. */
+const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()`]+|(?<![\w/.:])\/[^\s"'<>()`?]*\?[^\s"'<>()`]+/gi;
 
 /** Words a field's label adds that don't tell one secret from another. */
 const FILLER = new Set(['enter', 'your', 'the', 'a', 'an', 'please', 'type', 'confirm', 'confirmation', 'repeat', 'again', 're', 'retype', 'field', 'here', 'of', 'required', 'optional']);
@@ -189,7 +211,9 @@ function maskCard(run: string): string {
 /** Text with every card number (kept: its last four digits) and every key- or token-shaped string in it masked. */
 export function maskSecrets(text: string): string {
   if (!text) return text;
-  let out = text.replace(CARD, maskCard);
+  // Addresses as a page's address is kept: a `?token=` in a stack trace's frame is as secret as in the address bar.
+  let out = /[?#]/.test(text) ? text.replace(URL_IN_TEXT, (u) => redactUrl(u)) : text;
+  out = out.replace(CARD, maskCard);
   // The password in an address that carries one: postgres://ledger:password@db.local/ledger.
   out = out.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)@/gi, (_m, head: string) => `${head}${MASK}@`);
   for (const re of TOKENS) out = out.replace(re, (m) => (m.startsWith('Bearer') ? `Bearer ${MASK}` : MASK));
@@ -286,10 +310,15 @@ export function redactUrl(url: string): string {
 /** A recorded element's words, masked: text it showed may hold a card number or a key. */
 function scrubTarget(el: unknown): void {
   if (!el || typeof el !== 'object') return;
-  const t = el as { label?: unknown; text?: unknown; description?: unknown };
-  if (typeof t.label === 'string') t.label = maskSecrets(t.label);
-  if (typeof t.text === 'string') t.text = maskSecrets(t.text);
-  if (typeof t.description === 'string') t.description = maskSecrets(t.description);
+  const t = el as { label?: unknown; text?: unknown; description?: unknown; locator?: unknown; within?: unknown; hint?: { attrs?: Record<string, unknown> } };
+  for (const k of ['label', 'text', 'description', 'locator', 'within'] as const) if (typeof t[k] === 'string') t[k] = maskSecrets(t[k] as string);
+  const frames = (t as { frames?: { at?: unknown }[] }).frames;
+  if (Array.isArray(frames)) for (const f of frames) if (f && typeof f.at === 'string') f.at = maskSecrets(f.at);
+  // Its attributes: a link's address (`href="/orders?token=…"`), an image's, a form's, and any data- value.
+  const attrs = t.hint?.attrs;
+  if (attrs && typeof attrs === 'object') {
+    for (const [k, v] of Object.entries(attrs)) if (typeof v === 'string') attrs[k] = /^(?:href|src|action|formaction|poster|srcset|data)$/i.test(k) ? redactUrl(v) : maskSecrets(v);
+  }
 }
 
 /**
@@ -319,12 +348,15 @@ export function scrubEvent<T extends { type: string }>(event: T): T {
       url('url');
       text('body');
       text('error');
+      text('stack');
       break;
     case 'error':
     case 'console':
       text('message');
       text('text');
       text('stack');
+      // Where it was thrown: a script's address, which can carry the page's query.
+      text('source');
       break;
     case 'dom':
       url('url');
@@ -334,7 +366,7 @@ export function scrubEvent<T extends { type: string }>(event: T): T {
     case 'input': {
       const target = (e.el ?? {}) as { label?: string; name?: string };
       const value = typeof e.value === 'string' ? e.value : '';
-      if (!e.masked && (isSecretHint(`${target.label ?? ''} ${target.name ?? ''}`) || looksSecret(value))) {
+      if (!e.masked && (isSecretHint(`${target.label ?? ''} ${target.name ?? ''}`) || looksSecret(value) || looksLikeCard(value))) {
         e.value = dots(value);
         e.masked = true;
         e.secret ??= secretName(target.label || target.name || '');

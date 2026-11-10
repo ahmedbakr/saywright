@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dots, isCodeField, isSecretHint, looksSecret, maskSecrets, redactUrl, scrubEvent, secretEnvName, secretName } from '@saywright/vite/protocol';
+import { dots, isCodeField, isSecretHint, looksLikeCard, looksSecret, maskSecrets, redactUrl, scrubEvent, secretEnvName, secretName } from '@saywright/vite/protocol';
 
 /** A key-shaped test value, put together here so that secret scanners don't take this file for one holding a real key. */
 const key = (kind: string, rest: string) => kind + rest;
@@ -188,5 +188,43 @@ describe('session events, scrubbed as they are kept', () => {
     expect(scrubEvent({ type: 'error', message: 'Bad card 4242424242424242', stack: 'at pay (Bearer abcdefghijklmnopqrstuvwxyz)' })).toMatchObject({ message: 'Bad card •••• 4242', stack: 'at pay (Bearer •••)' });
     expect(scrubEvent({ type: 'dom', url: '/', text: 'Your key: ' + key('ghp_', 'abcdefghijklmnopqrstuvwxyz0123456789'), headings: ['Card 4242 4242 4242 4242'] })).toMatchObject({ text: 'Your key: •••', headings: ['Card •••• 4242'] });
     expect(scrubEvent({ type: 'click', el: { label: 'Copy', text: key('sk-ant-', 'api03-abcdefghijklmnop') } })).toMatchObject({ el: { text: '•••' } });
+  });
+});
+
+describe('a page’s secrets wherever they turn up (the audit’s link with a token, and a card typed with a pause)', () => {
+  const link = '/page2?token=abc123def456ghi789&ref=home';
+  it('masks an address in a link’s attributes, an error’s source, and every address in a stack', () => {
+    const click = scrubEvent({ type: 'click', el: { label: 'Orders page', text: 'Orders page', hint: { attrs: { id: 'p2', href: link } }, frames: [{ at: `http://localhost:5282${link}:3:372` }] } });
+    expect(JSON.stringify(click)).not.toContain('abc123def456ghi789');
+    expect(click).toMatchObject({ el: { hint: { attrs: { id: 'p2', href: '/page2?token=•••&ref=home' } } } });
+    const error = scrubEvent({
+      type: 'error',
+      message: 'Boom at http://localhost:5282/page2?token=abc123def456ghi789&ref=home',
+      source: `http://localhost:5282${link}:3:372`,
+      stack: `Error: Boom\n    at document.getElementById.onclick (http://localhost:5282${link}:3:372)\n    at fetch (${link})`,
+    });
+    expect(JSON.stringify(error)).not.toContain('abc123def456ghi789');
+    expect(error).toMatchObject({ stack: expect.stringContaining('(http://localhost:5282/page2?token=•••&ref=home:3:372)') });
+    expect(scrubEvent({ type: 'net', url: '/api/x', ok: false, stack: `at load (http://localhost:5282${link}:9:1)` })).toMatchObject({ stack: 'at load (http://localhost:5282/page2?token=•••&ref=home:9:1)' });
+  });
+
+  it('leaves an address with nothing secret in it as it is', () => {
+    expect(maskSecrets('at render (http://localhost:5173/src/App.tsx?t=1712:12:5)')).toBe('at render (http://localhost:5173/src/App.tsx?t=1712:12:5)');
+    expect(maskSecrets('See /search?q=mugs for more')).toBe('See /search?q=mugs for more');
+  });
+
+  it('knows a card number by its digits, as it is typed with pauses, whatever language its field is labelled in', () => {
+    const typed = (value: string, label = 'Numéro de carte') => scrubEvent({ type: 'input', el: { label, name: 'input', text: '' }, value, masked: false });
+    expect(typed('4000 0566 5566', 'Kartu')).toMatchObject({ masked: true });
+    expect(typed('4000-0566-5566-5556', 'Kartu')).toMatchObject({ masked: true });
+    expect(typed('4000056655665556', 'Kartu')).toMatchObject({ masked: true });
+    expect(typed('3782 822463', 'Kartu')).toMatchObject({ masked: false });
+    expect(looksLikeCard('3782 822463 10005')).toBe(true);
+    // Its label is enough in the languages the studio knows.
+    for (const label of ['Numéro de carte', 'Número de tarjeta', 'Kartennummer', 'Número do cartão', 'Numero della carta', 'Kart numarası', 'Mot de passe']) expect(isSecretHint(label), label).toBe(true);
+    // A field that says it takes a card: eight digits so far are enough.
+    expect(looksLikeCard('4000 0566', true)).toBe(true);
+    // Not a card: a phone number, a short code, an order number, a date.
+    for (const v of ['0100 123 4567', '2024 1234', '12345678', 'ORD-2024-1234', '2026-11-10']) expect(looksLikeCard(v), v).toBe(false);
   });
 });

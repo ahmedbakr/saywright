@@ -28,7 +28,7 @@ Sessions are listed in the side panel's **Sessions** tab, newest first, with the
 
 | | |
 | --- | --- |
-| What you did | Clicks (and on what, with a Playwright locator), typing (what goes into a password, card or other secret field, or into a part marked private, masked), page changes, scrolling, what you rested the pointer on |
+| What you did | Clicks (and on what, with a Playwright locator), typing (what goes into a password, card or other secret field, or into a part marked private, masked; a card number is also known by its digits, whatever its field is called and even typed with pauses), addresses with their tokens masked wherever they appear (a link, an error's stack), page changes, scrolling, what you rested the pointer on |
 | What went wrong | JavaScript errors and unhandled promise rejections (with the line in your code, through source maps), console errors, failed and slow requests, data requests answered with a web page (a missing API route), repeated clicks, clicks that did nothing, clicks on disabled buttons |
 | How it felt | Page speed: largest contentful paint, layout shifts, slow interactions, long tasks |
 | What you said | Your narration, transcribed on your computer, each sentence linked to what you were pointing at and to the code behind it |

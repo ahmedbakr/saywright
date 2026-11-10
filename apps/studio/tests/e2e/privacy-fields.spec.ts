@@ -188,3 +188,48 @@ test('while a session records, what appears is masked before the screen is drawn
     )
     .toEqual({ native: true, styles: 0 });
 });
+
+test('a token in a link or an error’s address, and a card number typed with a pause in a French field, are kept nowhere', async ({ page }) => {
+  const TOKEN = 'abc123def456ghi789';
+  await openStudio(page);
+  const app = page.frameLocator('iframe');
+  await page.getByRole('button', { name: 'Record session', exact: true }).click();
+  await page.getByPlaceholder('What are you testing? (optional)').fill('Token and card');
+  await page.getByRole('button', { name: 'Start recording' }).click();
+  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeEnabled();
+  await app.locator('body').evaluate((body, token) => {
+    const box = document.createElement('div');
+    box.innerHTML = `<a id="orders" href="/?token=${token}&ref=home">Orders page</a>
+      <label>Numéro de carte <input id="carte" inputmode="numeric" placeholder="1234 1234 1234 1234"></label>
+      <button id="boom">Boom</button>`;
+    body.prepend(box);
+    document.getElementById('orders')!.addEventListener('click', (e) => (e.preventDefault(), history.pushState(null, '', (e.currentTarget as HTMLAnchorElement).href)));
+    document.getElementById('boom')!.addEventListener('click', () => {
+      throw new Error(`Orders failed at ${location.href}`);
+    });
+  }, TOKEN);
+  await app.locator('#orders').click();
+  await app.locator('#carte').pressSequentially('4000 0566 5566');
+  await page.waitForTimeout(1200);
+  await app.locator('#carte').pressSequentially(' 5556');
+  await app.locator('#boom').click();
+  await page.waitForTimeout(1500);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  let id = '';
+  await expect
+    .poll(async () => {
+      const { sessions } = (await (await fetch(`${STUDIO}/api/sessions`)).json()) as { sessions: { id: string; name: string; status: string }[] };
+      id = sessions.find((s) => s.name === 'Token and card')?.id ?? '';
+      return sessions.find((s) => s.id === id)?.status;
+    }, { timeout: 60_000 })
+    .toBe('ready');
+  const detail = await (await fetch(`${STUDIO}/api/sessions/${id}`)).text();
+  const events = await (await fetch(`${STUDIO}/api/sessions/${id}/events`)).text();
+  const exported = await (await fetch(`${STUDIO}/api/sessions/${id}/export.html`)).text();
+  // The error is there, its address masked.
+  expect(detail).toContain('Orders failed at');
+  for (const kept of [detail, events, exported]) {
+    expect(kept).not.toContain(TOKEN);
+    expect(kept).not.toMatch(/4000.?0566.?5566/);
+  }
+});
