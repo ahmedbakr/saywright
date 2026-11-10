@@ -77,7 +77,16 @@ export async function mcp(argv: string[], ctx: CliContext): Promise<number> {
         });
         if (res.status === 202) return;
         const text = await res.text();
-        if (!res.ok && !text.startsWith('{')) return fail(`Saywright answered ${res.status}.`);
+        if (!res.ok) {
+          // A refusal names no request (its id is null): answered here under each request's own id, or the client waits for ever.
+          let why = '';
+          try {
+            why = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? '';
+          } catch {
+            /* not JSON */
+          }
+          return fail(why || `Saywright answered ${res.status}.`);
+        }
         process.stdout.write(`${text.trim()}\n`);
       } catch {
         fail(`Saywright isn’t running. Start it (${ctx.startCommand}), then try again.`);

@@ -301,6 +301,37 @@ describe('Anthropic', () => {
     expect(second.attempts).toBeUndefined();
     expect(new AnthropicModel('claude-haiku-5-5').fallback).toBe(false);
   });
+
+  it('after the server switched models mid-answer, acts only on what the model that took over asked for, and sends back only that', async () => {
+    const sent: { messages: { role: string; content: unknown }[] }[] = [];
+    const usage = { input_tokens: 10, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    const replies = [
+      {
+        model: 'claude-opus-4-8',
+        stop_reason: 'tool_use',
+        content: [
+          { type: 'thinking', thinking: 'declined model thinks', signature: 'sig' },
+          { type: 'text', text: 'Looking at the total.' },
+          { type: 'tool_use', id: 'toolu_declined', name: 'read_file', input: { path: 'src/a.ts' } },
+          { type: 'fallback', from: { model: 'claude-opus-5-5' }, to: { model: 'claude-opus-4-8' } },
+          { type: 'text', text: 'Reading pricing.' },
+          { type: 'tool_use', id: 'toolu_kept', name: 'read_file', input: { path: 'src/lib/pricing.ts' } },
+        ],
+        usage,
+      },
+      { model: 'claude-opus-4-8', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }], usage },
+    ];
+    const client = { beta: { messages: { stream: (p: Record<string, unknown>) => (sent.push(JSON.parse(JSON.stringify(p))), { finalMessage: async () => replies[sent.length - 1] }) } } };
+    const chat = new AnthropicModel('claude-opus-5-5', () => client as never);
+    const user = { role: 'user' as const, parts: [{ type: 'text' as const, text: 'Why is the total wrong?' }] };
+    const first = await chat.chat({ system: 's', messages: [user], maxTokens: 2000 });
+    expect(first.calls.map((c) => c.id)).toEqual(['toolu_kept']);
+    expect(first.text).toBe('Looking at the total.\nReading pricing.');
+    await chat.chat({ system: 's', messages: [user, { role: 'assistant', text: first.text, calls: first.calls, raw: first.raw }, { role: 'tool', results: [{ id: 'toolu_kept', name: 'read_file', output: 'export const x = 1;' }] }], maxTokens: 2000 });
+    const echoed = sent[1].messages[1].content as { type: string; id?: string }[];
+    expect(echoed.map((b) => b.type)).toEqual(['text', 'fallback', 'text', 'tool_use']);
+    expect(echoed.find((b) => b.type === 'tool_use')!.id).toBe('toolu_kept');
+  });
 });
 
 describe('structured output schemas', () => {

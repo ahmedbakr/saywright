@@ -186,6 +186,8 @@ describe('the MCP endpoint', () => {
     const wrong = await post({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Authorization: 'Bearer wrong' });
     expect(wrong.status).toBe(401);
     expect(((await wrong.json()) as { error: { message: string } }).error.message).toMatch(/Settings → Other AI apps\.$/);
+    // As many characters as the real one, with a letter that takes two bytes: still a refusal, not a server error.
+    expect((await post({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Authorization: `Bearer ${'client-token-'.padEnd(47, 'x')}é` })).status).toBe(401);
     expect((await post({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Origin: 'https://evil.example' })).status).toBe(403);
     const port = new URL(base).port;
     const foreign = await new Promise<number>((resolve) => {

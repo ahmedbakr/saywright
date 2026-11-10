@@ -73,7 +73,9 @@ export function clientToken(dataDir: string): string {
   return t;
 }
 
-const same = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+/** Compared as digests: equal in length whatever was sent (a token with an accented letter is as long in characters, not in bytes). */
+const digest = (s: string) => crypto.createHash('sha256').update(s).digest();
+const same = (a: string, b: string) => crypto.timingSafeEqual(digest(a), digest(b));
 
 export class McpServer {
   private runs = new Map<string, { id: string; tools: McpTool[] }>();

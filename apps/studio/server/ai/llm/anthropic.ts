@@ -77,6 +77,18 @@ function encode(messages: Msg[]): Anthropic.Beta.BetaMessageParam[] {
   });
 }
 
+/**
+ * A turn's content as it stands once the server has switched models part-way through it (a `fallback` block marks
+ * where). What the model that declined left before the switch, other than its words, is not part of the answer: the
+ * model that took over can't read its thinking and never finished its tool calls. Those blocks are neither acted on
+ * nor sent back with the next request, which the API would refuse.
+ */
+function answered<T extends { type: string }>(content: T[]): T[] {
+  let at = -1;
+  for (let i = content.length - 1; i >= 0 && at < 0; i--) if (content[i].type === 'fallback') at = i;
+  return at < 0 ? content : content.filter((b, i) => i >= at || b.type === 'text');
+}
+
 export class AnthropicModel implements ChatModel {
   readonly kind = 'anthropic' as const;
   readonly vision = true;
@@ -155,7 +167,8 @@ export class AnthropicModel implements ChatModel {
     }
     const calls: ToolCall[] = [];
     const text: string[] = [];
-    for (const b of msg.content) {
+    const content = answered(msg.content);
+    for (const b of content) {
       if (b.type === 'text') text.push(b.text);
       else if (b.type === 'tool_use') calls.push({ id: b.id, name: b.name, args: (b.input ?? {}) as Record<string, unknown> });
     }
@@ -176,7 +189,7 @@ export class AnthropicModel implements ChatModel {
         cacheWrite: count(u.cache_creation_input_tokens),
       },
       model: msg.model,
-      raw: msg.content,
+      raw: content,
       ...(attempts.length > 1 ? { attempts } : {}),
     };
   }
