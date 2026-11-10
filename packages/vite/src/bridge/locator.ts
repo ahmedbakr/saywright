@@ -51,8 +51,9 @@ function keeper(el: Element, expected: string): Keep {
   const now = visibleText(el);
   const shape = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\d+/g, '\\d+');
   const part = /\d/.test(expected) && shape !== expected ? new RegExp(shape).exec(now)?.[0] : undefined;
-  // Already showing it (a check that passes now, to keep it so): it stays as it is.
-  const then = now.toLowerCase().includes(expected.toLowerCase()) ? now : part ? now.replace(part, () => expected) : expected;
+  // Already showing it (a check that passes now, to keep it so): it stays as it is. Showing it means showing that and
+  // nothing else: “Inactive” does not show “active”, and will show “active” once fixed.
+  const then = squash(now) === squash(expected) ? now : part ? now.replace(part, () => expected) : expected;
   return (w) => (typeof w === 'string' ? then.toLowerCase().includes(w.toLowerCase()) : w.re.test(then));
 }
 

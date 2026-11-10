@@ -11,6 +11,7 @@ import { jsComment, jsString as q, maskSecrets, secretEnvName, SECRET_ENV_PREFIX
 import type { Expectation, RecordedStep } from '../../shared/api.ts';
 export { sanitizeSteps } from '../../shared/steps.ts';
 import { BRAND } from '../../shared/brand.ts';
+import { wholeValue } from '../../shared/expected.ts';
 import { shouldBe } from '../../shared/text.ts';
 import type { Project } from '../project.ts';
 
@@ -210,18 +211,42 @@ const PATTERN_MAX = 1000;
 
 /**
  * A check, as code: text for most things, the value for a field (holding what was said), whether a checkbox is
- * checked, the options chosen in a list (one of them says it, however many are chosen).
+ * checked, the options chosen in a list (one of them says it, however many are chosen). What was said is checked as a
+ * whole value, never inside a longer word or number: as text (toHaveText) when the element shows that value and
+ * nothing else, else as a pattern, with a line that says what it means. Lines, not one: a pattern's meaning comes first.
  */
-function checkCode(e: Expectation): string {
+function checkCode(e: Expectation): string[] {
   const loc = safeLocator(e.locator);
-  if (e.field === 'checked') return `await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`;
+  if (e.field === 'checked') return [`await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`];
+  const whole = wholeValue(e.expected);
+  const pattern = `/${whole.source}/${whole.amount ? '' : 'u'}`;
+  const note = `// ${jsComment(maskSecrets(`${whole.why}.`))}`;
+  // An option says the value and nothing else.
+  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).toContainText([/${whole.only}/${whole.amount ? '' : 'u'}]);`];
   if (e.field === 'value') {
-    if (e.expected.length > PATTERN_MAX) return `await expect.poll(() => ${loc}.inputValue()).toContain(${q(e.expected)});`;
-    return `await expect(${loc}).toHaveValue(new RegExp(${q(escapeRe(e.expected))}));`;
+    if (e.expected.length > PATTERN_MAX) return [`await expect.poll(() => ${loc}.inputValue()).toContain(${q(e.expected)});`];
+    if (onlyThat(e)) return [`await expect(${loc}).toHaveValue(${q(e.expected)});`];
+    return [note, `await expect(${loc}).toHaveValue(${pattern});`];
   }
-  if (e.field === 'select') return `await expect(${loc}.locator('option:checked')).toContainText([${q(e.expected)}]);`;
-  return `await expect(${loc}).toContainText(${q(e.expected)});`;
+  if (e.expected.length > PATTERN_MAX) return [`await expect(${loc}).toContainText(${q(e.expected)});`];
+  if (onlyThat(e)) return [`await expect(${loc}).toHaveText(${q(e.expected)});`];
+  return [note, `await expect(${loc}).toContainText(${pattern});`];
 }
+
+/**
+ * Whether the element shows a value and nothing else, so the check can say it plainly (toHaveText): it shows exactly
+ * what was said, or an amount written the same way ($51.71 where $64.64 should be).
+ */
+function onlyThat(e: Expectation): boolean {
+  const said = collapse(e.expected);
+  const shown = collapse(e.actual);
+  if (!said || !shown) return false;
+  if (shown === said) return true;
+  const shape = (s: string) => s.replace(/\d+/g, '0');
+  return wholeValue(said).amount && /\d/.test(shown) && shape(shown) === shape(said);
+}
+
+const collapse = (s: string | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
 /** A step title: its number (what a run is checked against) and its words, on one line. */
 const title = (mark: string, words: string) => q(`[${mark}] ${words.replace(/\s+/g, ' ').trim().slice(0, 160)}`);
@@ -265,7 +290,7 @@ export function generateSpec(input: GenerateInput, date = new Date()): string {
     const was = e.field === 'checked' ? `it was ${e.actual || 'not checked'}` : `it showed ${brief(e.actual) || 'nothing'}`;
     step(`check ${++k}`, maskSecrets(`${e.description.replace(/^./, (c) => c.toUpperCase())} ${shouldBe(said, plain)}`), [
       `// ${jsComment(maskSecrets(`You said ${e.description} ${shouldBe(said, plain)} (${was}).`))}`,
-      checkCode(e),
+      ...checkCode(e),
     ]);
   };
   input.steps.forEach((s, i) => {

@@ -150,17 +150,59 @@ export function saidAt(seg: { start: number; end: number }, value: SaidValue): n
 
 /**
  * Whether what an element shows is the value expected: the same amount, however it is written ($80.8 is $80.80,
- * and $8 is not $80.80), or the same words.
+ * and $8 is not $80.80), or the same words as a whole (“active” is not in “Inactive”, “5 in stock” not in “15 in
+ * stock”), whatever their case.
  */
 export function showsValue(actual: string, expected: string): boolean {
-  const want = amountsIn(expected)[0]?.value ?? (PRICE.test(asciiDigits(expected)) ? Number(asciiDigits(expected).trim()) : null);
-  if (want === null) return squash(actual).includes(squash(expected));
+  const want = amountOf(expected);
+  if (want === null) return new RegExp(wholeValue(expected).source, 'iu').test(asciiDigits(actual));
   const found = amountsIn(actual);
   const numbers = found.length ? found.map((a) => a.value) : [...asciiDigits(actual).matchAll(/\d+(?:\.\d+)?/g)].map((m) => Number(m[0]));
   return numbers.some((n) => Math.abs(n - want) < 0.005);
 }
 
+/** The amount a value says, written with its currency or like a price ("80.80"); null for anything else. */
+function amountOf(expected: string): number | null {
+  const t = asciiDigits(expected).trim();
+  const found = amountsIn(t);
+  // Only a value that is an amount and nothing else ("$80.80", "80.80 EGP"), not words with one in them.
+  if (found.length === 1 && t.replace(WRITTEN_ONE, '').trim() === '') return found[0].value;
+  return PRICE.test(t) ? Number(t) : null;
+}
+
 /** A number written like a price, without its currency: "80.80". */
 const PRICE = /^\s*\d+\.\d{2}\s*$/;
+const WRITTEN_ONE = new RegExp(`(${SYMBOL})\\s?(${NUMBER})|(${NUMBER})\\s?(?:(${SYMBOL})|(${WORD})(?!\\p{L}))`, 'iu');
 
-const squash = (s: string) => s.toLowerCase().replace(/[\s,]/g, '');
+/**
+ * How a check finds a value in what an element shows: as a whole, never inside a longer word or number. An amount is
+ * found by its value (with its symbol when it was said with one): $80.80 is “$80.8”, “$ 80.80” and “$80,80”, never “$180.80”.
+ * Words are found with any spaces between them, and not inside longer ones. `source` is a regular expression's,
+ * safe in a literal (/…/): every special character is escaped and every line break is \s. `only`: the value and
+ * nothing else (an option of a list).
+ */
+export function wholeValue(expected: string): { source: string; only: string; amount: boolean; why: string } {
+  const value = asciiDigits(expected).trim();
+  const want = amountOf(value);
+  if (want !== null) {
+    const symbol = new RegExp(`^${SYMBOL}`, 'i').exec(value)?.[0];
+    const [whole, cents = ''] = want.toFixed(2).split('.');
+    const int = whole.replace(/\B(?=(\d{3})+$)/g, ',?');
+    const frac = cents.replace(/0+$/, '');
+    const number = `${int}${frac ? `[.,]${frac}0*` : '(?:[.,]0+)?'}`;
+    const core = symbol ? `${escapeRe(symbol)}\\s?${number}` : number;
+    const source = symbol ? `${core}${END_DIGIT}` : `${START_DIGIT}${core}${END_DIGIT}`;
+    return { source, only: `^\\s*${core}\\s*$`, amount: true, why: `${expected.trim()} as an amount, not part of a longer number` };
+  }
+  const body = value.split(/\s+/).map(escapeRe).join('\\s+');
+  const first = value[0] ?? '';
+  const last = value[value.length - 1] ?? '';
+  const start = /\d/.test(first) ? START_DIGIT : /[A-Za-z_]/.test(first) ? '\\b' : /\p{L}/u.test(first) ? '(?<!\\p{L})' : '';
+  const end = /\d/.test(last) ? END_DIGIT : /[A-Za-z_]/.test(last) ? '\\b' : /\p{L}/u.test(last) ? '(?!\\p{L})' : '';
+  return { source: `${start}${body}${end}`, only: `^\\s*${body}\\s*$`, amount: false, why: `“${expected.trim()}” as a whole, not inside a longer word or number` };
+}
+
+/** Not right after a digit, a sign, or a separator that goes on a number; not right before more of it. */
+const START_DIGIT = '(?<![\\d.,−-])';
+const END_DIGIT = '(?![.,]?\\d)';
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');

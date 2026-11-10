@@ -5,6 +5,7 @@ import { parse } from '@babel/parser';
 import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
 import { generateSpec, safeLocator, secretsOf, slug, urlPattern, writeSpec } from '../../server/tests/generate';
+import { showsValue } from '../../shared/expected';
 import { focusOn, judge, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
@@ -27,7 +28,8 @@ describe('generateSpec', () => {
     expect(code).toContain("  await test.step('[3] Click Apply', async () => {");
     expect(code).toContain('// Note: the discount looks too big');
     expect(code).toContain("  await test.step('[check 1] The total should show $80.80', async () => {");
-    expect(code).toContain("await expect(page.getByTestId('summary-total')).toContainText('$80.80');");
+    // It showed an amount and nothing else: the check says it plainly.
+    expect(code).toContain("await expect(page.getByTestId('summary-total')).toHaveText('$80.80');");
     // No secrets: no helper that reads the environment.
     expect(code).not.toContain('process.env');
   });
@@ -95,7 +97,7 @@ describe('generateSpec', () => {
     expect(code).toContain("await page.getByLabel('Toppings').selectOption([{ label: 'Ham' }, { label: 'Olives' }]);");
     expect(code).toContain("await page.getByLabel('Size').selectOption({ label: 'Large' });");
     // One of the options chosen says it, however many the list takes.
-    expect(code).toContain("await expect(page.getByLabel('Shipping').locator('option:checked')).toContainText(['Express']);");
+    expect(code).toContain("await expect(page.getByLabel('Shipping').locator('option:checked')).toContainText([/^\\s*Express\\s*$/u]);");
     expect(code).toContain("test('shipping menu should have Express chosen'");
   });
 
@@ -114,7 +116,40 @@ describe('generateSpec', () => {
 
   it('checks a field by its value, not its text', () => {
     const code = generateSpec({ ...input, expectations: [{ locator: "page.getByLabel('Quantity')", description: 'the quantity', expected: '2.5', actual: '1', field: 'value' }] });
-    expect(code).toContain("await expect(page.getByLabel('Quantity')).toHaveValue(new RegExp('2\\\\.5'));");
+    expect(code).toContain('await expect(page.getByLabel(\'Quantity\')).toHaveValue(/(?<![\\d.,−-])2\\.5(?![.,]?\\d)/u);');
+  });
+
+  it('passes a check only on the whole value: never inside a longer word or number', () => {
+    const cases: [string, string, string[], string[]][] = [
+      // expected, what it showed as it was said, shows it, doesn't
+      ['active', 'Inactive', ['active', 'Status: active now'], ['Inactive', 'inactively', 'reactivated']],
+      ['5 in stock', '15 in stock', ['5 in stock', 'Only 5  in stock!'], ['15 in stock', '1.5 in stock', '5 in stocks']],
+      ['$80.80', 'Total $180.80', ['Total $80.80', '$80.8', '$ 80.80', '$80,80'], ['$180.80', '$80.801', '$80.81', '$8.08']],
+      ['bought', 'not bought', ['bought', 'All bought.'], ['boughtx', 'unbought']],
+    ];
+    for (const [expected, actual, yes, no] of cases) {
+      const code = generateSpec({ ...input, expectations: [{ locator: "page.getByTestId('x')", description: 'it', expected, actual }] });
+      const line = code.split('\n').find((l) => l.includes("getByTestId('x'))"))!;
+      const m = /toContainText\(\/(.*)\/([a-z]*)\);$/.exec(line);
+      expect(m, line).not.toBeNull();
+      const re = new RegExp(m![1], m![2]);
+      for (const y of yes) expect(re.test(y), `${expected} in ${y}`).toBe(true);
+      for (const n of no) expect(re.test(n), `${expected} not in ${n}`).toBe(false);
+      // The line before it says what the pattern means.
+      expect(code).toMatch(/\/\/ .*(as a whole|as an amount)/);
+    }
+    // A field's value, the same way: "5" is not in "15".
+    const field = generateSpec({ ...input, expectations: [{ locator: "page.getByLabel('Guests')", description: 'guests', expected: '5', actual: '15', field: 'value' }] });
+    const re = new RegExp(/toHaveValue\(\/(.*)\/u\)/.exec(field)![1], 'u');
+    expect(re.test('15')).toBe(false);
+    expect(re.test('5')).toBe(true);
+  });
+
+  it('a test and a replay agree on what shows a value', () => {
+    expect(showsValue('Inactive', 'active')).toBe(false);
+    expect(showsValue('15 in stock', '5 in stock')).toBe(false);
+    expect(showsValue('Total $180.80', '$80.80')).toBe(false);
+    expect(showsValue('Status: Active', 'active')).toBe(true);
   });
 
   it('checks a long value as text (a pattern that long is more than a browser compiles), and keeps the file readable', () => {
@@ -165,7 +200,7 @@ describe('generateSpec', () => {
     for (const st of steps) expect(safeLocator(st.locator)).toBe(st.locator);
     const code = generateSpec({ ...input, steps, expectations: [{ locator: 'page.getByText(/^Like this portfolio \\(\\d[\\d.,]*\\)$/)', description: '“Like this portfolio (1)”', expected: 'Like this portfolio (2)', actual: 'Like this portfolio (1)' }] });
     expect(code).toContain("await page.getByRole('button', { name: /^Pay \\$\\d[\\d.,]* and subscribe$/ }).click();");
-    expect(code).toContain("await expect(page.getByText(/^Like this portfolio \\(\\d[\\d.,]*\\)$/)).toContainText('Like this portfolio (2)');");
+    expect(code).toContain("await expect(page.getByText(/^Like this portfolio \\(\\d[\\d.,]*\\)$/)).toContainText(/\\bLike\\s+this\\s+portfolio\\s+\\(2\\)/u);");
     const ast = parse(code, { sourceType: 'module', plugins: ['typescript'] });
     const patterns: string[] = [];
     const walk = (n: unknown): void => {
@@ -175,7 +210,7 @@ describe('generateSpec', () => {
       for (const v of Object.values(n)) walk(v);
     };
     walk(ast.program);
-    expect(patterns).toEqual(['^Pay \\$\\d[\\d.,]* and subscribe$', '^Like this portfolio \\(\\d[\\d.,]*\\)$']);
+    expect(patterns).toEqual(['^Pay \\$\\d[\\d.,]* and subscribe$', '^Like this portfolio \\(\\d[\\d.,]*\\)$', '\\bLike\\s+this\\s+portfolio\\s+\\(2\\)']);
     // A pattern is one token: whatever follows its end, or a flag that makes it stateful, is refused.
     for (const bad of [
       "page.getByText(/a/); process.exit(1)",
