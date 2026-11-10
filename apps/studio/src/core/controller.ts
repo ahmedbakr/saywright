@@ -1582,6 +1582,11 @@ class Controller {
     const base = { locator: loc.locator.code, description: loc.locator.description, after };
     if (state && loc.checked !== undefined) return { ...base, expected: state, actual: loc.checked ? 'checked' : 'not checked', field: 'checked' };
     if (state === 'checked' && loc.option && loc.chosen) return { ...base, expected: loc.option, actual: loc.chosen.join(', '), field: 'select' };
+    // A list (or a label holding one, from a studio that points at labels): the option chosen, not every option's words.
+    if (!state && (el.tag === 'select' || el.tag === 'label')) {
+      const list = await this.bridge.locator(el.id, { expected, state: true });
+      if (list?.chosen) return { ...base, locator: list.locator.code, description: list.locator.description, expected, actual: list.chosen.join(', '), field: 'select' };
+    }
     // Not a checkbox or a list after all: what was said is the text it should show. Found again without the state's help.
     const plainLoc = state ? await this.bridge.locator(el.id, { expected }) : loc;
     if (!plainLoc) return null;

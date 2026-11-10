@@ -24,6 +24,7 @@ export function Fixture() {
   const [shipping, setShipping] = useState('std-eu');
   const [notes, setNotes] = useState('');
   const [promo, setPromo] = useState('');
+  const [guests, setGuests] = useState('2');
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = host.current;
@@ -43,6 +44,12 @@ export function Fixture() {
         </select>
       </label>
       <output data-testid="shipping-chosen">{shipping}</output>
+      <label>
+        <span data-testid="name-caption">Full name</span> <input />
+      </label>
+      <label>
+        Guests <input type="number" value={guests} onChange={(e) => setGuests(e.target.value)} />
+      </label>
       <div role="textbox" aria-label="Delivery notes" contentEditable suppressContentEditableWarning data-testid="notes" style={{ minHeight: 24, border: '1px solid #999' }} onInput={(e) => setNotes(e.currentTarget.innerText)} />
       <output data-testid="notes-said">{notes}</output>
       <div ref={host} data-testid="promo-host" />
@@ -120,4 +127,37 @@ test('an option that says the same as another, a rich text editor and a field in
   await expect(app.getByTestId('notes-said')).toHaveText('Ring twice');
   expect(await replay(page, "page.getByTestId('promo')", { kind: 'fill', value: 'AUTUMN' })).toMatchObject({ ok: true });
   await expect(app.getByTestId('promo-said')).toHaveText('AUTUMN');
+});
+
+test('a check on a field in its label reads the field: what it holds, the option chosen, never the label’s words', async ({ page }) => {
+  test.setTimeout(180_000);
+  showFixture();
+  await openStudio(page);
+  const app = page.frameLocator('iframe');
+  await expect(app.getByTestId('shipping-chosen')).toHaveText('std-eu');
+  await page.keyboard.press('r');
+  await expect.poll(() => store<string>(page, 's.mode')).toBe('record');
+  await app.getByLabel('Shipping').selectOption({ value: 'fast' });
+  await app.getByLabel('Full name').fill('Ada Lovelace');
+  await app.getByLabel('Guests').fill('15');
+  await expect.poll(() => store<number>(page, 's.recorder.steps.length')).toBe(3);
+
+  // On the list itself, on the label's words of a field, and on a number field: each reads the field.
+  await say(page, app.getByLabel('Shipping'), 'this should show Express');
+  await say(page, app.getByTestId('name-caption'), 'this should show Ada Lovelace');
+  await say(page, app.getByLabel('Guests'), 'this should show 15');
+  const checks = await store<{ locator: string; expected: string; actual: string; field?: string }[]>(page, 's.recorder.expectations');
+  expect(checks.map((c) => ({ locator: c.locator, actual: c.actual, field: c.field }))).toEqual([
+    { locator: "page.getByRole('combobox', { name: 'Shipping' })", actual: 'Express', field: 'select' },
+    { locator: "page.getByRole('textbox', { name: 'Full name' })", actual: 'Ada Lovelace', field: 'value' },
+    { locator: "page.getByLabel('Guests')", actual: '15', field: 'value' },
+  ]);
+  await page.getByRole('button', { name: 'Generate test' }).first().click();
+  await expectIsland(page, /Test saved to tests\/saywright\//);
+  const spec = fs.readFileSync(path.join(E2E_SHOP, await store<string>(page, 's.recorder.spec.path')), 'utf8');
+  expect(spec).not.toContain("locator('label')");
+  expect(spec).toContain("await expect(page.getByRole('textbox', { name: 'Full name' })).toHaveValue('Ada Lovelace');");
+  expect(spec).toContain("await expect(page.getByLabel('Guests')).toHaveValue('15');");
+  await runToEnd(page, () => page.getByRole('button', { name: 'Run it' }).click());
+  await expectIsland(page, /Test passed in [\d.]+ s: all 4 steps and 3 checks ran/);
 });

@@ -38,14 +38,32 @@ function isTooBig(el: Element): boolean {
 /** What a person clicks: pointing at the text or icon inside one means the whole thing. */
 const CLICKABLE = 'a[href], button, summary, label, [role="button"], [role="link"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="tab"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"]';
 
+/** A field that holds a value of its own (text, a number, a choice in a list): not a box that is only checked or not. */
+function valueField(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return true;
+  return el instanceof HTMLInputElement && !/^(?:checkbox|radio|hidden|submit|button|reset|image|file)$/.test(el.type);
+}
+
+/**
+ * The field a label holds (`<label>Country <select>…</select></label>`): pointing at the label, or at the field in it,
+ * means that field, so a check reads what it holds, never the label's words (with every option of a list in them).
+ * A label of a checkbox stays the label: clicking it is how people tick the box.
+ */
+function heldField(label: Element): Element | null {
+  if (!(label instanceof HTMLLabelElement)) return null;
+  const field = label.control ?? label.querySelector('input, select, textarea');
+  return valueField(field) && label.contains(field) && annotatedAncestor(field) === field ? field : null;
+}
+
 function candidateAt(x: number, y: number, deep: boolean): Element | null {
   if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
   const top = document.elementFromPoint(x, y);
   let el = annotatedAncestor(top);
   if (el && !deep) {
     el = collapseToInstance(el);
-    const clickable = el.parentElement?.closest(CLICKABLE);
+    const clickable = valueField(el) ? null : el.parentElement?.closest(CLICKABLE);
     if (clickable && annotatedAncestor(clickable) === clickable && !isTooBig(clickable)) el = collapseToInstance(clickable);
+    el = heldField(el) ?? el;
   }
   // Skip invisible wrappers and walk up to something worth highlighting.
   while (el && (!isVisible(el) || isTooBig(el))) {
