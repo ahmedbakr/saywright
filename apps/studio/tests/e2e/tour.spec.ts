@@ -49,7 +49,7 @@ test('first run: the welcome, the sample shop, then a tour whose steps move on a
 
   const point = step(page, 'Point at something');
   await expect(point).toBeVisible({ timeout: 30_000 });
-  await expect(point).toContainText('1 of 7');
+  await expect(point).toContainText('1 of 8');
   await expect(point).toBeFocused();
   await expect(page.getByRole('dialog', { name: 'Set up Saywright' })).toHaveCount(0);
 
@@ -75,6 +75,10 @@ test('first run: the welcome, the sample shop, then a tour whose steps move on a
   // The rest show something, and wait for Next.
   await page.locator('[data-tour-next]').click();
   await expect(step(page, 'Your AI')).toContainText('Quick edits stay instant and free. Anything bigger goes to the test stand-in, which costs nothing.');
+  await page.locator('[data-tour-next]').click();
+  // What the studio is for: the mode switcher and the Test tab are ringed. (This suite's shop is a copy linked as any app is.)
+  await expect(step(page, 'Say the bug, get the test')).toContainText('Press R for Write test. Use your app as usual, then point at a value that is wrong and say what it should be: “this should show $80.80”. You get a Playwright test that fails on the bug. Your AI’s fix is kept only when that same test passes.');
+  await expect(page.locator('[data-tour-ring]')).toHaveCount(2);
   await page.locator('[data-tour-next]').click();
   await expect(step(page, 'Test and review')).toContainText('Record session: use your app and talk, then get a report with evidence.');
   await page.locator('[data-tour-next]').click();
@@ -128,7 +132,7 @@ test('it never takes the studio over; Skip tour and Escape end it for good, and 
   await page.getByRole('button', { name: 'Help' }).click();
   await page.getByRole('dialog', { name: 'Phrases and shortcuts' }).getByRole('button', { name: 'Take the tour' }).click();
   await expect(point).toBeFocused();
-  await expect(point).toContainText('1 of 7');
+  await expect(point).toContainText('1 of 8');
   await page.keyboard.press('Escape');
   await expect(card).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Help' })).toBeFocused();
@@ -178,9 +182,12 @@ test('its words follow the AI and the microphone: with no AI, quick edits are fr
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
   await expect(card).toHaveCount(0);
   await page.keyboard.press('Escape');
-  const more = step(page, 'Test and review');
-  await expect(more).toContainText('with an AI connected, Autopilot tries your app like a tester');
-  await expect(more).toBeFocused();
+  // Nothing is promised of an AI that isn't connected.
+  const test = step(page, 'Say the bug, get the test');
+  await expect(test).toContainText('You get a Playwright test that fails on the bug. With an AI connected, its fix is kept only when that same test passes.');
+  await expect(test).toBeFocused();
+  await card.locator('[data-tour-next]').click();
+  await expect(step(page, 'Test and review')).toContainText('with an AI connected, Autopilot tries your app like a tester');
 });
 
 test('with a microphone, its mic check opens the voice step of the setup and comes back to the tour', async ({ page }) => {

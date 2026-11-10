@@ -6,7 +6,7 @@
  * with its output, and says plainly why when it can't.
  */
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowRight, Box, ChevronDown, CircleHelp, Code2, FolderOpen, GitBranch, Globe, MoreHorizontal, Play, Plus, RotateCw, Settings2, Square, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ArrowRight, Box, ChevronDown, CircleHelp, Code2, FlaskConical, FolderOpen, GitBranch, Globe, MoreHorizontal, Play, Plus, RotateCw, Settings2, Square, Trash2, TriangleAlert, X } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { AppEnv, AppRun, LinkedApp } from '@shared/apps';
@@ -74,6 +74,7 @@ export function Launcher() {
   const list = useApps((s) => s.apps);
   const loaded = useApps((s) => s.loaded);
   const pref = useApps((s) => s.launcherPref);
+  const [prefUnsaved, setPrefUnsaved] = useState(false);
   const linking = useApps((s) => s.linking);
   const attachTo = useApps((s) => (s.attachTo ? (s.apps.find((a) => a.id === s.attachTo) ?? null) : null));
   const open = shown || noApp;
@@ -172,9 +173,14 @@ export function Launcher() {
           {loaded && (
             <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-5 py-3 text-[12px] text-fg-3">
               <label className="flex items-center gap-2">
-                <Switch checked={pref} onCheckedChange={(on) => void apps.setLauncherPref(on)} aria-label="Show this list when the studio starts" />
+                <Switch checked={pref} onCheckedChange={(on) => void apps.setLauncherPref(on).then((saved) => setPrefUnsaved(!saved))} aria-label="Show this list when the studio starts" />
                 Show this list when the studio starts
               </label>
+              {prefUnsaved && (
+                <span role="alert" className="text-warn">
+                  That couldn’t be saved. Is the studio still running?
+                </span>
+              )}
               <PrivacyNote className="ms-auto max-w-[680px] text-[12px]" />
             </footer>
           )}
@@ -194,7 +200,7 @@ function Welcome({ onLink }: { onLink: (how: LinkTab) => void }) {
     <div className="mx-auto max-w-[760px] pt-6 text-center" data-welcome>
       <Logo className="mx-auto size-12" />
       <h1 className="mt-5 text-[26px] font-semibold tracking-[-0.02em] text-fg">Welcome to {BRAND.name}</h1>
-      <p className="mx-auto mt-2 max-w-[520px] text-[14px] leading-relaxed text-fg-2">Link the app you are building. Point at anything in it, say or type what to change, and keep or undo the result.</p>
+      <p className="mx-auto mt-2 max-w-[540px] text-[14px] leading-relaxed text-fg-2">Link the app you are building. Point at anything in it and say what to change, or say what is wrong and get the test that proves the fix.</p>
       <div className="mt-8 grid gap-3 text-start sm:grid-cols-3">
         <Choice icon={<FolderOpen />} title="A folder on this computer" onClick={() => onLink('folder')} first>
           Any web app: Vite, Next.js, Astro, Angular, plain HTML. The studio starts it for you.
@@ -206,10 +212,21 @@ function Welcome({ onLink }: { onLink: (how: LinkTab) => void }) {
           Cloned here, installed and started, ready to change.
         </Choice>
       </div>
-      <button onClick={() => void apps.sample()} className="mt-8 inline-flex items-center gap-1.5 text-[13px] font-medium text-human-fg hover:underline" data-try-sample>
-        Or try the sample shop first <ArrowRight className="size-3.5" />
-      </button>
-      {touring && <p className="mt-2 text-[12.5px] text-fg-3">A one-minute tour starts once your app is open.</p>}
+      {/* The shortest way to see what the studio is for: nothing to link, and a real bug to find. */}
+      <div className="mt-3 flex flex-col items-start gap-3 rounded-[14px] bg-human-soft/60 p-4 text-start ring-1 ring-inset ring-human-line/40 sm:flex-row sm:items-center">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-[9px] bg-raised text-human-fg ring-1 ring-inset ring-human-line/40 [&_svg]:size-[17px]">
+          <FlaskConical />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13.5px] font-semibold text-fg">New here? Try the sample shop first</span>
+          <span className="mt-0.5 block text-[12.5px] leading-relaxed text-fg-2">A small shop with a real bug in its checkout. Say what is wrong, get a test that proves it, and let your AI fix it. About two minutes.</span>
+        </span>
+        <Button variant="primary" size="md" onClick={() => void apps.sample()} data-try-sample>
+          Open the sample shop
+          <ArrowRight />
+        </Button>
+      </div>
+      {touring && <p className="mt-4 text-[12.5px] text-fg-3">A one-minute tour starts once your app is open.</p>}
     </div>
   );
 }

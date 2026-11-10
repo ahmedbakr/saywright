@@ -155,7 +155,7 @@ test('the quick-start tour is not a modal: nothing goes inert, focus moves in on
   const apply = await appPoint(page, 'coupon-apply');
   await page.mouse.click(apply.x, apply.y);
   await expect(page.getByRole('dialog', { name: 'Say what to change' })).toBeVisible();
-  await expect(page.getByRole('status').filter({ hasText: 'Step 2 of 7: Say what to change.' })).toHaveCount(1);
+  await expect(page.getByRole('status').filter({ hasText: 'Step 2 of 8: Say what to change.' })).toHaveCount(1);
   expect(await focusedIn(page, '[data-tour-card]')).toBe(false);
   // Escape ends it; the selection, under it, stays.
   await page.keyboard.press('Escape');

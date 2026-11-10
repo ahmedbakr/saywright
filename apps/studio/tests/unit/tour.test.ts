@@ -11,8 +11,8 @@ const words = (step: TourStep, over: Partial<TourContext> = {}) => {
 const studio = (selection: number | null, changes: [string, string][]) => ({ selection: selection === null ? null : { id: selection }, changes: changes.map(([id, status]) => ({ id, status })) });
 
 describe('the quick-start tour', () => {
-  it('has seven steps on an app with code here, and skips the code ones for an app linked by its address alone', () => {
-    expect(tourSteps(true)).toEqual(['point', 'say', 'keep', 'changes', 'ai', 'more', 'done']);
+  it('has eight steps on an app with code here, and skips the code ones for an app linked by its address alone', () => {
+    expect(tourSteps(true)).toEqual(['point', 'say', 'keep', 'changes', 'ai', 'test', 'more', 'done']);
     expect(tourSteps(false)).toEqual(['point', 'ai', 'more', 'done']);
   });
 
@@ -72,6 +72,15 @@ describe('the tour’s words', () => {
     expect(words('ai', { ai: { ready: true, source: 'fake', who: { connection: 'fake', label: 'Test stand-in', model: 'fake', plan: false } } })).toContain('the test stand-in, which costs nothing');
     // Autopilot needs one.
     expect(words('more', { ai: { ready: false, source: null, who: null } })).toContain('with an AI connected, Autopilot tries your app like a tester');
+  });
+
+  it('say the bug, get the test: what the studio is for, on the sample shop’s own bug and on any app', () => {
+    expect(words('test', { sample: true })).toBe(
+      'Say the bug, get the test · Press R for Write test. Try it here: type SAVE20 as the coupon and apply it, then point at the total and say “this should show $80.80”. You get a Playwright test that fails on the bug. Your AI’s fix is kept only when that same test passes.',
+    );
+    expect(words('test')).toContain('Use your app as usual, then point at a value that is wrong and say what it should be: “this should show $80.80”.');
+    // Nothing is promised of an AI that isn't connected.
+    expect(words('test', { ai: { ready: false, source: null, who: null } })).toContain('With an AI connected, its fix is kept only when that same test passes.');
   });
 
   it('point at the app: Edit mode first, the sample shop’s Pay button, and no file and line for an address alone', () => {

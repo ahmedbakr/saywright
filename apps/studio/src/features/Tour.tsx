@@ -40,6 +40,8 @@ function specFor(step: TourStep, editing: boolean): Spec {
       return { anchor: ['[data-change]', '[data-tab="changes"]'], rings: ['[data-tab="changes"]', '[data-change]'], sides: ['left', 'bottom'] };
     case 'ai':
       return { anchor: ['[data-tour="ai"]'], rings: ['[data-tour="ai"]'], sides: ['bottom'] };
+    case 'test':
+      return { anchor: ['[data-mode-switcher]'], rings: ['[data-mode-switcher]', '[data-tab="test"]'], sides: ['bottom'] };
     case 'more':
       return { anchor: ['[data-tour="record"]'], rings: ['[data-tour="record"]', ['[data-tab="experts"]', '[data-tab="sessions"]']], sides: ['bottom'] };
     case 'done':

@@ -43,7 +43,7 @@ The studio opens in your browser at `http://localhost:7357`. The first time, it 
 
 ## 2. Open the sample shop
 
-Click **Or try the sample shop first**. The shop's checkout page opens in the middle of the studio, and a one-minute tour starts in the corner. Follow it, or click **Skip tour**: **Help** (<kbd>?</kbd>) brings it back any time.
+Click **Open the sample shop**. The first time, the studio copies the shop to `~/.saywright/sample-shop` and installs what it needs (about a minute, with npm's output on screen); after that it opens in seconds. The shop's checkout page shows in the middle of the studio, and a one-minute tour starts in the corner. Follow it, or click **Skip tour**: **Help** (<kbd>?</kbd>) brings it back any time.
 
 <img src="media/guide/tour.png" alt="The sample shop open in the studio, with the tour's first step: Point at something" width="880">
 

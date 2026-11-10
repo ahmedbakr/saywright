@@ -6,11 +6,14 @@
 import type { StatusResponse } from '@shared/api';
 import { shortcut } from '@/lib/format';
 
-export type TourStep = 'point' | 'say' | 'keep' | 'changes' | 'ai' | 'more' | 'done';
+export type TourStep = 'point' | 'say' | 'keep' | 'changes' | 'ai' | 'test' | 'more' | 'done';
 
-/** The steps for the open app. One linked by its address alone has no code here to change, so it skips those. */
+/**
+ * The steps for the open app. One linked by its address alone has no code here to change (and no folder to write a
+ * test into), so it skips those.
+ */
 export function tourSteps(hasCode: boolean): TourStep[] {
-  return hasCode ? ['point', 'say', 'keep', 'changes', 'ai', 'more', 'done'] : ['point', 'ai', 'more', 'done'];
+  return hasCode ? ['point', 'say', 'keep', 'changes', 'ai', 'test', 'more', 'done'] : ['point', 'ai', 'more', 'done'];
 }
 
 /** What the steps watch: what is selected, the previews waiting, and how many changes were kept or undone. */
@@ -95,6 +98,12 @@ export function stepText(step: TourStep, c: TourContext): StepText {
           body: 'Size, variant, text, move and remove are quick edits: instant, free and offline. For anything else, connect the AI you already pay for, or an API key with a budget.',
         };
       return { title: 'Your AI', body: `Quick edits stay instant and free. ${yourAi(c.ai)}` };
+    case 'test': {
+      // The whole of what the studio is for, in one step: the bug said out loud becomes the test that proves its fix.
+      const how = c.sample ? 'Try it here: type SAVE20 as the coupon and apply it, then point at the total and say “this should show $80.80”.' : 'Use your app as usual, then point at a value that is wrong and say what it should be: “this should show $80.80”.';
+      const fix = c.ai?.ready ? ' Your AI’s fix is kept only when that same test passes.' : ' With an AI connected, its fix is kept only when that same test passes.';
+      return { title: 'Say the bug, get the test', body: `Press R for Write test. ${how} You get a Playwright test that fails on the bug.${fix}` };
+    }
     case 'more': {
       const panel = c.ai?.ready
         ? 'In the panel, Autopilot lets the AI try your app like a tester, and Experts review the page for SEO, content, UX and accessibility.'
