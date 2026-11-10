@@ -16,7 +16,7 @@ import path from 'node:path';
 import net from 'node:net';
 import zlib from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AppProxy, corsAllows, readableRequest, fromPage, PageRewriter, preflightAllows, preflightFor, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaRequest, viaUrl } from '../../server/apps/proxy';
+import { acceptsEncoding, AppProxy, corsAllows, readableRequest, fromPage, PageRewriter, preflightAllows, preflightFor, restoreCookieHeader, rewriteLocation, rewriteSetCookie, TextReplacer, transformHtml, upstreamUrl as targetOf, viaRequest, viaUrl } from '../../server/apps/proxy';
 import { probeUrl } from '../../server/apps/detect';
 import { certificateProblem, tlsFor } from '../../server/apps/local-tls';
 
@@ -55,6 +55,19 @@ beforeAll(async () => {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=windows-1256' });
       // "سلام" in Windows-1256.
       return res.end(Buffer.from([0x3c, 0x70, 0x3e, 0xd3, 0xe1, 0xc7, 0xe3, 0x3c, 0x2f, 0x70, 0x3e]));
+    }
+    if (req.url === '/enc.js') {
+      // Answers in the first encoding it was asked for that it has, as CDNs do.
+      const ae = String(req.headers['accept-encoding'] ?? '');
+      const body = 'console.log("encoded")';
+      const enc = /\bbr\b/.test(ae) ? 'br' : /\bgzip\b/.test(ae) ? 'gzip' : null;
+      res.writeHead(200, { 'Content-Type': 'text/javascript', 'X-Seen-Accept-Encoding': ae || 'none', ...(enc ? { 'Content-Encoding': enc } : {}) });
+      return res.end(enc === 'br' ? zlib.brotliCompressSync(body) : enc === 'gzip' ? zlib.gzipSync(body) : body);
+    }
+    if (req.url === '/always-br.js') {
+      // A server that compresses whatever it was asked for.
+      res.writeHead(200, { 'Content-Type': 'text/javascript', 'Content-Encoding': 'br' });
+      return res.end(zlib.brotliCompressSync('console.log("br anyway")'));
     }
     if (req.url === '/latin-meta') {
       // Declared in <meta> only, as older PHP and static sites do.
@@ -191,13 +204,28 @@ describe('the app proxy', () => {
     expect(wide.body).toEqual(UTF16_PAGE);
     expect(notes.at(-1)).toMatch(/UTF-16/);
     expect((await get('/app.css')).body.toString()).toBe(`@font-face{src:url(${new URL(frame).origin}/f.woff2)}`);
-    const blob = await get('/blob');
+    const blob = await get('/blob', { 'accept-encoding': 'gzip, deflate, br' });
     expect(blob.headers['content-encoding']).toBe('gzip');
     expect([...zlib.gunzipSync(blob.body)]).toEqual([1, 2, 3, 4]);
   });
 
+  it('asks the site only for encodings the browser accepts, and never passes on one it didn’t ask for', async () => {
+    const none = await get('/enc.js');
+    expect(none.headers['x-seen-accept-encoding']).toBe('none');
+    expect(none.headers['content-encoding']).toBeUndefined();
+    expect(none.body.toString()).toBe('console.log("encoded")');
+    const gzip = await get('/enc.js', { 'accept-encoding': 'gzip, deflate' });
+    expect(gzip.headers['x-seen-accept-encoding']).toBe('gzip, deflate');
+    expect(gzip.headers['content-encoding']).toBe('gzip');
+    expect(zlib.gunzipSync(gzip.body).toString()).toBe('console.log("encoded")');
+    const anyway = await get('/always-br.js', { 'accept-encoding': 'gzip' });
+    expect(anyway.headers['content-encoding']).toBeUndefined();
+    expect(anyway.body.toString()).toBe('console.log("br anyway")');
+    expect([acceptsEncoding('gzip, br', 'br'), acceptsEncoding('gzip;q=0, *', 'gzip'), acceptsEncoding('*', 'zstd'), acceptsEncoding('gzip, br', 'zstd'), acceptsEncoding(undefined, 'identity')]).toEqual([true, false, true, false, true]);
+  });
+
   it('leaves HTML a script fetched as the site sent it, and keeps service workers out', async () => {
-    const partial = await get('/br', { 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors' });
+    const partial = await get('/br', { 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'accept-encoding': 'gzip, deflate, br' });
     expect(partial.headers['content-encoding']).toBe('br');
     expect(zlib.brotliDecompressSync(partial.body).toString()).toBe('<html><head></head><body>brotli</body></html>');
     expect((await get('/sw.js', { 'service-worker': 'script' })).status).toBe(404);

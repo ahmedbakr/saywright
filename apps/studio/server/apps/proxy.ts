@@ -275,6 +275,21 @@ function utf16(type: string, first: Buffer): boolean {
   return /charset\s*=\s*["']?utf-16/i.test(type) || (first.length >= 2 && ((first[0] === 0xff && first[1] === 0xfe) || (first[0] === 0xfe && first[1] === 0xff)));
 }
 
+/** Whether an Accept-Encoding header accepts `encoding` (a q of 0 refuses it). */
+export function acceptsEncoding(header: string | string[] | undefined, encoding: string): boolean {
+  const enc = encoding.trim().toLowerCase();
+  if (!enc || enc === 'identity') return true;
+  const offers = String(header ?? '')
+    .split(',')
+    .map((part) => {
+      const [name, ...params] = part.trim().toLowerCase().split(';');
+      const q = params.map((p) => /^\s*q\s*=\s*([\d.]+)/.exec(p)?.[1]).find(Boolean);
+      return { name: name.trim() === 'x-gzip' ? 'gzip' : name.trim(), ok: q === undefined || Number(q) > 0 };
+    });
+  const named = offers.find((o) => o.name === (enc === 'x-gzip' ? 'gzip' : enc));
+  return named ? named.ok : !!offers.find((o) => o.name === '*')?.ok;
+}
+
 /** A page being loaded (as opposed to HTML fetched by a script, which must stay as the site sent it). */
 function isNavigation(req: IncomingMessage): boolean {
   const dest = String(req.headers['sec-fetch-dest'] ?? '');
@@ -501,7 +516,10 @@ export class AppProxy {
     const cookie = typeof headers.cookie === 'string' ? restoreCookieHeader(headers.cookie, target.port) : '';
     if (cookie) headers.cookie = cookie;
     else delete headers.cookie;
-    headers['accept-encoding'] = ACCEPT_ENCODING;
+    // What the proxy decodes itself (pages, styles) may come in any encoding it reads; everything else goes to the
+    // browser as it comes, so only in an encoding the browser asked for.
+    if (isNavigation(req) || req.headers['sec-fetch-dest'] === 'style') headers['accept-encoding'] = ACCEPT_ENCODING;
+    else if (!req.headers['accept-encoding']) delete headers['accept-encoding'];
     // A page is always fetched in full, so it always gets the current bridge.
     if (isNavigation(req)) {
       delete headers['if-none-match'];
@@ -698,9 +716,19 @@ export class AppProxy {
     const type = String(up.headers['content-type'] ?? '');
     const html = /^(text\/html|application\/xhtml\+xml)/i.test(type) && isNavigation(req);
     const css = /^text\/css/i.test(type);
-    // Anything else, and what can't be decoded here, passes as the site sent it.
-    const decode = html || css ? decoders(up.headers['content-encoding']) : null;
-    if (!decode || req.method === 'HEAD' || up.statusCode === 204 || up.statusCode === 304) {
+    // Anything else, and what can't be decoded here, passes as the site sent it: decoded only when it came in an
+    // encoding the browser didn't ask for (a server that compresses whatever it is asked).
+    const encoding = String(up.headers['content-encoding'] ?? '');
+    const unasked = !acceptsEncoding(req.headers['accept-encoding'], encoding);
+    const decode = html || css || unasked ? decoders(encoding) : null;
+    const empty = req.method === 'HEAD' || up.statusCode === 204 || up.statusCode === 304;
+    if (decode && unasked && !html && !css && !empty) {
+      for (const h of ['content-encoding', 'content-length']) delete headers[h];
+      res.writeHead(up.statusCode ?? 200, headers);
+      relay(up, res, ...decode);
+      return;
+    }
+    if (!decode || !(html || css) || empty) {
       res.writeHead(up.statusCode ?? 502, headers);
       relay(up, res);
       return;
