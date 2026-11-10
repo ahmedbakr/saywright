@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
 import { generateSpec, safeLocator, secretsOf, slug, urlPattern, writeSpec } from '../../server/tests/generate';
 import { asShown, showsValue } from '../../shared/expected';
-import { focusOn, heldChecks, judge, sentElsewhere, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
+import { chooseBrowser, focusOn, heldChecks, judge, sentElsewhere, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
 const input = {
@@ -418,6 +418,42 @@ describe('parseFailure', () => {
     expect(focusOn('Shipping 12 days', '3 days')).toBe('12 days');
     expect(focusOn('Free shipping', 'Paid shipping')).toBe('Free shipping');
     expect(focusOn(undefined, '$1')).toBeUndefined();
+  });
+});
+
+describe('the browser a run uses', () => {
+  const project = { root: '/nowhere' } as never;
+  it('uses an installed Chrome or Edge when Playwright’s own isn’t there, and PW_CHROMIUM_PATH first', () => {
+    const before = process.env.PW_CHROMIUM_PATH;
+    delete process.env.PW_CHROMIUM_PATH;
+    try {
+      // Without the app's Playwright to ask, its own browser is taken as there.
+      expect(chooseBrowser(project, 'linux', () => true)).toEqual({ name: 'Playwright’s Chromium' });
+      process.env.PW_CHROMIUM_PATH = '/opt/chromium';
+      expect(chooseBrowser(project, 'linux', () => false)).toEqual({ executablePath: '/opt/chromium', name: 'Chromium (/opt/chromium)' });
+    } finally {
+      if (before === undefined) delete process.env.PW_CHROMIUM_PATH;
+      else process.env.PW_CHROMIUM_PATH = before;
+    }
+  });
+
+  it('finds Chrome, then Edge, where they are installed', () => {
+    const before = process.env.PW_CHROMIUM_PATH;
+    delete process.env.PW_CHROMIUM_PATH;
+    const shop = tempShop();
+    try {
+      fs.mkdirSync(path.join(shop.root, 'node_modules/@playwright/test'), { recursive: true });
+      fs.writeFileSync(path.join(shop.root, 'node_modules/@playwright/test/package.json'), '{"name":"@playwright/test","version":"1.0.0"}');
+      fs.mkdirSync(path.join(shop.root, 'node_modules/playwright-core'), { recursive: true });
+      fs.writeFileSync(path.join(shop.root, 'node_modules/playwright-core/package.json'), '{"name":"playwright-core","version":"1.0.0","main":"index.js"}');
+      fs.writeFileSync(path.join(shop.root, 'node_modules/playwright-core/index.js'), "module.exports = { chromium: { executablePath: () => '/pw/chromium' } };");
+      expect(chooseBrowser(shop as never, 'darwin', (p) => p.includes('Microsoft Edge'))).toEqual({ channel: 'msedge', name: 'Microsoft Edge' });
+      expect(chooseBrowser(shop as never, 'linux', (p) => p === '/opt/google/chrome/chrome' || p === '/opt/microsoft/msedge/msedge')).toEqual({ channel: 'chrome', name: 'Google Chrome' });
+      expect(chooseBrowser(shop as never, 'linux', (p) => p === '/pw/chromium')).toEqual({ name: 'Playwright’s Chromium' });
+      expect(chooseBrowser(shop as never, 'linux', () => false)).toEqual({ name: 'Playwright’s Chromium' });
+    } finally {
+      if (before !== undefined) process.env.PW_CHROMIUM_PATH = before;
+    }
   });
 });
 

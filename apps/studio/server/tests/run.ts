@@ -40,13 +40,18 @@ function run(cmd: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: numb
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
-    child.stdout!.on('data', (d) => (stdout += d));
+    child.stdout!.on('data', (d) => {
+      stdout += d;
+      // Both streams are the log: an installer says why it failed on either.
+      if (onLine) for (const l of String(d).split('\n')) if (l.trim()) onLine(l.replace(ANSI, '').trim());
+    });
     child.stderr!.on('data', (d) => {
       stderr += d;
       if (onLine) for (const l of String(d).split('\n')) if (l.trim()) onLine(l.replace(ANSI, '').trim());
     });
     child.on('error', (err) => {
       clearTimeout(timer);
+      onLine?.(`Couldn’t start it: ${String(err)}`);
       resolve({ code: -1, stdout, stderr: stderr + String(err) });
     });
     child.on('close', (code) => {
@@ -300,6 +305,46 @@ export interface RunOptions {
 /** A value as JavaScript source: the studio's configuration is written as a module with no imports. */
 const js = (v: unknown) => JSON.stringify(v);
 
+/** Where Chrome and Edge are installed, by platform: Playwright runs them by their channel, with nothing to download. */
+const INSTALLED: Record<string, { channel: 'chrome' | 'msedge'; name: string; paths: string[] }[]> = {
+  darwin: [
+    { channel: 'chrome', name: 'Google Chrome', paths: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'] },
+    { channel: 'msedge', name: 'Microsoft Edge', paths: ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'] },
+  ],
+  linux: [
+    { channel: 'chrome', name: 'Google Chrome', paths: ['/opt/google/chrome/chrome'] },
+    { channel: 'msedge', name: 'Microsoft Edge', paths: ['/opt/microsoft/msedge/msedge'] },
+  ],
+  win32: [
+    { channel: 'chrome', name: 'Google Chrome', paths: ['PROGRAMFILES', 'PROGRAMFILES(X86)', 'LOCALAPPDATA'].map((v) => path.join(process.env[v] ?? '', 'Google/Chrome/Application/chrome.exe')) },
+    { channel: 'msedge', name: 'Microsoft Edge', paths: ['PROGRAMFILES', 'PROGRAMFILES(X86)'].map((v) => path.join(process.env[v] ?? '', 'Microsoft/Edge/Application/msedge.exe')) },
+  ],
+};
+
+/**
+ * The browser a run uses: the one PW_CHROMIUM_PATH names; else Playwright's own Chromium when it is installed; else an
+ * installed Chrome or Edge through Playwright's channel (no download); else Playwright's own, which then asks to be
+ * installed. `name` is said in the run's result.
+ */
+export function chooseBrowser(project: Project, platform: string = process.platform, exists: (p: string) => boolean = fs.existsSync): { executablePath?: string; channel?: 'chrome' | 'msedge'; name: string } {
+  const own = process.env.PW_CHROMIUM_PATH;
+  if (own) return { executablePath: own, name: `Chromium (${own})` };
+  if (ownChromium(project, exists)) return { name: 'Playwright’s Chromium' };
+  for (const b of INSTALLED[platform] ?? []) if (b.paths.some((p) => p && exists(p))) return { channel: b.channel, name: b.name };
+  return { name: 'Playwright’s Chromium' };
+}
+
+/** Whether Playwright's own Chromium is installed, as the app's Playwright would launch it. Unknown is yes. */
+function ownChromium(project: Project, exists: (p: string) => boolean): boolean {
+  try {
+    const req = createRequire(path.join(project.root, 'package.json'));
+    const core = req(req.resolve('playwright-core', { paths: [path.dirname(req.resolve('@playwright/test/package.json'))] })) as { chromium: { executablePath(): string } };
+    return exists(core.chromium.executablePath());
+  } catch {
+    return true;
+  }
+}
+
 export async function runSpec(project: Project, rel: string, opts: RunOptions): Promise<TestRunResult> {
   const file = project.resolve(rel); // refuses anything outside the project
   const started = Date.now();
@@ -334,7 +379,7 @@ export async function runSpec(project: Project, rel: string, opts: RunOptions): 
   const reportFile = path.join(opts.workDir, `run-${id}.json`);
   const outputDir = path.join(opts.workDir, `run-${id}`);
   const setup = ['setup.ts', 'setup.mjs', 'setup.js'].map((f) => path.join(path.dirname(file), f)).find((f) => fs.existsSync(f));
-  const chromium = process.env.PW_CHROMIUM_PATH;
+  const browser = chooseBrowser(project);
   fs.writeFileSync(
     configFile,
     `// Written by Saywright for one run of ${js(rel)}; removed after it.
@@ -354,7 +399,7 @@ ${setup ? `  globalSetup: ${js(setup)},\n` : ''}  use: {
     browserName: 'chromium',
     actionTimeout: 15000,
     navigationTimeout: 30000,
-${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  },
+${browser.executablePath ? `    launchOptions: { executablePath: ${js(browser.executablePath)} },\n` : ''}${browser.channel ? `    channel: ${js(browser.channel)},\n` : ''}  },
 };
 `,
   );
@@ -362,7 +407,7 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
     const { code: exit, stdout, stderr } = await run([...playwrightCli(project), 'test', '--config', configFile], project.root, env, 180_000);
     const durationMs = Date.now() - started;
     const all = mask(`${stdout}\n${stderr}`)!.replace(ANSI, '');
-    if (NEEDS_BROWSER.test(all)) return { status: 'setup-needed', durationMs, hash, message: 'Playwright needs its Chromium browser (one-time, about 150 MB).' };
+    if (NEEDS_BROWSER.test(all)) return { status: 'setup-needed', durationMs, hash, message: 'Playwright needs its Chromium browser (one-time, about 150 MB): no Chrome or Edge was found on this computer to use instead.' };
     if (/Cannot find module '@playwright\/test'|Cannot find package '@playwright\/test'/.test(all)) {
       const pm = fs.existsSync(path.join(project.root, 'pnpm-lock.yaml')) ? 'pnpm add -D' : fs.existsSync(path.join(project.root, 'yarn.lock')) ? 'yarn add -D' : fs.existsSync(path.join(project.root, 'bun.lockb')) || fs.existsSync(path.join(project.root, 'bun.lock')) ? 'bun add -d' : 'npm i -D';
       return { status: 'setup-needed', durationMs, hash, message: `This project needs @playwright/test. Run: ${pm} @playwright/test` };
@@ -384,7 +429,7 @@ ${chromium ? `    launchOptions: { executablePath: ${js(chromium)} },\n` : ''}  
       return { status: 'error', durationMs, hash, message: msg.slice(0, 600) };
     }
     const verdict = judge(finals, marksOf(code), mask, { exit, errors: (report.errors ?? []).map((e) => e.message ?? '').filter(Boolean) }, marksByTest(code, ran), heldChecks(code));
-    const out: TestRunResult = { durationMs, hash, ...verdict };
+    const out: TestRunResult = { durationMs, hash, browser: browser.name, ...verdict };
     if (verdict.status === 'failed' && verdict.message) Object.assign(out, parseFailure(verdict.message, verdict.steps?.find((s) => !s.ok)?.title));
     // The test that failed is the one that must pass: a test changed since (by a fix, or by hand) proves nothing about the fix.
     if (out.verified && opts.baseline && opts.baseline !== hash) {
@@ -419,6 +464,12 @@ export function sweepRuns(dir: string): void {
 }
 
 export async function installBrowser(project: Project, onLine: (line: string) => void): Promise<boolean> {
-  const { code } = await run([...playwrightCli(project), 'install', 'chromium'], project.root, process.env, 10 * 60_000, onLine);
+  let said = false;
+  const { code } = await run([...playwrightCli(project), 'install', 'chromium'], project.root, process.env, 10 * 60_000, (line) => {
+    said = true;
+    onLine(line);
+  });
+  // A failure always says why, even one that printed nothing.
+  if (code !== 0 && !said) onLine(code === null ? 'The install was stopped (it took more than 10 minutes).' : `The install ended with code ${code} and said nothing more.`);
   return code === 0;
 }

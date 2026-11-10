@@ -192,6 +192,8 @@ export interface TestRunResult {
    * doesn't replay what was done, so it isn't the bug).
    */
   failedAt?: 'check' | 'step' | 'find' | 'replay';
+  /** The browser that ran it: Playwright's Chromium, or an installed Chrome or Edge. */
+  browser?: string;
   /** The steps and checks the run reported, in order. */
   steps?: RunStep[];
   /** The test's steps and checks: how many it has, and how many ran and passed. */

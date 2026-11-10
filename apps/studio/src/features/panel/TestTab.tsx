@@ -323,7 +323,7 @@ function RunResult() {
         <div className="flex items-center gap-2.5">
           <CircleCheck className="size-4 text-ok" />
           <div className="text-[12.5px] text-fg">
-            Passed in {(run.durationMs / 1000).toFixed(1)} s{verifying ? ' with the fix applied' : ''}{counted ? `: all ${counted} ran` : ''}.
+            Passed in {(run.durationMs / 1000).toFixed(1)} s{verifying ? ' with the fix applied' : ''}{counted ? `: all ${counted} ran` : ''}.{run.browser ? ` Ran in ${run.browser}.` : ''}
           </div>
         </div>
         <RunSteps />
