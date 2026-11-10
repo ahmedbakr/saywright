@@ -174,6 +174,21 @@ document.getElementById('go').onclick = () => { sessionStorage.setItem('a${i + 1
   }
 });
 
+test('a click in a page’s first moments is a step', async ({ page }) => {
+  const file = path.join(E2E_SHOP, 'quick.html');
+  fs.writeFileSync(file, '<!doctype html><html><head><meta charset="utf-8"><title>Quick</title></head><body><main><h1>Quick</h1><button>Go now</button></main></body></html>');
+  try {
+    await writeTestOnAccount(page);
+    const app = page.frameLocator('iframe');
+    await app.locator('body').evaluate(() => (location.href = '/quick.html'));
+    // As soon as the button is there: the page is a few milliseconds old.
+    await app.getByRole('button', { name: 'Go now' }).click();
+    await expect.poll(async () => (await steps(page)).filter((s) => s.kind === 'click').map((s) => s.description)).toEqual(['Click the “Go now” button']);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+});
+
 test('a confirm and a prompt answered while recording are kept with their steps; outside recording the app’s dialogs are its own', async ({ page }) => {
   await writeTestOnAccount(page);
   const app = page.frameLocator('iframe');

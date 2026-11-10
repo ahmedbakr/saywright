@@ -114,7 +114,8 @@ export class Recorder {
   private inFrame = false;
   /** A pointer pressed on a canvas: where, and whether it then drew (moved, held down). */
   private press: { x: number; y: number; on: Element; drew: boolean } | null = null;
-  private drewAt = 0;
+  /** When a shape was last drawn on a canvas: never, at first (a click in a page's first moments is a click). */
+  private drewAt = -Infinity;
 
   constructor(private send: Emit) {
     document.addEventListener('pointerdown', this.onPointerDown, true);
