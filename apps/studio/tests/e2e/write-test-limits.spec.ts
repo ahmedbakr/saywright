@@ -38,7 +38,8 @@ test('a test past a hundred steps and twenty checks is written and run whole: it
   expect(failed).toMatchObject({ status: 'failed', failedAt: 'check', expected: 'nobody@example.org', counts: { steps: 102, checks: 21, stepsPassed: 102, checksPassed: 20 } });
   expect(failed.verified).toBeFalsy();
 
-  const passing = await post<{ path: string }>('/tests/generate', { name: 'Long account form passing', startUrl: '/#/account', steps: STEPS, expectations: checks('a@example.com') });
+  // (The end of the address alone would no longer do: “a@example.com” is not the value, only the end of a longer word.)
+  const passing = await post<{ path: string }>('/tests/generate', { name: 'Long account form passing', startUrl: '/#/account', steps: STEPS, expectations: checks(LONG) });
   const passed = (await post<TestRunResult>('/tests/run', { path: passing.json.path })).json;
   expect(passed).toMatchObject({ status: 'passed', verified: true, counts: { steps: 102, checks: 21, stepsPassed: 102, checksPassed: 21 } });
 });

@@ -107,7 +107,8 @@ test.describe('“undo”, recorded', () => {
     await modelReady(page);
     await talk(page, 2600);
     expect(await store<string>(page, 's.voice.last.text')).toBe('Undo.');
-    await expectIsland(page, /Nothing to undo/);
+    // Nothing waits to be undone: it says so, or offers the last change kept (an earlier test's, if one was).
+    await expectIsland(page, /Nothing to undo|Nothing is waiting\. Undo the last change you kept/);
   });
 });
 

@@ -33,7 +33,9 @@ export class FakeProvider implements AgentProvider {
 
     // A stand-in that “fixes” a failing test by weakening the test itself: what the studio must never take for a fix.
     if (input.mode === 'fix' && input.test && /\b(?:change|edit) the test\b/i.test(input.text)) {
-      const edits = applyEditSpecs(ctx.project, [{ path: input.test.path, old_string: "toContainText('$80.80')", new_string: "toContainText('$')" }]);
+      // Whatever the check expects (words, or an amount's pattern), it is made to expect any amount at all.
+      const check = /\.to(?:Contain|Have)Text\((?:'[^'\n]*'|\/(?:\\.|[^/\n])+\/[a-z]*)\)/.exec(ctx.project.read(input.test.path))?.[0] ?? "toContainText('$80.80')";
+      const edits = applyEditSpecs(ctx.project, [{ path: input.test.path, old_string: check, new_string: ".toContainText('$')" }]);
       return { kind: 'change', title: 'Loosens the check', summary: 'The test now accepts any amount.', edits };
     }
 
