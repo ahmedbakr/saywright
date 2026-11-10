@@ -31,6 +31,8 @@ async function finishedSession(): Promise<string> {
 /** axe-core over the studio's document (the app's frame is the app's business), once what was opened has finished fading in. */
 async function expectAxeClean(page: Page, screen: string): Promise<void> {
   await page.waitForTimeout(450);
+  // On a busy computer a dialog can still be fading in by then: half-transparent text is no finding of axe's.
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [data-layer-backdrop], [data-tour-card]')].every((el) => getComputedStyle(el).opacity === '1'));
   if (!(await page.evaluate(() => 'axe' in window))) await page.addScriptTag({ url: '/axe.min.js' });
   const found = await page.evaluate(async () => {
     type Result = { violations: { id: string; impact: string; nodes: { target: string[]; any: { message: string }[]; all: { message: string }[]; none: { message: string }[] }[] }[] };
@@ -177,6 +179,8 @@ test('dialogs are modal and give focus back where it was', async ({ page }) => {
   }
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
+  // Named, so that a failure says what has the focus instead.
+  await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? document.activeElement?.tagName ?? null), { message: 'what has the focus once the dialog is closed' }).toBe('Help');
   await expect(help).toBeFocused();
   expect(await inert(page, '[data-stage]')).toBe(false);
 });
