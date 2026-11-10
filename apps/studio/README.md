@@ -1,6 +1,6 @@
 # Saywright
 
-**Point at your app. Say what to change.** Then keep or undo the result.
+**Say the bug. Get the test. Prove the fix.** And point at your app, say what to change, then keep or undo the result.
 
 Saywright is a studio that runs on your computer, next to the web app you are building. Point at anything in your running app, traced to the file and line that wrote it, and say or type what to change: the change appears in your code and your live app at once, as a preview you keep or undo. Record yourself using the app and get a report with evidence, let Autopilot test it, have the Experts review a page, and turn what you do into a Playwright test.
 

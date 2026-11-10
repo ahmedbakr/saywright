@@ -8,17 +8,21 @@
   <a href="https://www.npmjs.com/package/@saywright/studio"><img src="https://img.shields.io/npm/v/@saywright/studio?label=%40saywright%2Fstudio&color=ffb224" alt="@saywright/studio on npm"></a>
   <a href="https://www.npmjs.com/package/@saywright/vite"><img src="https://img.shields.io/npm/v/@saywright/vite?label=%40saywright%2Fvite&color=3cc8e8" alt="@saywright/vite on npm"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="Licence: Apache 2.0"></a>
-  <img src="https://img.shields.io/badge/node-%E2%89%A5%2022.18-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22.18 or newer">
+  <img src="https://img.shields.io/badge/node-22.18%2B%20%7C%2024.11%2B-339933?logo=nodedotjs&logoColor=white" alt="Node.js 22 (22.18 or newer) or 24 and later (24.11 or newer)">
   <img src="https://img.shields.io/badge/runs%20on-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-555" alt="Runs on Windows, macOS and Linux">
 </p>
 
-**Point at your app. Say what to change.** Then keep or undo the result.
+**Say the bug. Get the test. Prove the fix.**
 
-Saywright is a studio that runs on your computer, next to the web app you are building. Point at anything in your running app, traced to the file and line that wrote it, and say or type what to change: “make this bigger”, “rename this to Place order”. The change appears in your code and your live app at once, as a preview you keep or undo. Record yourself using the app and get a report of what went wrong, with the evidence; let Autopilot test it; have the Experts review a page; turn what you do into a Playwright test.
+Saywright is a studio that runs on your computer, next to the web app you are building. Use your app, point at a value that is wrong and say what it should be: “this should show $80.80”. You get a Playwright test that fails on the bug, the AI you already have fixes the code, and the fix is kept only when that same test passes.
+
+**Point at your app. Say what to change.** Anything in your running app is traced to the file and line that wrote it: “make this bigger”, “rename this to Place order”. The change appears in your code and your live app at once, as a preview you keep or undo. Record yourself using the app and get a report of what went wrong, with the evidence; let Autopilot test it; have the Experts review a page.
 
 <p align="center">
   <a href="docs/media/demo.mp4"><img src="docs/media/demo.gif" alt="Saywright in use: pointing at a button in the sample shop, saying what to change, and keeping the preview" width="880"></a>
 </p>
+
+<p align="center"><a href="https://www.youtube.com/watch?v=sRmcY7LS3_8">▶ Watch the two-minute video: a bug said out loud becomes a test, a fix, and a proof</a></p>
 
 [Quick start](#quick-start) · [Getting started](docs/getting-started.md) · [What you can do](#what-you-can-do) · [AI and cost](#ai-and-cost) · [Privacy and security](#privacy-and-security) · [Requirements](#requirements) · [Troubleshooting](#troubleshooting) · [Documentation](docs/README.md) · [Contributing](#contributing)
 
@@ -40,7 +44,7 @@ The studio opens at `http://localhost:7357`. Link your app, from:
 
 <img src="docs/media/guide/welcome.png" alt="The welcome screen: link a folder, an address or a GitHub repository, or try the sample shop" width="880">
 
-Or try the sample shop: it has a real bug to find, and [Getting started](docs/getting-started.md) walks through it step by step.
+Or click **Open the sample shop**: it installs itself, it has a real bug to find, and [Getting started](docs/getting-started.md) walks through it step by step.
 
 To set an app up from the terminal instead, connect it once, then start the studio:
 
