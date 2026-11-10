@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { CodeIndex, type Coverage } from './code-index.ts';
+import { writeBeside } from './fsx.ts';
 import { HttpError } from './http.ts';
 import { workspaceRoot } from '../../../packages/vite/src/workspace.ts';
 import { importedFrom, variantsIn } from './quick/variants.ts';
@@ -330,7 +331,7 @@ export class Project {
     }
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     const tmp = `${abs}.saywright-tmp`;
-    fs.writeFileSync(tmp, content);
+    writeBeside(tmp, abs, content);
     fs.renameSync(tmp, abs);
     this.index?.forget(this.rel(asked));
     if (abs !== asked) this.index?.forget(this.rel(abs));

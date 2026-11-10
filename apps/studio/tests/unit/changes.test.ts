@@ -218,6 +218,32 @@ describe('a change of several files', () => {
   });
 });
 
+describe.skipIf(process.platform === 'win32')('a file’s link and mode', () => {
+  it('a change to a linked file goes to the file it leads to, the link stays a link, and modes are kept, through Undo', async () => {
+    const p = tempShop();
+    const at = (f: string) => path.join(p.root, f);
+    fs.writeFileSync(at('src/config.dev.ts'), 'export const env = "dev";\n');
+    fs.symlinkSync('config.dev.ts', at('src/config.ts'));
+    fs.writeFileSync(at('src/run.ts'), '#!/usr/bin/env node\nconsole.log(1);\n', { mode: 0o755 });
+    fs.chmodSync(at('src/run.ts'), 0o755);
+    fs.writeFileSync(at('src/secret.ts'), 'export const key = "k";\n');
+    fs.chmodSync(at('src/secret.ts'), 0o600);
+    const mode = (f: string) => (fs.statSync(at(f)).mode & 0o777).toString(8);
+    const store = new ChangeStore(p);
+    const change = (f: string, a: string, b: string) => ({ path: f, before: p.read(f), after: p.read(f).replace(a, b) });
+    await store.preview({ title: 'three', source: 'ai', edits: [change('src/config.ts', 'dev', 'prod'), change('src/run.ts', '1', '2'), change('src/secret.ts', '"k"', '"j"')] });
+    expect(fs.lstatSync(at('src/config.ts')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(at('src/config.dev.ts'), 'utf8')).toContain('prod');
+    expect([mode('src/run.ts'), mode('src/secret.ts')]).toEqual(['755', '600']);
+    await store.undo();
+    expect(fs.lstatSync(at('src/config.ts')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(at('src/config.dev.ts'), 'utf8')).toContain('dev');
+    expect([mode('src/run.ts'), mode('src/secret.ts')]).toEqual(['755', '600']);
+    p.write('src/run.ts', 'x');
+    expect(mode('src/run.ts')).toBe('755');
+  });
+});
+
 describe('committing kept changes', () => {
   it('commits alongside the studio, and says what git said when a hook refuses', async () => {
     const p = tempShop();

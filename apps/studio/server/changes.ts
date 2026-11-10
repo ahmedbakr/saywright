@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Change, ChangeSource, RefInfo } from '../shared/api.ts';
 import { BRAND } from '../shared/brand.ts';
 import { diffFile } from './diff.ts';
-import { writeFileAtomic } from './fsx.ts';
+import { writeBeside, writeFileAtomic } from './fsx.ts';
 import { HttpError } from './http.ts';
 import type { Project } from './project.ts';
 import { EncodingError, NotTextError, decodeText, encodeText } from './text-file.ts';
@@ -407,7 +407,7 @@ function writeTogether(project: Project, files: { path: string; content: Buffer 
       }
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       const tmp = `${abs}.saywright-tmp`;
-      fs.writeFileSync(tmp, f.content);
+      writeBeside(tmp, abs, f.content);
       staged.push({ asked, abs, tmp });
     }
   } catch (err) {

@@ -21,6 +21,25 @@ interface WriteOptions {
   sync?: boolean;
 }
 
+/**
+ * The permissions of the file at `abs` (0o755 for a script, 0o600 for a private file), or undefined when there is no
+ * such file: a new version written beside it and moved in takes them, so an edit never changes who may read or run it.
+ */
+export function modeOf(abs: string): number | undefined {
+  try {
+    return fs.statSync(abs).mode & 0o7777;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Write `content` to `tmp`, beside `abs`, with the permissions `abs` has (from the first byte). */
+export function writeBeside(tmp: string, abs: string, content: string | Uint8Array): void {
+  const mode = modeOf(abs);
+  fs.writeFileSync(tmp, content, mode === undefined ? undefined : { mode });
+  if (mode !== undefined) fs.chmodSync(tmp, mode);
+}
+
 /** Write a whole file so that it is replaced at once. */
 export function writeFileAtomic(file: string, data: string | Uint8Array, opts: WriteOptions = {}): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
