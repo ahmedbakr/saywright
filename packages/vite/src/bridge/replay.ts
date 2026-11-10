@@ -6,7 +6,7 @@
  * clicked, filled or pressed.
  */
 import { NAME_ATTR, SRC_ATTR } from '../protocol';
-import { accessibleName, collapse, deepAll, fieldValue, isField, isVisible, labelText, shapeOf } from './dom';
+import { accessibleName, collapse, deepAll, fieldValue, isField, isVisible, labelText, shapeOf, writtenText } from './dom';
 import { arm } from './guard';
 import { ROLE_SELECTORS, roleFor } from './locator';
 import { scriptedInput } from './own';
@@ -145,12 +145,14 @@ export function parseLocator(code: string): Call[] | null {
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 
-/** Playwright's matching: case-insensitive and partial by default, exact (case and all) when asked; a pattern as it is. */
+/** Playwright's matching: case-insensitive and partial by default, every word and nothing more when exact; a pattern as it is. */
 function matches(actual: string, wanted: string | RegExp, exact: boolean): boolean {
   const a = norm(actual);
   if (wanted instanceof RegExp) return wanted.test(a);
   const w = norm(wanted);
-  return exact ? a === w : a.toLowerCase().includes(w.toLowerCase());
+  // Exact is every word and nothing more. Capitals aside: a style may show them, and a step recorded by an earlier
+  // version was written from what the screen showed.
+  return exact ? a.toLowerCase() === w.toLowerCase() : a.toLowerCase().includes(w.toLowerCase());
 }
 
 /** A pattern loosened to find what holds a match somewhere in its text (`^…$` let go). */
@@ -158,7 +160,8 @@ const loose = (re: RegExp) => new RegExp(re.source.replace(/^\^/, '').replace(/(
 
 /** Innermost elements whose text is (or, not exact, contains) `text`. */
 function byText(scope: ParentNode, text: string | RegExp, exact: boolean): Element[] {
-  const needle = typeof text === 'string' ? norm(text).toLowerCase() : '';
+  // Without spaces: a line break is a space on the screen and nothing in the page's text.
+  const needle = typeof text === 'string' ? text.replace(/\s+/g, '').toLowerCase() : '';
   const somewhere = text instanceof RegExp ? loose(text) : null;
   const hits: Element[] = [];
   const all = deepAll(scope === document ? document.body : scope, '*');
@@ -166,10 +169,11 @@ function byText(scope: ParentNode, text: string | RegExp, exact: boolean): Eleme
     const el = all[i];
     if (el instanceof HTMLScriptElement || el instanceof HTMLStyleElement) continue;
     // Cheap first: the text must be in there somewhere.
-    if (somewhere ? !somewhere.test(norm(el.textContent ?? '')) : !norm(el.textContent ?? '').toLowerCase().includes(needle)) continue;
-    // What it says, as Playwright reads it (also a part marked private, which the studio never writes from).
-    const own = isField(el) ? '' : collapse((el as HTMLElement).innerText ?? el.textContent, 80);
-    if (!matches(own, text, exact)) continue;
+    if (somewhere ? !somewhere.test(norm(el.textContent ?? '')) : !(el.textContent ?? '').replace(/\s+/g, '').toLowerCase().includes(needle)) continue;
+    // What is written in it, as Playwright reads it (also a part marked private, which the studio never writes from),
+    // or what it shows: a step recorded by an earlier version was written from the screen's words.
+    if (isField(el)) continue;
+    if (!matches(writtenText(el), text, exact) && !matches(collapse((el as HTMLElement).innerText ?? el.textContent, 80), text, exact)) continue;
     hits.push(el);
   }
   // Keep the innermost: drop any element that contains another hit.

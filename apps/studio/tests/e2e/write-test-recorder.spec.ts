@@ -8,7 +8,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { E2E_SHOP, openStudio, resetAll, store, STUDIO } from './helpers';
+import { E2E_SHOP, expectIsland, openStudio, resetAll, store, STUDIO } from './helpers';
 
 test.beforeEach(() => resetAll());
 
@@ -324,6 +324,63 @@ test('steps find what was used by words a person reads, and by its row or its pa
     const found = new Function('page', `return ${code}`)(app) as ReturnType<typeof app.locator>;
     await expect(found, code).toHaveCount(1);
   }
+});
+
+test('steps find what was used by the words written in the page, whatever a style or the markup makes of them', async ({ page }) => {
+  await writeTestOnAccount(page);
+  const app = page.frameLocator('iframe');
+  await app.locator('body').evaluate(() => {
+    const box = document.createElement('div');
+    // Capitals a style shows, an arrow kept from screen readers, a line break, spaces around a price in the markup.
+    box.innerHTML = `<style>.up { text-transform: uppercase } .cap { text-transform: capitalize }</style>
+      <button id="t1" class="up">Save</button> <button class="up">Save all</button>
+      <button id="t2">Next <span aria-hidden="true">→</span></button>
+      <span id="t3" class="up">Order status</span>
+      <p id="t4" class="cap">shipping and returns</p>
+      <div id="t5">First line<br>second line</div>
+      <p id="t6">
+         Amount due: $5.00
+      </p>
+      <p id="t7">Subtotal: $9.00</p>
+      <h3 id="t8" class="up">Order summary</h3>`;
+    document.querySelector('main')!.prepend(box);
+  });
+  const ids = ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8'];
+  for (const id of ids) await app.locator(`#${id}`).click();
+  await expect.poll(async () => (await steps(page)).length).toBe(ids.length);
+  const recorded = await store<{ locator: string; description: string }[]>(page, 's.recorder.steps');
+  expect(recorded.map((s) => s.locator)).toEqual([
+    "page.getByRole('button', { name: 'Save', exact: true })",
+    "page.getByRole('button', { name: 'Next' })",
+    "page.getByText('Order status', { exact: true })",
+    "page.getByText('shipping and returns', { exact: true })",
+    "page.getByText('First linesecond line', { exact: true })",
+    'page.getByText(/^\\s*Amount\\s+due:\\s+\\$\\d[\\d.,]*\\s*$/)',
+    'page.getByText(/^Subtotal: \\$\\d[\\d.,]*$/)',
+    "page.getByRole('heading', { name: 'Order summary' })",
+  ]);
+  // A step names it by the words the page holds, as the test finds it.
+  expect(recorded[2].description).toBe('Click “Order status”');
+  // Each finds the one that was used, and only it, as Playwright finds it.
+  for (const [i, { locator }] of recorded.entries()) {
+    const found = new Function('page', `return ${locator}`)(app) as ReturnType<typeof app.locator>;
+    await expect(found, locator).toHaveCount(1);
+    expect(await found.getAttribute('id'), locator).toBe(ids[i]);
+  }
+  // A check said of what a style shows in capitals expects the words the page holds: what the test reads there.
+  // (Of a part of the app itself: in an app whose code the studio reads, pointing is at what its code renders.)
+  await app.locator('body').evaluate(() => document.head.appendChild(document.createElement('style')).append('main h1 { text-transform: uppercase }'));
+  const title = (await app.getByRole('heading', { name: 'Your account' }).boundingBox())!;
+  await page.mouse.move(title.x + title.width / 2, title.y + title.height / 2, { steps: 2 });
+  await expect.poll(() => store<string | null>(page, 's.hover && s.hover.tag')).toBe('h1');
+  await page.waitForTimeout(800);
+  await page.getByRole('textbox', { name: 'Describe a change' }).fill('this should say YOUR ACCOUNT');
+  await page.keyboard.press('Enter');
+  await expectIsland(page, /Check added/);
+  const check = await store<{ locator: string; expected: string; anyCase?: boolean }>(page, 's.recorder.expectations[0]');
+  expect(check).toMatchObject({ locator: "page.getByRole('heading', { name: 'Your account' })", expected: 'Your account' });
+  expect(check.anyCase).toBeFalsy();
+  await expect(new Function('page', `return ${check.locator}`)(app) as ReturnType<typeof app.locator>).toHaveText(check.expected);
 });
 
 test('while writing a test, pointing reaches a value inside a web component, and an embedded frame is pointed at as itself', async ({ page }) => {

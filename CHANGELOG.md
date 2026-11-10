@@ -47,8 +47,9 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 - **A check expects what was said.** “This should show $64.64, not $51.71” kept the comma and could never pass; a quoted value is taken whole (“Item not found”); words said in another case are checked as the page shows them. A check said of a field in its label, or of the label, reads the field: what it holds, or the option chosen in a list, never the label's words.
 - **A run's verdict is honest.** A test sent elsewhere as it opens (to a sign-in page) fails at its first step and says where it was sent; a check that finds nothing is “couldn't find what this check looks at”, not the bug; a check that held on screen as it was said and fails in the run says the test doesn't replay what you did, and no fix is offered for it. A check waits as long as you waited before saying it (at most 30 seconds).
 - **A typed check is about what the pointer rested on when the command bar took the focus,** however long the typing takes, and the bar names it. The Checks list shows each expected value once.
-- **A full page load loses no step.** The recording carries on from the new page's first moment, before its images load, and the test waits for each new page. A space typed into a field inside a web component is typed, and no longer starts push-to-talk.
+- **A full page load loses no step.** The recording carries on in the new page before its images have loaded (it waited for the whole page), and the test waits for each new page. A space typed into a field inside a web component is typed, and no longer starts push-to-talk.
 - **Steps are found by better names:** a short name with a number (“Row 3000”) by that name, a submit or image button by its words, a field with suggestions as a combobox, a cell by its row, and an element by the heading of its part of the page before its position. While writing a test, pointing reaches a value inside a web component.
+- **A step finds its element by the words written in the page.** A step or a check found by its text used the words the screen showed, which a test doesn't read: capitals a style shows (`text-transform`), a line break in the text, an arrow kept from screen readers (`aria-hidden`) or spaces around a price in the markup gave a locator that found nothing when the test ran. An element is found by its words as Playwright reads them, and a check said of “ACTIVE” on a badge that a style writes in capitals expects the “Active” the page holds.
 - **The test being written is kept for each app.** It comes back, with Write test on, after a reload, a restart of the studio and a switch to another app and back, and the Test tab says when the app opened again on another page than where the steps end. **Create test** from a report asks before it replaces it.
 
 #### Sessions, Verify fixes and reports
@@ -91,7 +92,7 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 
 ### Tests
 
-- 1,224 unit tests (907 in 0.2.3) and 155 browser tests (129). The first run is tested with the real install, not a stand-in: its bug shipped behind one.
+- 1,224 unit tests (907 in 0.2.3) and 156 browser tests (129). Recorded steps are run through Playwright itself: each must find the one element that was used. The first run is tested with the real install, not a stand-in: its bug shipped behind one.
 - The package's smoke test opens the packaged sample shop with the plugin from the tarball.
 
 ### Documentation

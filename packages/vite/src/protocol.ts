@@ -99,7 +99,7 @@ export interface LocatorInfo {
   code: string;
   /** Plain words for the recorder list, e.g. `the "Apply" button`. */
   description: string;
-  /** Current visible text of the element. */
+  /** What the element shows now, its letters as the page holds them: what a check reads there when the test runs. */
   text: string;
   /** The title of the card or row that tells it apart from others like it ("Celadon mug, 12 oz"). */
   within?: string;

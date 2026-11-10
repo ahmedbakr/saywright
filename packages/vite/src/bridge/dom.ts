@@ -383,8 +383,11 @@ export function labelText(el: Element): string {
   return collapse(parts.join(' '), 60);
 }
 
-/** What inside an element names it besides its text: an image's alt, an icon's label. */
-export const NAMED_INSIDE = 'img[alt], [aria-label]';
+/**
+ * What inside an element changes its name from its text: an image's alt, an icon's label, a part kept from screen
+ * readers (an arrow or an icon written as text, which no name holds).
+ */
+export const NAMED_INSIDE = 'img[alt], [aria-label], [aria-hidden="true"]';
 
 const NAME_MAX = 200;
 
@@ -407,8 +410,51 @@ export function accessibleName(el: Element): string {
   if (editableOf(el) === el || el.getAttribute('role') === 'textbox') return collapse(el.getAttribute('title'), NAME_MAX);
   if (el instanceof HTMLImageElement) return collapse(el.alt, NAME_MAX);
   const title = el.getAttribute('title');
-  const text = collapse(el.querySelector(NAMED_INSIDE) ? contentName(el) : ((el as HTMLElement).innerText ?? el.textContent), NAME_MAX);
+  const text = collapse(el.querySelector(NAMED_INSIDE) ? contentName(el) : asWritten((el as HTMLElement).innerText ?? el.textContent ?? '', el.textContent ?? ''), NAME_MAX);
   return text || collapse(title, NAME_MAX);
+}
+
+/**
+ * What the screen shows, with its letters as the page holds them: a style that shows capitals (text-transform) changes
+ * what is seen, not what is written, and a test finds an element by what is written. Only when they are the same
+ * words; else as shown.
+ */
+export function asWritten(shown: string, written: string): string {
+  const letters = written.replace(/\s+/g, '');
+  const seen = shown.replace(/\s+/g, '');
+  if (letters === seen || letters.length !== seen.length || letters.toLowerCase() !== seen.toLowerCase()) return shown;
+  let i = 0;
+  return shown.replace(/\S/g, () => letters[i++]);
+}
+
+/**
+ * What an element shows (see visibleText), with its letters as the page holds them: what a test reads there when it
+ * runs, so a check said of “ACTIVE” on a badge that a style writes in capitals expects the “Active” the page holds.
+ * A field's value, an editor's text and a private part are left as they are.
+ */
+export function shownText(el: Element): string {
+  const shown = visibleText(el);
+  if (!shown || isField(el) || editableOf(el) || inPrivate(el)) return shown;
+  return asWritten(shown, el.textContent ?? '');
+}
+
+/** Elements whose text no text locator reads. */
+const UNREAD = /^(?:SCRIPT|NOSCRIPT|STYLE)$/;
+
+/**
+ * Every text written in an element, as Playwright's getByText reads it: shown or not, a shadow root's after its own,
+ * a script's and a style's left out, spaces as they are. Not what the screen shows (innerText): a line break adds
+ * no space here, and a style that shows capitals changes nothing.
+ */
+export function writtenText(root: Element | ShadowRoot, inner: (part: Element | ShadowRoot) => string = writtenText): string {
+  if (root instanceof Element && UNREAD.test(root.nodeName)) return '';
+  let out = '';
+  for (let c = root.firstChild; c; c = c.nextSibling) {
+    if (c.nodeType === Node.TEXT_NODE) out += c.nodeValue ?? '';
+    else if (c.nodeType === Node.ELEMENT_NODE) out += inner(c as Element);
+  }
+  if (root instanceof Element && root.shadowRoot) out += inner(root.shadowRoot);
+  return out;
 }
 
 /**
@@ -423,9 +469,10 @@ function contentName(el: Element): string {
       return;
     }
     if (!(n instanceof Element) || n.getAttribute('aria-hidden') === 'true' || n.hasAttribute('hidden')) return;
-    const display = getComputedStyle(n).display;
-    if (display === 'none') return;
-    const pad = display !== 'inline' ? ' ' : '';
+    const { display, visibility } = getComputedStyle(n);
+    if (display === 'none' || visibility === 'hidden' || visibility === 'collapse') return;
+    // A line break is a space between its words, as a block is.
+    const pad = display !== 'inline' || n.nodeName === 'BR' ? ' ' : '';
     const own = n.getAttribute('aria-label') || (n instanceof HTMLImageElement ? n.alt : null);
     if (own !== null && own !== '') out += `${pad}${own}${pad}`;
     else if (!(n instanceof HTMLImageElement)) {

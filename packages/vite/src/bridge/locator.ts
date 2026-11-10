@@ -4,7 +4,7 @@
  * written in the code: that is only known to the dev server, and moves with every edit above it.
  */
 import { jsString as q, type LocatorInfo } from '../protocol';
-import { accessibleName, collapse, deepAll, deepLists, editableOf, inPrivate, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, visibleText } from './dom';
+import { accessibleName, collapse, deepAll, deepLists, editableOf, inPrivate, isField, labelText, NAMED_INSIDE, roleOf, shadowRoots, shownText, visibleText, writtenText } from './dom';
 
 /**
  * A number that changes with the code or between loads: an amount, a share, a decimal, a count in brackets, a
@@ -28,6 +28,9 @@ const openNumbers = (s: string): Pattern | null => (changingNumber(s) ? numbersO
 
 const squash = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, '').toLowerCase();
 
+/** Spaces as Playwright's text matching leaves them: a run is one, none at the ends, soft hyphens and zero-width spaces gone. */
+const spaced = (s: string) => s.replace(/[\u200b\u00ad]/g, '').trim().replace(/\s+/g, ' ');
+
 /** A number as a page shows it: 12, 1,234.50, 3.5. */
 const NUMBER = /\d[\d.,]*/g;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
@@ -43,13 +46,16 @@ export interface Pattern {
 /**
  * A name or a text with numbers in it ("Pay $91.57 and subscribe", "Like this portfolio (1)") as a pattern with the
  * numbers left open, so a fix that changes a price or a count still finds it. Null without numbers, or when only
- * its numbers say what it is.
+ * its numbers say what it is. With `spaces` 'any', the spaces are left open too: a pattern is tried on a text as the
+ * page's markup has it, with the line breaks and the indentation around its words.
  */
-export function numbersOpen(s: string): Pattern | null {
+export function numbersOpen(s: string, spaces: 'one' | 'any' = 'one'): Pattern | null {
   if (!/\d/.test(s) || s.length > 60 || s.endsWith('…')) return null;
   const parts = s.split(NUMBER);
   if (parts.join('').replace(/[^\p{L}]+/gu, '').length < 3) return null;
-  const source = `^${parts.map(escapeRe).join('\\d[\\d.,]*')}$`;
+  const fixed = (part: string) => (spaces === 'any' ? escapeRe(part).replace(/ /g, '\\s+') : escapeRe(part));
+  const body = parts.map(fixed).join('\\d[\\d.,]*');
+  const source = spaces === 'any' ? `^\\s*${body}\\s*$` : `^${body}$`;
   const hint = parts.map(squash).sort((a, b) => b.length - a.length)[0] ?? '';
   return { re: new RegExp(source), code: `/${source}/`, hint };
 }
@@ -69,7 +75,8 @@ function keeper(el: Element, expected: string): Keep {
   // Already showing it (a check that passes now, to keep it so): it stays as it is. Showing it means showing that and
   // nothing else: “Inactive” does not show “active”, and will show “active” once fixed.
   const then = squash(now) === squash(expected) ? now : part ? now.replace(part, () => expected) : expected;
-  return (w) => (typeof w === 'string' ? then.toLowerCase().includes(w.toLowerCase()) : w.re.test(then));
+  // Without case: the words to find it by are the page's, and the screen may show them in capitals.
+  return (w) => (typeof w === 'string' ? then.toLowerCase().includes(w.toLowerCase()) : new RegExp(w.re.source, 'i').test(then));
 }
 
 /** Whether its name is its own text (a button's words), not given apart from it (a label, aria-label). */
@@ -164,17 +171,57 @@ function countByRoleAndName(role: string, name: string | Pattern, exact: boolean
   return n;
 }
 
-/** Innermost elements in `scope` whose own text is exactly `text` (or matches the pattern). */
+/**
+ * The elements in `scope` that getByText finds by these words (all of them, exactly) or by this pattern, as Playwright
+ * finds them: by every text written in an element, shown or not (a pattern on it as it is written, spaces and all),
+ * and only the innermost that holds it.
+ */
 function byText(scope: ParentNode, text: string | Pattern): Element[] {
+  const read = new Map<Element | ShadowRoot, string>();
+  const written = (part: Element | ShadowRoot): string => {
+    let t = read.get(part);
+    if (t === undefined) read.set(part, (t = writtenText(part, written)));
+    return t;
+  };
+  const is = (part: Element | ShadowRoot): boolean => {
+    const t = written(part);
+    if (typeof text === 'string') return t.length >= text.length && spaced(t) === text;
+    return squash(t).includes(text.hint) && text.re.test(t);
+  };
   const out: Element[] = [];
-  const is = typeof text === 'string' ? (t: string) => t === text : (t: string) => text.re.test(t);
   for (const all of deepLists(scope, '*')) {
     for (let i = 0; i < all.length; i++) {
-      const el = all[i] as HTMLElement;
-      if (typeof text !== 'string' && !squash(el.textContent).includes(text.hint)) continue;
-      if (is(collapse(el.innerText ?? '', 200)) && !Array.from(el.children).some((c) => is(collapse((c as HTMLElement).innerText ?? '', 200)))) out.push(el);
+      const el = all[i];
+      if (!is(el)) continue;
+      let inside = !!el.shadowRoot && is(el.shadowRoot);
+      for (let c = el.firstElementChild; c && !inside; c = c.nextElementSibling) inside = is(c);
+      if (!inside) out.push(el);
     }
   }
+  return out;
+}
+
+/** A way of finding an element by its own words, and how many elements in a scope are found that way. */
+interface TextWay {
+  code: string;
+  count(scope: ParentNode): number;
+}
+
+/**
+ * The ways getByText finds `el` by its own words, the one that outlives a changed number first: the words written in
+ * the page, which are what Playwright reads (not the screen's: a style that shows capitals or breaks a line changes
+ * nothing there), and only when they are the words the screen shows (`shown`), with nothing hidden among them.
+ */
+function textWays(el: Element, shown: string, keep: Keep): TextWay[] {
+  if (!shown || shown.length > 40 || isField(el)) return [];
+  const raw = writtenText(el);
+  const words = spaced(raw);
+  if (!words || squash(words) !== squash(spaced(shown))) return [];
+  const out: TextWay[] = [];
+  // With its numbers left open; with its spaces too, when the markup has more around the words than a pattern allows.
+  const open = changingNumber(words) ? [numbersOpen(words), numbersOpen(words, 'any')].find((p) => p?.re.test(raw)) : null;
+  if (open && keep(open)) out.push({ code: `getByText(${open.code})`, count: (s) => byText(s, open).length });
+  if (!looksVolatile(words) && keep(words)) out.push({ code: `getByText(${q(words)}, { exact: true })`, count: (s) => byText(s, words).length });
   return out;
 }
 
@@ -224,12 +271,8 @@ function inners(el: Element, keep: Keep): Inner[] {
     const ph = el.getAttribute('placeholder');
     if (ph) out.push({ code: `getByPlaceholder(${q(ph)})`, words: `the “${ph}” field`, count: (s) => deepAll(s, `[placeholder="${CSS.escape(ph)}"]`).length });
   }
-  const text = visibleText(el);
-  if (!isField(el) && !editableOf(el) && text && text.length <= 40) {
-    const open = openNumbers(text);
-    if (open && keep(open)) out.push({ code: `getByText(${open.code})`, words: `“${text}”`, count: (s) => byText(s, open).length });
-    if (!looksVolatile(text) && keep(text)) out.push({ code: `getByText(${q(text)}, { exact: true })`, words: `“${text}”`, count: (s) => byText(s, text).length });
-  }
+  const text = shownText(el);
+  if (!editableOf(el)) for (const way of textWays(el, text, keep)) out.push({ ...way, words: `“${text}”` });
   const tag = el.tagName.toLowerCase();
   const cls = namingClass(el);
   if (cls) out.push({ code: `locator(${q(`${tag}.${cls}`)})`, words: `the ${cls.replace(/[-_]/g, ' ')}`, count: (s) => deepAll(s, `${tag}.${CSS.escape(cls)}`).length });
@@ -284,7 +327,7 @@ const SCOPE_LEVELS = 6;
  */
 function scoped(el: Element, keep: Keep): LocatorInfo | null {
   const ways = inners(el, keep);
-  const text = visibleText(el);
+  const text = shownText(el);
   // The element itself is the card or the row.
   const own = named(roleFor(el)) ? null : boxOf(el);
   const ownTitle = own && titleOf(el, null);
@@ -329,7 +372,7 @@ function cellInRow(el: Element, keep: Keep): LocatorInfo | null {
   const head = table?.querySelector('thead tr, tr:first-child');
   const heading = head && head !== row ? collapse((head.children[column] as HTMLElement | undefined)?.innerText ?? '', 40) : '';
   const words = heading && !looksVolatile(heading) ? `the “${heading}” cell` : `the ${ordinal(i + 1)} cell`;
-  return { code: `page.getByRole('row').filter({ hasText: ${q(title)} }).locator(${q(tag)}).nth(${i})`, description: `${words} for “${title}”`, text: visibleText(el), within: title };
+  return { code: `page.getByRole('row').filter({ hasText: ${q(title)} }).locator(${q(tag)}).nth(${i})`, description: `${words} for “${title}”`, text: shownText(el), within: title };
 }
 
 /**
@@ -352,7 +395,7 @@ function underHeading(el: Element, keep: Keep): LocatorInfo | null {
     if (!parts.every((c) => c.contains(el))) continue;
     const way = ways.find((w) => parts.every((c) => w.count(c) === 1));
     if (!way) continue;
-    return { code: `page.locator(${q(css)}).filter({ has: page.getByRole('heading', { name: ${q(name)}, exact: true }) }).${way.code}`, description: `${way.words} under “${name}”`, text: visibleText(el), within: name };
+    return { code: `page.locator(${q(css)}).filter({ has: page.getByRole('heading', { name: ${q(name)}, exact: true }) }).${way.code}`, description: `${way.words} under “${name}”`, text: shownText(el), within: name };
   }
   return null;
 }
@@ -366,7 +409,7 @@ const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['
 
 /** The last resort: which of the same it is, counting from the top of the page. */
 function nth(el: Element, keep: Keep): LocatorInfo {
-  const text = visibleText(el);
+  const text = shownText(el);
   const role = roleFor(el);
   const name = named(role) && (!namedByText(el) || keep(accessibleName(el))) ? accessibleName(el) : '';
   const tag = el.tagName.toLowerCase();
@@ -398,7 +441,7 @@ export function locatorFromInfo(role: string | null, label: string, text: string
  * last, which of the same it is.
  */
 export function buildLocator(el: Element, opts: { cheap?: boolean; check?: string } = {}): LocatorInfo {
-  const text = visibleText(el);
+  const text = shownText(el);
   // A check reads what the element shows: it isn't found by words the fix will change.
   const keep = opts.check !== undefined ? keeper(el, opts.check) : always;
   const byName = !namedByText(el) || keep === always;
@@ -460,10 +503,9 @@ export function buildLocator(el: Element, opts: { cheap?: boolean; check?: strin
 
   // Counting matches by text walks the whole page: skipped when the caller can't afford it on a large page.
   const affordable = !opts.cheap || document.getElementsByTagName('*').length < 2500;
-  if (affordable && text && text.length <= 40 && !isField(el) && !editable) {
-    const open = openNumbers(text);
-    if (open && keep(open) && byText(document.body, open).length === 1) return { code: `page.getByText(${open.code})`, description: `“${text}”`, text };
-    if (!looksVolatile(text) && keep(text) && byText(document.body, text).length === 1) return { code: `page.getByText(${q(text)}, { exact: true })`, description: `“${text}”`, text };
+  if (affordable && !editable) {
+    const way = textWays(el, text, keep).find((w) => w.count(document.body) === 1);
+    if (way) return { code: `page.${way.code}`, description: `“${text}”`, text };
   }
 
   // Which of the same it is comes last: before it, the row or the part of the page around it.
