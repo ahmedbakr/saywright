@@ -76,7 +76,8 @@ test('the voice moves the selection: next, the card, inside, add this, deselect'
   await openStudio(page);
   const sub = await pointAt(page, 'summary-subtotal', 0.12);
   await page.mouse.click(sub.x, sub.y);
-  await expect.poll(() => store<string>(page, 's.selection.label')).toContain('Subtotal');
+  // (Nothing is selected until the app has answered the click.)
+  await expect.poll(() => store<string>(page, 's.selection?.label ?? ""')).toContain('Subtotal');
   await say(page, 'next');
   await expect.poll(() => store<string>(page, 's.selection.label')).toContain('Shipping');
   await say(page, 'the card');
