@@ -139,8 +139,11 @@ function Report({ detail }: { detail: SessionDetail }) {
         analysis,
       );
     },
-    test: (f) => {
+    test: async (f) => {
       if (!analysis) return;
+      // A test being written (its steps and checks) is not thrown away without asking.
+      const rec = useStudio.getState().recorder;
+      if ((rec.steps.length || rec.expectations.length) && !(await confirmAction({ title: 'Replace the test you are writing?', body: `Its ${rec.steps.length} step${rec.steps.length === 1 ? '' : 's'} and ${rec.expectations.length} check${rec.expectations.length === 1 ? '' : 's'} are replaced by this finding's steps.`, action: 'Replace it', danger: true }))) return;
       sessions.closeReport();
       void controller.testFromReport(f, evidenceItems(f, analysis), analysis, meta.appUrl);
     },
