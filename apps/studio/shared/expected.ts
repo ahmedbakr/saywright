@@ -220,6 +220,19 @@ export function wholeValue(expected: string): { source: string; only: string; am
   return { source: `${start}${body}${end}`, only: `^\\s*${body}\\s*$`, amount: false, why: `“${expected.trim()}” as a whole, not inside a longer word or number` };
 }
 
+/**
+ * Words said as the element shows them: speech writes “free shipping” for “Free shipping”. When the element shows
+ * the words in another case, they are taken as shown (the check then says what the page says); when it doesn't show
+ * them at all, they are compared without case (`anyCase`). Amounts and numbers are left as they are.
+ */
+export function asShown(actual: string, expected: string): { expected: string; anyCase?: true } {
+  const whole = wholeValue(expected);
+  if (whole.amount || !/\p{L}/u.test(expected)) return { expected };
+  if (new RegExp(whole.source, 'u').test(actual)) return { expected };
+  const shown = new RegExp(whole.source, 'iu').exec(actual);
+  return shown ? { expected: shown[0].replace(/\s+/g, ' ') } : { expected, anyCase: true };
+}
+
 /** Not right after a digit, a sign, or a separator that goes on a number; not right before more of it. */
 const START_DIGIT = '(?<![\\d.,−-])';
 const END_DIGIT = '(?![.,]?\\d)';

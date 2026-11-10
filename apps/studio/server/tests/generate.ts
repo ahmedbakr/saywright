@@ -219,17 +219,20 @@ function checkCode(e: Expectation): string[] {
   const loc = safeLocator(e.locator);
   if (e.field === 'checked') return [`await expect(${loc}).${e.expected === 'not checked' ? 'not.' : ''}toBeChecked();`];
   const whole = wholeValue(e.expected);
-  const pattern = `/${whole.source}/${whole.amount ? '' : 'u'}`;
+  // Words not seen on the page as said are compared without case: speech doesn't know a capital.
+  const flags = `${e.anyCase ? 'i' : ''}${whole.amount ? '' : 'u'}`;
+  const pattern = `/${whole.source}/${flags}`;
+  const anyCase = e.anyCase ? ', { ignoreCase: true }' : '';
   const note = `// ${jsComment(maskSecrets(`${whole.why}.`))}`;
   // An option says the value and nothing else.
-  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).toContainText([/${whole.only}/${whole.amount ? '' : 'u'}]);`];
+  if (e.field === 'select') return [`await expect(${loc}.locator('option:checked')).toContainText([/${whole.only}/${flags}]);`];
   if (e.field === 'value') {
     if (e.expected.length > PATTERN_MAX) return [`await expect.poll(() => ${loc}.inputValue()).toContain(${q(e.expected)});`];
-    if (onlyThat(e)) return [`await expect(${loc}).toHaveValue(${q(e.expected)});`];
+    if (onlyThat(e)) return [e.anyCase ? `await expect(${loc}).toHaveValue(/${whole.only}/${flags});` : `await expect(${loc}).toHaveValue(${q(e.expected)});`];
     return [note, `await expect(${loc}).toHaveValue(${pattern});`];
   }
-  if (e.expected.length > PATTERN_MAX) return [`await expect(${loc}).toContainText(${q(e.expected)});`];
-  if (onlyThat(e)) return [`await expect(${loc}).toHaveText(${q(e.expected)});`];
+  if (e.expected.length > PATTERN_MAX) return [`await expect(${loc}).toContainText(${q(e.expected)}${anyCase});`];
+  if (onlyThat(e)) return [`await expect(${loc}).toHaveText(${q(e.expected)}${anyCase});`];
   return [note, `await expect(${loc}).toContainText(${pattern});`];
 }
 

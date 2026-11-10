@@ -14,7 +14,7 @@ import { ApiError, api, subscribe } from '@/lib/api';
 import { apps, useApps } from './apps';
 import { fileName, plural } from '@/lib/format';
 import { focusOn, shouldBe, stateWord } from '@shared/text';
-import { showsValue } from '@shared/expected';
+import { asShown, showsValue } from '@shared/expected';
 import { sanitizeSteps } from '@shared/steps';
 import { BridgeClient } from './bridge';
 import { parseClientCommand, parseExpectation, type ClientCommand, type Mode, type SpokenExpectation } from './commands';
@@ -1553,7 +1553,7 @@ class Controller {
     const found = await this.checkOf(el, exp.expected);
     if (!found) return this.notify('Couldn’t build a locator for that element. Try pointing at it again.', 'warn');
     // “Paid, not yet” said of an element that shows “Paid, not yet”: those words are the value, not a value and an aside.
-    const e = exp.whole && !found.field && showsValue(found.actual, exp.whole) ? { ...found, expected: exp.whole } : found;
+    const e = exp.whole && !found.field && showsValue(found.actual, exp.whole) ? { ...found, ...asShown(found.actual, exp.whole) } : found;
     const r = get().recorder;
     set({ recorder: { ...r, expectations: [...r.expectations, e], spec: null, run: null } });
     play('keep');
@@ -1593,7 +1593,9 @@ class Controller {
     // Not a checkbox or a list after all: what was said is the text it should show. Found again without the state's help.
     const plainLoc = state ? await this.bridge.locator(el.id, { expected }) : loc;
     if (!plainLoc) return null;
-    return { locator: plainLoc.locator.code, description: plainLoc.locator.description, expected, actual: plainLoc.locator.text, after, ...fieldOf(el) };
+    // Words as the element shows them (“Free shipping” for “free shipping”), or compared without case when it doesn't.
+    const words = asShown(plainLoc.locator.text, expected);
+    return { locator: plainLoc.locator.code, description: plainLoc.locator.description, ...words, actual: plainLoc.locator.text, after, ...fieldOf(el) };
   }
 
   // ───────────────────────────── from a session report ─────────────────────────────

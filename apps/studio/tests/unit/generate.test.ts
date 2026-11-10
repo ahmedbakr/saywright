@@ -5,7 +5,7 @@ import { parse } from '@babel/parser';
 import { describe, expect, it } from 'vitest';
 import { jsString } from '@saywright/vite/protocol';
 import { generateSpec, safeLocator, secretsOf, slug, urlPattern, writeSpec } from '../../server/tests/generate';
-import { showsValue } from '../../shared/expected';
+import { asShown, showsValue } from '../../shared/expected';
 import { focusOn, judge, marksOf, parseFailure, sweepRuns } from '../../server/tests/run';
 import { tempShop } from './helpers';
 
@@ -143,6 +143,20 @@ describe('generateSpec', () => {
     const re = new RegExp(/toHaveValue\(\/(.*)\/u\)/.exec(field)![1], 'u');
     expect(re.test('15')).toBe(false);
     expect(re.test('5')).toBe(true);
+  });
+
+  it('takes words as the element shows them, and compares words it didn’t show without case', () => {
+    expect(asShown('Free shipping', 'free shipping')).toEqual({ expected: 'Free shipping' });
+    expect(asShown('Delivery: FREE  Shipping today', 'free shipping')).toEqual({ expected: 'FREE Shipping' });
+    expect(asShown('Paid', 'Paid')).toEqual({ expected: 'Paid' });
+    expect(asShown('Standard shipping', 'free shipping')).toEqual({ expected: 'free shipping', anyCase: true });
+    expect(asShown('$78.40', '$80.80')).toEqual({ expected: '$80.80' });
+    const shown = generateSpec({ ...input, expectations: [{ locator: "page.getByTestId('x')", description: 'it', ...asShown('Free shipping', 'free shipping'), actual: 'Free shipping' }] });
+    expect(shown).toContain("await expect(page.getByTestId('x')).toHaveText('Free shipping');");
+    const notShown = generateSpec({ ...input, expectations: [{ locator: "page.getByTestId('x')", description: 'it', ...asShown('Standard shipping', 'free shipping'), actual: 'Standard shipping' }] });
+    expect(notShown).toContain("await expect(page.getByTestId('x')).toContainText(/\\bfree\\s+shipping\\b/iu);");
+    const same = generateSpec({ ...input, expectations: [{ locator: "page.getByTestId('x')", description: 'it', expected: 'free shipping', actual: 'free shipping', anyCase: true }] });
+    expect(same).toContain("toHaveText('free shipping', { ignoreCase: true });");
   });
 
   it('a test and a replay agree on what shows a value', () => {

@@ -152,6 +152,8 @@ export interface Expectation {
    * option says), or a checkbox, radio button or switch (whether it is checked: `expected` is “checked” or “not checked”).
    */
   field?: 'value' | 'select' | 'checked';
+  /** Words the element didn't show as it was said, in any case: compared without case (“free shipping”). */
+  anyCase?: boolean;
 }
 
 /** One step or check of a generated test, as a run reported it. */
