@@ -2,6 +2,103 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-10
+
+A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and through the code area by area: about 150 findings, the ones that matter fixed, each with a test. The first minute is one click, a check means what was said, Autopilot's safety switch holds, a verdict says only what the run could see, and answers stream from every provider.
+
+### Added
+
+- **The sample shop opens in one click.** A first start offered a sample shop that needed `npm install` in a folder you had to find first. **Open the sample shop** on the welcome installs what the shop needs (about a minute, once), starts it and opens it, saying the step it is on; if the install fails, the message says why and what to run by hand. The tour has a new step, **Say the bug, get the test**: it showed every tool but the one the studio is for.
+- **A first test needs nothing set up by hand.** An app that doesn't have Playwright is told so at once, and **Add Playwright to this app** on the run's card adds it with the app's own package manager and runs the test. When Playwright's own browser isn't installed, a test runs in the Chrome or Edge on your computer, with nothing to download, and says which browser ran it; a browser install that fails shows its output and why.
+- **A note you type.** While a session records, **M** opens a small field: type what you noticed and press Enter (Esc keeps the mark without words). A tester without a microphone no longer records marks that say nothing; the report reads a typed note as it reads what was said.
+- **More kinds of check.** “This shouldn't show $51.71”, “this should be visible”, “hidden”, “enabled”, “disabled”, and “selected” on a tab are checks of their own, written with Playwright's own matchers; an image is checked by its name. A state the element can't have is refused with a sentence, and in Write test a sentence shaped like a check is never sent to the AI: the studio says which phrasings it understands.
+- **Write test records more of what you do:** a double click, a right click, an app's keys and shortcuts, files chosen in a file input, a drag and drop, the hover that opened a menu, and the answer you gave a `confirm()` or `prompt()`. What a test can't do again (something inside an embedded frame, a shape drawn on a canvas) shows as a **Not recorded** step and a comment in the test, so you know it does less than you did.
+- **Undo for a change you kept.** A change just kept has **Undo** on its card in the Changes tab, and “undo” or Ctrl+Z with nothing waiting offers to undo the last change kept.
+- **Answers stream from OpenAI, Gemini and OpenAI-compatible providers**, as Claude's did. A long answer (a local model writing a report) is no longer cut at five minutes, a provider that goes quiet for 90 seconds is given up on with a sentence that says so, and **Stop** works at every moment.
+- **The models your provider lists.** Each API key's model list is loaded from the provider, so a model released after this version can be picked, and a model id can be typed in Settings → AI. A model nobody has priced shows “price unknown”, never $0: under a budget it is counted at its provider's dearest known rates. Settings says when the prices were checked.
+- **Apps served over https on this computer** with their own development certificate (self-signed, mkcert, `next dev --experimental-https`, Vite's basic-ssl) can be linked, started and shown. When a site elsewhere is refused for its certificate, the studio says so.
+- **Behind a company proxy.** With `HTTPS_PROXY` set, the studio's AI requests go through the proxy while your app, Ollama and LM Studio are reached directly (Node.js 22.21 or newer). It says so in one line as it starts.
+- **`saywright doctor` prints what an issue needs:** versions, the computer, the data folder, the programs it found and the names of the proxy variables that are set, each checked on its own, as text or with `--json`. It says when a newer release is out. A dropped download of a speech model continues where it stopped.
+
+### Changed
+
+- **A quick edit is made only when the whole request is one.** “Don't make it bigger”, “make it bigger if it fits” and “why is this blue?” were read as “make it bigger” or “make it blue” and changed the file without the AI. A sentence is a quick edit now only when all of it is one (a size, a colour, a text, a move, a copy, a removal); a question, a condition, a negation or anything else goes to the AI, which reads the whole sentence.
+- **A check passes only when the whole value matches.** “Active” passed on “Inactive”, “5 in stock” on “15 in stock” and $80.80 on “$180.80”. A value is found as a whole word or number, and amounts are compared as amounts, as Replay & verify compares them. A test written by an earlier version is left as it is.
+- **Autopilot without leave does less.** With “Let it delete, pay, send and sign out” off, it now also leaves alone controls such as “Remove”, “Subscribe”, “Send feedback” and any control with no name at all, and lists each as a skipped step with the reason. Turn the switch on for an app where those are safe.
+- **The AI changes what runs outside the page only when you ask.** A build or server config, a package file, CI and hooks are changed only when your own words name them; what the page says is given to the AI as data, quoted, so a sentence on the page can't pass for yours.
+- **Commit when you keep a change commits only that change.** When its file also has changes of yours, or the repository above the app doesn't track it, the change is kept and not committed, and says why; a refused commit leaves nothing staged.
+- **Closing the terminal stops the dev servers the studio started**, as Ctrl+C does; so does a crash. The next studio stops any a studio left running (the same command in the same folder), and nothing it didn't start.
+- **Through the proxy, a page reaches only what it could reach on its own.** Only a script's CORS request to another port of this computer is passed on. A browser that doesn't say how a request was made (Safari before 16.4) can no longer reach an app's API on another port through the proxy.
+
+### Fixed
+
+#### Security and privacy
+
+- **Autopilot's safety switch holds.** With “Let it delete, pay, send and sign out” off, Autopilot could still delete a record, send a payment and sign out: it judged a control by a short list of English and Arabic words in its name. A control is judged by what it is: its words in eight languages, its icon and classes, where a link goes, the address and method of the form a button sends, whether the app asks before acting. And while Autopilot acts, the page itself refuses delete requests and requests, forms and navigations to addresses that say delete, pay, send or sign out, or that leave the app, and answers `confirm()` “Cancel”.
+- **Source maps are followed only at the app's own address.** A page's script could name a source map anywhere: the studio fetched it from the server, and read any “source” it listed from the disk into the session. A map is fetched only from the app's own origin (redirects aren't followed, and its size is limited), and a source is read only when it is a file inside the app's folder.
+- **A recording has a size limit.** A page could send the studio video without end and fill the disk. A session's recording stops at 4 GB, or when less than 512 MB of disk is left, and says which.
+- **A token in a link or a stack trace is masked wherever a session keeps it,** and so is a card number typed with a pause or in a field labelled in French, Spanish, German, Portuguese, Italian or Turkish. Once a field held a secret, what is typed into it later is masked too.
+- **A page shown through the proxy can't read another service of this computer** that doesn't allow it: a no-cors fetch is sent by the browser itself, with its usual opaque answer, and scripts, images and styles get nothing from the proxy's path for another port.
+- **Files that hold keys are never read by the AI** or by an AI app over MCP, whatever the case of their names. A key written in code goes out as a placeholder, and an edit keeps the real one. A wrong MCP token is always a refusal.
+- **The studio's script keeps its names to itself.** An app whose own script declares `now`, `step` or `find` stopped with “Identifier has already been declared” in the studio. The script is one wrapped function now.
+
+#### Write test
+
+- **A check expects what was said.** “This should show $64.64, not $51.71” kept the comma and could never pass; a quoted value is taken whole (“Item not found”); words said in another case are checked as the page shows them. A check said of a field in its label, or of the label, reads the field: what it holds, or the option chosen in a list, never the label's words.
+- **A run's verdict is honest.** A test sent elsewhere as it opens (to a sign-in page) fails at its first step and says where it was sent; a check that finds nothing is “couldn't find what this check looks at”, not the bug; a check that held on screen as it was said and fails in the run says the test doesn't replay what you did, and no fix is offered for it. A check waits as long as you waited before saying it (at most 30 seconds).
+- **A typed check is about what the pointer rested on when the command bar took the focus,** however long the typing takes, and the bar names it. The Checks list shows each expected value once.
+- **A full page load loses no step.** The recording carries on from the new page's first moment, before its images load, and the test waits for each new page. A space typed into a field inside a web component is typed, and no longer starts push-to-talk.
+- **Steps are found by better names:** a short name with a number (“Row 3000”) by that name, a submit or image button by its words, a field with suggestions as a combobox, a cell by its row, and an element by the heading of its part of the page before its position. While writing a test, pointing reaches a value inside a web component.
+- **The test being written is kept for each app.** It comes back, with Write test on, after a reload, a restart of the studio and a switch to another app and back, and the Test tab says when the app opened again on another page than where the steps end. **Create test** from a report asks before it replaces it.
+
+#### Sessions, Verify fixes and reports
+
+- **Verify fixes says “fixed” only when the replay could have seen the problem.** It clicked another row's Delete and called the bug fixed. A step is recorded by what tells it apart (the row's own words) before the click changes the page, and a step that now matches several elements stops the replay as “couldn't check”. When the app starts the replay from other saved data than the recording did, or the replay stopped listening before the problem had taken to show the first time, the answer is “couldn't confirm”. The result says that what the replay's steps changed in the app stays changed.
+- **A page answered with an error, and a request that never answered, are findings.** A form sent to a page that answered 500 scored 100. A session with nothing in it says “Nothing to judge yet” where it showed a score, and a page opened by a full load has its title.
+- **Fewer false alarms.** An HTML answer is a finding only when the app asked for data; quick clicks that each do something aren't rage clicks; drawing on a canvas or downloading a file isn't a dead click.
+- **A report never calls a value right that nobody spoke about.** When the tester said nothing, a report described “the correct total”; it describes what was on the screen.
+- **The studio's own dialogs work with a keyboard.** The Record session dialog is named and takes the focus, every dialog, the report and the command palette give the focus back to what opened them, Settings' lists and slider have names, the help dialog's list can be scrolled, and the island's messages are announced.
+
+#### Edit mode and the AI
+
+- **Several picked elements: the right ones are changed.** “Remove these” with several picked could remove another element than the one picked. Each is found in the code before any is changed, and the imports and props only they used are tidied once. Removing the fallback of `a || <El/>` leaves `a`, and removing one branch of a condition leaves the other.
+- **A component is given only its own variants.** AlertTitle or SheetTitle were offered the variants of the only cva in their file. A boolean variant is written as `fullWidth` or `fullWidth={false}` and a number as `{2}`, so the build's type check passes.
+- **A change keeps a file as it was:** its encoding and line ends (a CRLF file came back with LF, and a file that isn't UTF-8 lost its accented letters), its permissions, and the link it is reached through. Undo puts back the very bytes.
+- **A change cut off at the length limit is never applied.** An answer that stopped mid-change wrote the half it had. After Claude's server switches models mid-answer, only what came after is acted on.
+- **Nothing is called saved that wasn't.** When the list of changes can't be written (a full disk, a folder that can't be written), a preview fails whole and Keep keeps nothing, with a sentence that says why. When the app's folder is moved or deleted while the studio runs, the studio says so and never makes an empty folder in its place. The studio's memory stays flat through a long day of changes.
+- **The budget counts every call it can know about.** A stopped or failed request is counted, an answer that came without usage is counted at an estimate, never as free, the connection **Test** is held to the budget, and a damaged budget file keeps **Stop** in force and says so.
+- **Provider errors are sentences with what to do:** out of credit, a prompt that is too long, an overloaded provider, a wrong address, a model that can't call tools, a connection lost mid-answer (“terminated” before). A rate limit or a server error is tried once more. A search pattern that could freeze the studio is refused, and the code sent with a request has a limit.
+
+#### Apps and the proxy
+
+- **Another program on an app's port is never shown as the app.** The studio checks that what answers there serves the app's folder; if not, it starts the app on its own port.
+- **A dev command that starts several servers opens the web one.** A command that printed its API's address first was opened there, and that address saved. The web server's “Local” line wins, an address that answers with an API's 404 or JSON is never taken, and a “Local” line printed later moves the studio there.
+- **The proxy waits as long as a browser does.** An answer that took more than 30 seconds was cut, and so was an event stream that went quiet. A request waits up to five minutes for the app to start answering, and a stream is never cut for being quiet.
+- **Pages that aren't UTF-8 show correctly** (Latin-1, Shift_JIS): the studio's script is added without re-encoding the page. A form the page's script builds with the app's full address keeps its method and fields, and a server that uses zstd or Brotli is asked only for what the browser accepts.
+- **An app whose script tag points at a studio on another port** is shown through the proxy, and its notes say how to fix the tag, where it said “Connecting…” for ever. An element written in a Next.js 16 server layout is traced, or found in the layout as a guess.
+- **The studio says “connected” when the app's page is there,** not before it has drawn anything.
+
+#### The command line
+
+- **`connect` edits only what it understands.** It found the Vite config's `plugins` with a pattern, and could add the plugin to a PostCSS or Rollup list, break the app's CSS and say “Connected”. It reads the file with a parser now: the config's own plugins, a layout's `<body>`, a document's `<Head>`. A file it can't change safely is left as it is, with the lines to add by hand; a plugin an earlier version put in the wrong list is moved. A Vue app on Vite gets the plugin, which runs on the dev server only.
+- **`connect` links the app at once in a studio that is running**, and a stopped studio no longer leaves its address behind for `connect` and `doctor` to trust.
+- **A damaged data file is set aside.** The app list (two studios on one data folder keep each other's apps), `ai.json` or a usage line of the wrong shape: the studio starts with its defaults and says so. Every command checks the data folder first.
+- **The app list's switch saves again.** “Show at start” answered 404 since 0.2.0: its address was taken for an app's.
+- The Node.js message says the versions as they are (22.18 or newer, or 24.11 or newer), `--port` takes digits only, and where the speech engine can't run `doctor` and `setup` say so and download nothing.
+
+### Tests
+
+- 1,220 unit tests (926 in 0.2.3) and 147 browser tests (130). The first run is tested with the real install, not a stand-in: its bug shipped behind one.
+- The package's smoke test opens the packaged sample shop with the plugin from the tarball.
+
+### Documentation
+
+- [Getting started](docs/getting-started.md): the sample shop in one click, and a first test with nothing to set up.
+- [The guide](docs/guide.md): what a quick edit is and what goes to the AI; every kind of check; what Write test records; undo after keep.
+- [Autopilot](docs/autopilot.md): what the safety switch judges and what the page refuses. [Sessions](docs/session-report.md): what Verify fixes can and can't confirm, and what is masked.
+- [Apps](docs/apps.md), [Configuration](docs/configuration.md) and [Troubleshooting](docs/troubleshooting.md): local https apps, updating and removing Saywright, behind a proxy, in a container, in WSL and over SSH.
+- [AI in Saywright](docs/ai.md): streaming, model lists and prices, what the AI never reads.
+
 ## [0.2.3] - 2026-11-05
 
 What an audit of 0.2.2 and a review of its fixes found, each fixed with a test: what is private stays private everywhere and from the first frame, a test is verified only when each of its tests ran its own checks, and a budget counts all it pays for.
@@ -273,6 +370,8 @@ The first release: `@saywright/studio` (the studio, and its command `saywright`)
 - [Getting started](docs/getting-started.md): every feature on the sample shop, one step at a time, with a picture of each and what you should see.
 - Screenshots of the real studio throughout the documentation, taken again by `npm run media:screenshots` when the interface changes.
 
+[0.3.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.3.0
+[0.2.3]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.3
 [0.2.2]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.2
 [0.2.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.0
