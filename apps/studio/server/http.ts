@@ -113,24 +113,31 @@ export class Router {
     return this.add('DELETE', p, h, opts);
   }
 
-  /** The route for a request, with its parameters decoded (a malformed %-escape is the caller's mistake: 400). */
+  /**
+   * The route for a request, with its parameters decoded (a malformed %-escape is the caller's mistake: 400). When
+   * several fit, the one that names more of the path wins, whatever order they were added in: `/apps/launcher` is
+   * never taken for `/apps/:id`.
+   */
   private match(method: string, path: string): { route: Route; params: Record<string, string> } | null {
     const parts = path.split('/').filter(Boolean);
+    let best: { route: Route; params: Record<string, string>; named: number } | null = null;
     for (const route of this.routes) {
       if (route.method !== method || route.parts.length !== parts.length) continue;
       const params: Record<string, string> = {};
+      let named = 0;
       let ok = true;
       for (let i = 0; i < parts.length; i++) {
         const p = route.parts[i];
         if (p.startsWith(':')) params[p.slice(1)] = decodeParam(parts[i]);
-        else if (p !== parts[i]) {
+        else if (p === parts[i]) named++;
+        else {
           ok = false;
           break;
         }
       }
-      if (ok) return { route, params };
+      if (ok && (!best || named > best.named)) best = { route, params, named };
     }
-    return null;
+    return best && { route: best.route, params: best.params };
   }
 
   /** Connect-style middleware. Calls `next` for paths it does not own. */

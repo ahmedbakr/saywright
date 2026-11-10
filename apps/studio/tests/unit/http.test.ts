@@ -10,6 +10,10 @@ import { EventHub, Router } from '../../server/http';
 
 const router = new Router();
 router.get('/items/:id', (req) => ({ id: req.params.id }));
+// Added after the route with a parameter in the same place, as the apps' own settings are.
+router.get('/items/newest', () => ({ newest: true }));
+router.get('/items/:id/parts/:part', (req) => ({ part: req.params.part }));
+router.get('/items/:id/parts/count', () => ({ count: 3 }));
 
 let server: http.Server;
 let base = '';
@@ -24,6 +28,13 @@ afterAll(() => new Promise<void>((resolve) => (server.closeAllConnections(), ser
 describe('the router', () => {
   it('decodes parameters', async () => {
     expect(await (await fetch(`${base}/api/items/a%20b`)).json()).toEqual({ id: 'a b' });
+  });
+
+  it('takes a path that is spelled out before one with a parameter in its place, whatever their order', async () => {
+    expect(await (await fetch(`${base}/api/items/newest`)).json()).toEqual({ newest: true });
+    expect(await (await fetch(`${base}/api/items/7`)).json()).toEqual({ id: '7' });
+    expect(await (await fetch(`${base}/api/items/7/parts/count`)).json()).toEqual({ count: 3 });
+    expect(await (await fetch(`${base}/api/items/7/parts/lid`)).json()).toEqual({ part: 'lid' });
   });
 
   it('answers 400 to a broken %-escape, and keeps serving', async () => {
