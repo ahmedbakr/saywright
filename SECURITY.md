@@ -6,7 +6,8 @@ Saywright runs on your computer, reads and changes your code, starts your apps' 
 
 | Version | Security fixes |
 | --- | --- |
-| 0.1.x (latest) | Yes |
+| The latest release | Yes |
+| Earlier releases | No |
 
 Until 1.0, security fixes go into the latest release only. Update with `npx @saywright/studio@latest`, and `npm install -D @saywright/vite@latest` in your apps.
 

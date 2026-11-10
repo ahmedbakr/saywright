@@ -115,7 +115,7 @@ Anything that isn't a quick edit or a question (“add a free-shipping banner ab
 
 1. Press <kbd>R</kbd> for **Write test**. From now on, what you do in the app becomes the steps of a test, in the **Test** tab.
 2. Type `SAVE20` in the coupon field and click **Apply**. The total shows **$78.40**.
-3. Point at the total and say or type `this should show $80.80`. That is a check.
+3. Point at the total and say `this should show $80.80`, or click the command bar at the bottom and type it there: the check is about what you pointed at last. (After **Apply** the keyboard is in the app, so <kbd>/</kbd> doesn't reach the studio until you click it.) That is a check.
 4. Click **Generate test**: a Playwright test is written to `tests/saywright/` in the shop's folder.
 5. Click **Run test** (or **Run it**). It fails, *expected $80.80, got $78.40*, which proves it reproduces the bug.
 

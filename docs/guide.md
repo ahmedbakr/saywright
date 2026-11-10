@@ -169,7 +169,7 @@ If Playwright's browser isn't installed, the Test tab offers **Install test brow
 | <kbd>Enter</kbd> | Keep the preview |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> (<kbd>⌘</kbd>+<kbd>Z</kbd>) | Undo the preview |
 | <kbd>Esc</kbd> | Close what is on top; with nothing open, stop, then clear the selection |
-| <kbd>/</kbd> | Type a request |
+| <kbd>/</kbd> | Type a request (while the keyboard is in the studio: after you click or type in your app, click the command bar instead) |
 | <kbd>1</kbd> to <kbd>4</kbd> | Run a suggestion shown above the command bar |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Select what contains the selection, or what is inside it |
 | <kbd>←</kbd> <kbd>→</kbd> | Select the previous or next one |

@@ -3,3 +3,9 @@ Copyright 2026 the Saywright authors
 
 This product includes software developed by the Saywright authors,
 licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The optional speech engine, sherpa-onnx-node (Apache License 2.0, by the next-gen Kaldi
+team), and its native package, which includes ONNX Runtime (MIT License, Microsoft
+Corporation), are installed beside Saywright as an optional dependency, under their own
+licences. Software built into Saywright's files is listed with its licence in
+dist/THIRD_PARTY_NOTICES.md.

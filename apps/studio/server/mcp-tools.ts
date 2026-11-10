@@ -58,7 +58,7 @@ export function mcpTools(deps: Deps): McpTool[] {
       name: 'get_context',
       title: 'What the person is pointing at',
       description:
-        'The app open in Saywright, the page, and the elements the person selected or pinned there (by hand, voice or mouse), each with where it was written (file:line) and the code around it. Call this first when they say "this", "that" or "here".',
+        'The app open in Saywright, the page, and the elements the person selected or pinned there (by voice or the mouse), each with where it was written (file:line) and the code around it. Call this first when they say "this", "that" or "here".',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, openWorldHint: false },
       run: async () => {

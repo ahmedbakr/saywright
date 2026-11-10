@@ -153,6 +153,16 @@ const imported = (dir) =>
 for (const name of new Set(imported(path.join(here, 'src')))) if (!name.startsWith('@/') && !name.startsWith('@shared')) included.add(packageDir(name, here));
 
 const LICENSE_FILES = /^(licen[cs]e|copying|notice)(\.(md|txt|markdown))?$/i;
+/**
+ * A package that ships no licence file still asks for its notice to be kept (MIT and ISC do): the standard text of
+ * its licence, with its author. Where the author field isn't the copyright holder, the holder its repository names.
+ */
+const HOLDER = { 'onnxruntime-web': 'Microsoft Corporation' };
+const STANDARD = {
+  MIT: (who) => `MIT License\n\nCopyright (c) ${who}\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the "Software"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.`,
+  ISC: (who) => `ISC License\n\nCopyright (c) ${who}\n\nPermission to use, copy, modify, and/or distribute this software for any\npurpose with or without fee is hereby granted, provided that the above\ncopyright notice and this permission notice appear in all copies.\n\nTHE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\nWITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\nMERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\nANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\nWHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\nACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\nOR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.`,
+};
+const authorOf = (pkg) => HOLDER[pkg.name] ?? (typeof pkg.author === 'string' ? pkg.author.replace(/\s*[<(].*$/, '') : pkg.author?.name) ?? `the authors of ${pkg.name}`;
 const notices = [...included]
   .map((dir) => ({ dir, pkg: JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')) }))
   .filter(({ pkg }) => pkg.name && !pkg.name.startsWith('@saywright/'))
@@ -160,12 +170,13 @@ const notices = [...included]
   .filter(({ pkg }, i, all) => i === 0 || all[i - 1].pkg.name !== pkg.name)
   .map(({ dir, pkg }) => {
     const files = fs.readdirSync(dir).filter((f) => LICENSE_FILES.test(f));
-    const text = files.map((f) => fs.readFileSync(path.join(dir, f), 'utf8').trim()).join('\n\n');
     const license = typeof pkg.license === 'string' ? pkg.license : (pkg.license?.type ?? 'see its licence');
+    const text = files.map((f) => fs.readFileSync(path.join(dir, f), 'utf8').trim()).join('\n\n') || (STANDARD[license]?.(authorOf(pkg)) ?? '');
+    if (!text) console.warn(`! ${pkg.name} ${pkg.version} ships no licence text, and ${license} has no standard text here`);
     return `## ${pkg.name} ${pkg.version}\n\nLicence: ${license}${pkg.homepage ? ` · ${pkg.homepage}` : ''}\n\n${text ? '```\n' + text + '\n```' : ''}\n`;
   });
 fs.writeFileSync(
   path.join(dist, 'THIRD_PARTY_NOTICES.md'),
-  `# Third-party notices\n\nSaywright includes the following open-source software, built into its files. Each is used under its own licence, reproduced here.\n\n${notices.join('\n')}`,
+  `# Third-party notices\n\nSaywright includes the following open-source software, built into its files. Each is used under its own licence, reproduced here.\n\n${notices.join('\n')}\n## Installed beside it\n\nThe optional speech engine, sherpa-onnx-node (Apache-2.0, by the next-gen Kaldi team; https://github.com/k2-fsa/sherpa-onnx), is installed by npm beside the studio as an optional dependency, with its native package for your computer, which includes ONNX Runtime (MIT, Microsoft Corporation). It isn't built into Saywright's files; each comes with its own licence in its package.\n`,
 );
 console.log(`✓ saywright built (${notices.length} third-party packages noted)`);

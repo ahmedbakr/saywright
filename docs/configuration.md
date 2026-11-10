@@ -91,6 +91,7 @@ The test commands are in [CONTRIBUTING.md](../CONTRIBUTING.md#tests).
 | 7357 | The studio: its page, its API, the MCP server (`/api/mcp`) and the script for script tags (`/saywright.js`) | `--port`, or `npm run dev -- --port <n>` |
 | 5281 and up | The proxy: each app address shown through it gets its own port, kept from one run to the next (`proxy-ports.json`) | `SAYWRIGHT_PROXY_PORT` (the first port to try) |
 | Your app's | Your dev server, started by the studio. When it moves to another port, the studio follows it. | Your app's config, or its address in the app list |
+| 5300 and up | A folder of plain HTML with no start script, served by the studio itself (the first free port) | |
 | 5174 | The sample shop | `npm run dev -- --sample --app-port <n>` (in a checkout) |
 | 5273, 5274 | The end-to-end tests' studio and sample shop copy | `E2E_STUDIO_PORT`, `E2E_SHOP_PORT` |
 | 11434, 1234 | Where the studio looks for Ollama and LM Studio | |
@@ -143,6 +144,38 @@ The studio and the proxy listen on this computer only (`127.0.0.1`; the proxy al
 
 Preferences you set in the studio's page (theme, layout, voice) are kept in your browser's local storage.
 
+## Updating and removing
+
+### Updating
+
+| How you run it | How it updates |
+| --- | --- |
+| `npx @saywright/studio` | Each run asks npm for the newest release and runs it, so there is nothing to do: npx keeps a copy in its cache, but runs a newer release when there is one (with npm 10). `npx @saywright/studio@latest` says so outright. |
+| Installed globally (`npm install -g @saywright/studio`) | It stays on the installed version until you run `npm install -g @saywright/studio@latest`. |
+| The Vite plugin in an app | `npm install -D @saywright/vite@latest` in the app (or your package manager's equivalent), when you update the studio. |
+| A checkout of this repository | `git pull`, then `npm install`. |
+| The sample shop's copy (`~/.saywright/sample-shop`) | It is copied once, the first time you open it, and is yours to change. For the current release's copy, remove the sample from the app list and remove the folder: the next **Or try the sample shop first** copies it again. |
+
+The studio never checks for updates by itself and makes no request you didn't ask for. `npx @saywright/studio doctor`, which you run on purpose, says when a newer release is on the npm registry. The [CHANGELOG](../CHANGELOG.md) and the [releases](https://github.com/ahmedbakr/saywright/releases) list what changed.
+
+### Removing Saywright
+
+Everything Saywright leaves, and how to remove each:
+
+| What | Where | How to remove it |
+| --- | --- | --- |
+| The command, installed globally | npm's global folder | `npm uninstall -g @saywright/studio` |
+| The command, run with npx | npm's cache (`~/.npm/_npx`) | `npm cache clean --force` clears the whole cache; or remove the `_npx` folder whose `package.json` names `@saywright/studio` |
+| The studio's data: linked apps, AI connections, keys, usage, models (up to about 2.4 GB with the speech models) | `~/.saywright` (or `SAYWRIGHT_HOME`) | Remove the folder. |
+| GitHub clones | `~/saywright-apps` (or the folder chosen in **Clone into**) | Remove the clones you no longer want: they are ordinary git repositories. |
+| What `connect` added to an app | the Vite config, `package.json`, or the page's or layout's script tag | Remove `saywright()` and its import from the Vite config, then `npm uninstall @saywright/vite` (or your package manager's equivalent); or remove the `saywright.js` script tag and the comment above it. |
+| Each app's sessions, reports, reviews and previews | `.saywright/` in the app's folder | Remove the folder. |
+| Generated tests | `tests/saywright/` in the app's folder | Keep them, or remove the folder. They are your tests. |
+| The test browser the studio installed | Playwright's browser folder (`~/.cache/ms-playwright`, `~/Library/Caches/ms-playwright`, `%LOCALAPPDATA%\ms-playwright`) | Remove it, unless your other Playwright tests use it. |
+| The MCP server in your AI apps | each app's MCP settings (Claude Desktop, Cursor, VS Code…) | Remove the `saywright` entry you added. |
+
+Remove an app from the studio's app list first if you keep using the studio: its code, sessions and reports stay where they are.
+
 ## Environment variables
 
 ### Saywright
@@ -159,9 +192,11 @@ Preferences you set in the studio's page (theme, layout, voice) are kept in your
 | `SAYWRIGHT_STUDIO_URL` | the Vite plugin, in your app's dev server | Where the studio runs. Default: what the studio announces when it starts, else `http://localhost:7357`. The plugin's `studio` option wins over it. |
 | `SAYWRIGHT_URL` | `saywright mcp` | The studio's address, when the data folder has no `server.json`. |
 | `SAYWRIGHT_KEY_<NAME>` | the studio | The key of an OpenAI-compatible provider you added in **Settings → AI**; the studio writes it to `.env.local`. |
+| `SAYWRIGHT_SECRET_<NAME>` | the studio, and every generated test | The value of a secret a test types (`SAYWRIGHT_SECRET_PASSWORD`). The studio sets it from the Test tab's **Secrets** when it runs a test; set it yourself to run the test elsewhere (in CI). When nothing is saved for a name, one set where the studio was started is used. |
+| `PW_CHROMIUM_PATH` | the studio, and the end-to-end tests | The Chromium the studio's runs of generated tests use, in place of Playwright's own browser. Set it when your Playwright browser lives elsewhere; leave it unset otherwise. |
 | `SAYWRIGHT_FLEURS` | `npm run eval:speech` | Where the FLEURS recordings are kept. Default: `fleurs/` in the data folder. |
 
-The studio sets two variables for programs it starts: `SAYWRIGHT_TARGET_URL` when it runs your generated tests (point your Playwright config's `baseURL` at it), and `SAYWRIGHT_MCP_TOKEN` for Codex runs.
+The studio sets these variables for programs it starts: `SAYWRIGHT_TARGET_URL` and the `SAYWRIGHT_SECRET_<NAME>` of saved secrets when it runs your generated tests (point your Playwright config's `baseURL` at the first), and `SAYWRIGHT_MCP_TOKEN` for Codex runs.
 
 ### AI keys
 
@@ -184,7 +219,7 @@ When the studio runs Claude Code, Codex or Gemini CLI for your plan, it leaves t
 | `BROWSER` | The browser `npm run dev` opens. On a Mac, when it isn't set and Chrome is installed, Chrome is used. |
 | `LAUNCH_EDITOR`, `VISUAL`, `EDITOR` | The code editor <kbd>O</kbd> opens files in. Without `LAUNCH_EDITOR`, the studio uses an editor it finds running (VS Code, Cursor, WebStorm, Zed and others), then `VISUAL` or `EDITOR`; with none, it says so. |
 | `HOME`, `USERPROFILE` | Where GitHub clones go by default (`~/saywright-apps`). |
-| `E2E_STUDIO_PORT`, `E2E_SHOP_PORT`, `PW_CHROMIUM_PATH` | The end-to-end tests: see [CONTRIBUTING.md](../CONTRIBUTING.md#tests). |
+| `E2E_STUDIO_PORT`, `E2E_SHOP_PORT` | The end-to-end tests: see [CONTRIBUTING.md](../CONTRIBUTING.md#tests). |
 
 ### Behind a company proxy
 

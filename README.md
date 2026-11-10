@@ -64,7 +64,7 @@ export default defineConfig({
 });
 ```
 
-Other apps work too: Next.js and other React apps through one development-only script tag (`connect` adds it), everything else through the proxy, with no change. See [Linking your apps](docs/apps.md).
+Other apps work too. Vite apps (Vue, React Router and Remix on Vite too) get the plugin, which runs on the dev server only. Next.js gets one development-only script tag. Other apps with an HTML page (Create React App, webpack, Angular…) get a script tag at the top of that page, which isn't removed from production builds: `connect` says so, and you remove it before you deploy. Everything else works through the studio's local proxy, with no change. See [Linking your apps](docs/apps.md).
 
 **Optional extras.** `npx @saywright/studio setup` downloads the on-device voice model (28 MB) and the speech models that transcribe Arabic and English narration (about 740 MB). `npx @saywright/studio doctor` checks your setup.
 

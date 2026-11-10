@@ -19,12 +19,12 @@ npx @saywright/studio connect ./my-app
 npx @saywright/studio
 ```
 
-For a Vite + React app, `connect` adds the [`@saywright/vite`](https://www.npmjs.com/package/@saywright/vite) plugin, which gives the exact file, line and column of every element. Next.js and other React apps get one development-only script tag; anything else works through the studio's local proxy, with no change.
+For a Vite app, `connect` adds the [`@saywright/vite`](https://www.npmjs.com/package/@saywright/vite) plugin, which runs on the dev server only and, with React, gives the exact file, line and column of every element. Next.js gets one development-only script tag. Other apps with an HTML page (Create React App, webpack, Angular…) get a script tag at the top of that page, which isn't removed from production builds: `connect` says so, and you remove it before you deploy. Anything else works through the studio's local proxy, with no change.
 
 ## What you can do
 
 - **Point and change.** “Make this bigger”, “rename this to Place order”, “why is the total wrong?”. Size, variant, text, move and remove are quick edits made on your computer, free and offline; anything else goes to your AI. Keep a preview with <kbd>Enter</kbd>, undo it with <kbd>Ctrl</kbd>+<kbd>Z</kbd>.
-- **Record session.** Use your app and talk about what you notice, in English or Arabic. The report lists what went wrong with its evidence and code locations, each a click from a fix, and **Replay & verify** checks the fix.
+- **Record session.** Use your app and talk about what you notice, in English or Arabic. The report lists what went wrong with its evidence and code locations, each a click from a fix, and **Verify fixes** replays the session to check them.
 - **Autopilot.** The AI uses your app like a tester and writes the same kind of report.
 - **Experts.** Review a page for SEO, content, UI/UX and accessibility (WCAG 2.2 with axe-core), and fix findings in place.
 - **Write test.** Narrate a bug (“this should show $80.80”) and get a Playwright test that reproduces it.
@@ -36,7 +36,7 @@ For a Vite + React app, `connect` adds the [`@saywright/vite`](https://www.npmjs
 | --- | --- |
 | `npx @saywright/studio` | Start the studio and open it (`--port <n>`, `--no-open`, `--target <url>`, `--root <folder>`) |
 | `npx @saywright/studio connect <folder>` | Connect an app once (`--url`, `--start "<command>"`, `--no-start`, `--studio <address>`, `--dry-run`) |
-| `npx @saywright/studio setup` | Download the optional extras: the on-device voice model (28 MB) and speech models for Arabic and English (about 740 MB; `--no-speech`, `--best-arabic`, `--hand`) |
+| `npx @saywright/studio setup` | Download the optional extras: the on-device voice model (28 MB) and speech models for Arabic and English (about 740 MB; `--no-speech`, `--best-arabic`, `--no-best-arabic`) |
 | `npx @saywright/studio doctor` | Check what the studio needs, and how to fix what is missing |
 | `npx @saywright/studio mcp` | For AI apps that start MCP servers as programs (Claude Desktop) |
 
@@ -61,4 +61,4 @@ Saywright runs on your computer. Your code leaves it only when you ask the AI so
 ## More
 
 - [Documentation](https://github.com/ahmedbakr/saywright#readme), [troubleshooting](https://github.com/ahmedbakr/saywright/blob/HEAD/docs/troubleshooting.md), [changelog](https://github.com/ahmedbakr/saywright/blob/HEAD/CHANGELOG.md) and [issues](https://github.com/ahmedbakr/saywright/issues).
-- Licence: Apache-2.0. Third-party licences: `dist/THIRD_PARTY_NOTICES.md` in the package.
+- Licence: Apache-2.0. Third-party licences: `dist/THIRD_PARTY_NOTICES.md` in the package. The optional speech engine, [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0, with ONNX Runtime, MIT), is installed beside it under its own licence.
