@@ -14,6 +14,8 @@ export interface ComponentProp {
   ordered?: boolean;
   /** The values "bigger"/"smaller" step through, smallest first, when not all of them (an "icon" size isn't a step). */
   ladder?: string[];
+  /** How the value is written: `boolean` as `prop` / `prop={false}`, `number` as `prop={2}`; a string otherwise. */
+  type?: 'boolean' | 'number';
 }
 
 export interface ComponentSpec {

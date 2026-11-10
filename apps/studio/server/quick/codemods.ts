@@ -185,6 +185,7 @@ export function readProps(el: Node): Record<string, PropValue> {
     if (a.value == null) out[n] = { kind: 'boolean' };
     else if (a.value.type === 'StringLiteral') out[n] = { kind: 'literal', value: a.value.value };
     else if (a.value.type === 'JSXExpressionContainer' && a.value.expression.type === 'StringLiteral') out[n] = { kind: 'literal', value: a.value.expression.value };
+    else if (a.value.type === 'JSXExpressionContainer' && ['BooleanLiteral', 'NumericLiteral'].includes(a.value.expression.type)) out[n] = { kind: 'literal', value: String(a.value.expression.value) };
     else if (a.value.type === 'JSXExpressionContainer' && a.value.expression.type === 'TemplateLiteral' && a.value.expression.expressions.length === 0) {
       out[n] = { kind: 'literal', value: a.value.expression.quasis[0].value.cooked };
     } else out[n] = { kind: 'dynamic' };
@@ -204,7 +205,11 @@ function indentAt(code: string, i: number): string {
   return /^[ \t]*/.exec(code.slice(s))![0];
 }
 
-function attrString(prop: string, value: string): string {
+/** A prop's value: a string, or code (`{ code: '3' }`, `{ code: 'true' }`, written `prop={3}`, `prop`); null removes it. */
+export type PropWrite = string | null | { code: string };
+
+function attrString(prop: string, value: string | { code: string }): string {
+  if (typeof value !== 'string') return value.code === 'true' ? prop : `${prop}={${value.code}}`;
   return /["\n]/.test(value) ? `${prop}={${JSON.stringify(value)}}` : `${prop}="${value}"`;
 }
 
@@ -227,12 +232,12 @@ function validate(s: MagicString, start: number, end: number): string {
  * Set (or with `value === null`, remove) a string prop on the element at `loc`. With `into`, the edit is written into
  * that MagicString of the same code (several elements changed in one pass); the caller then checks the whole result.
  */
-export function setProp(code: string, loc: Loc, prop: string, value: string | null, ast?: Node, into?: MagicString): string {
+export function setProp(code: string, loc: Loc, prop: string, value: PropWrite, ast?: Node, into?: MagicString): string {
   return setProps(code, loc, [[prop, value]], ast, into);
 }
 
 /** Several props on one element in a single edit: each [prop, value], with null to remove it. */
-export function setProps(code: string, loc: Loc, changes: [prop: string, value: string | null][], ast?: Node, into?: MagicString): string {
+export function setProps(code: string, loc: Loc, changes: [prop: string, value: PropWrite][], ast?: Node, into?: MagicString): string {
   const f = findElement(code, loc, ast);
   if (!f) throw new CodemodError('Element not found at that location');
   const open = f.el.openingElement;
@@ -251,11 +256,14 @@ export function setProps(code: string, loc: Loc, changes: [prop: string, value: 
       let start = existing.start;
       while (start > 0 && /\s/.test(code[start - 1])) start--;
       s.remove(start, existing.end);
-    } else if (existing.value == null) {
+    } else if (existing.value == null || typeof value !== 'string') {
+      if (existing.value?.type === 'JSXExpressionContainer' && !['StringLiteral', 'TemplateLiteral', 'BooleanLiteral', 'NumericLiteral'].includes(existing.value.expression.type)) {
+        throw new CodemodError(`${prop} is computed in code, so it can't be set to a fixed value safely`);
+      }
       s.overwrite(existing.start, existing.end, attrString(prop, value));
     } else if (existing.value.type === 'StringLiteral') {
       s.overwrite(existing.value.start, existing.value.end, /"/.test(value) ? `{${JSON.stringify(value)}}` : `"${value}"`);
-    } else if (existing.value.type === 'JSXExpressionContainer' && ['StringLiteral', 'TemplateLiteral'].includes(existing.value.expression.type)) {
+    } else if (existing.value.type === 'JSXExpressionContainer' && ['StringLiteral', 'TemplateLiteral', 'BooleanLiteral', 'NumericLiteral'].includes(existing.value.expression.type)) {
       s.overwrite(existing.value.start, existing.value.end, /"/.test(value) ? `{${JSON.stringify(value)}}` : `"${value}"`);
     } else {
       throw new CodemodError(`${prop} is computed in code, so it can't be set to a fixed value safely`);

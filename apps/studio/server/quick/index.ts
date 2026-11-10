@@ -3,7 +3,7 @@ import MagicString from 'magic-string';
 import type { NextStep, RefInfo } from '../../shared/api.ts';
 import type { FileEdit } from '../changes.ts';
 import type { ComponentProp, ComponentSpec, Project } from '../project.ts';
-import { CodemodError, componentAt, ComputedTextError, elementName, MixedTextError, findByWords, findElement, moveElement, parseTsx, readProps, removeElementsTidy, removeElementTidy, setProp, setProps, setText, showsText, type Found, type Loc } from './codemods.ts';
+import { CodemodError, componentAt, ComputedTextError, elementName, MixedTextError, findByWords, findElement, moveElement, parseTsx, readProps, removeElementsTidy, removeElementTidy, setProp, setProps, setText, showsText, type Found, type Loc, type PropWrite } from './codemods.ts';
 import { parseQuick, type QuickIntent } from '../../shared/grammar.ts';
 
 type QuickResult =
@@ -70,10 +70,25 @@ function stepProp(spec: ComponentSpec, focus: 'size' | 'spacing'): [string, Comp
 function current(props: ReturnType<typeof readProps>, prop: string, def: ComponentProp): string | null {
   const v = props[prop];
   if (!v) return def.default ?? null;
+  if (v.kind === 'boolean') return 'true';
   return v.kind === 'literal' ? v.value : null;
 }
 
-const valueOrNull = (def: ComponentProp, value: string) => (def.default === value ? null : value);
+/** The prop as the edit writes it, for a summary: `size="lg"`, `fullWidth`, `level={3}`. */
+function written(prop: string, def: ComponentProp, value: string): string {
+  const w = valueOrNull({ ...def, default: undefined }, value);
+  return typeof w === 'string' ? `${prop}="${w}"` : w?.code === 'true' ? prop : `${prop}={${w?.code}}`;
+}
+
+/**
+ * How a value is written: not at all when it is the default; a boolean variant as `fullWidth` or `fullWidth={false}`
+ * and a number as `{2}`, as the component's types read them (`fullWidth="true"` fails the build's type check).
+ */
+function valueOrNull(def: ComponentProp, value: string): PropWrite {
+  if (def.default === value) return null;
+  const boolean = def.type === 'boolean' || (def.values.length === 2 && def.values.includes('true') && def.values.includes('false'));
+  return boolean || def.type === 'number' ? { code: value } : value;
+}
 
 /** A picked element, found in its file's code as it is now (before anything this request changes). */
 interface Site {
@@ -194,7 +209,7 @@ function attempt(intent: QuickIntent, a: RefInfo, site: Site, refs: RefInfo[], p
           }
           const after = setProp(code, where.loc, pick.prop, valueOrNull(def, pick.value), ast, into);
           const was = current(props, pick.prop, def);
-          return edit(`${what} · ${pick.prop} ${was ? `${was} → ` : '→ '}${pick.value}`, `Set ${pick.prop}="${pick.value}" on ${name} in ${where.file}.`, where.file, code, after);
+          return edit(`${what} · ${pick.prop} ${was ? `${was} → ` : '→ '}${pick.value}`, `Set ${written(pick.prop, def, pick.value)} on ${name} in ${where.file}.`, where.file, code, after);
         }
 
         case 'step': {
@@ -229,7 +244,7 @@ function attempt(intent: QuickIntent, a: RefInfo, site: Site, refs: RefInfo[], p
           if (!bFound) return null;
           if (elementName(bFound.el) !== name) return null; // different components: let Claude translate the look
           const bProps = readProps(bFound.el);
-          const sets: [string, string | null][] = [];
+          const sets: [string, PropWrite][] = [];
           const changed: string[] = [];
           for (const [prop, def] of Object.entries(spec.props)) {
             let target = current(bProps, prop, def);
@@ -381,7 +396,7 @@ export function propEdit(project: Project, src: string, prop: string, value: str
   if (now === value) return { kind: 'message', tone: 'info', text: `${name} already uses ${prop} “${value}”.` };
   try {
     const after = setProp(code, loc, prop, valueOrNull(def, value), found.ast);
-    return edit(`${name} · ${prop} ${now ? `${now} → ` : '→ '}${value}`, `Set ${prop}="${value}" on ${name} in ${p.file}.`, p.file, code, after);
+    return edit(`${name} · ${prop} ${now ? `${now} → ` : '→ '}${value}`, `Set ${written(prop, def, value)} on ${name} in ${p.file}.`, p.file, code, after);
   } catch (err) {
     if (err instanceof CodemodError) return { kind: 'message', tone: 'warn', text: err.message };
     throw err;

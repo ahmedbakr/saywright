@@ -58,6 +58,10 @@ function readCva(call: Node): ComponentSpec | null {
     const names = objectProps(values).map(([k]) => k);
     if (!names.length) continue;
     const def: ComponentProp = { values: names };
+    // Written as the types read them: `{ true: …, false: … }` is a boolean prop, `{ 1: …, 2: … }` a number.
+    const keys = ((values as Node).properties as Node[]).filter((p) => p.type === 'ObjectProperty').map((p) => p.key as Node);
+    if (names.every((n) => n === 'true' || n === 'false')) def.type = 'boolean';
+    else if (keys.every((k) => k.type === 'NumericLiteral')) def.type = 'number';
     const d = defaults.get(prop);
     if (d) def.default = d;
     if (LADDER_PROPS.has(prop)) {
@@ -74,7 +78,43 @@ function readCva(call: Node): ComponentSpec | null {
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
-/** The cva variants of `component` in a file: the call named after it (`buttonVariants`), or the file's only one. */
+/**
+ * The declarations of `component` in the file (`function Alert`, `const Button = forwardRef(…)`), with the types its
+ * props are declared by there (`interface ButtonProps extends VariantProps<typeof buttonVariants>`).
+ */
+function declarationOf(tree: Node, component: string): Node[] {
+  const body = ((tree.program as Node | undefined)?.body as Node[] | undefined) ?? [];
+  const top = body.map((n) => (n.type === 'ExportNamedDeclaration' || n.type === 'ExportDefaultDeclaration' ? ((n.declaration as Node | null) ?? n) : n));
+  const types = new Map<string, Node>();
+  for (const n of top) if ((n.type === 'TSInterfaceDeclaration' || n.type === 'TSTypeAliasDeclaration') && (n.id as Node)?.type === 'Identifier') types.set(String((n.id as Node).name), n);
+  const own: Node[] = [];
+  for (const n of top) {
+    if (n.type === 'FunctionDeclaration' && (n.id as Node | null)?.name === component) own.push(n);
+    if (n.type === 'VariableDeclaration') for (const d of (n.declarations as Node[]) ?? []) if ((d.id as Node)?.type === 'Identifier' && (d.id as Node).name === component) own.push(d);
+    if (n.type === 'ClassDeclaration' && (n.id as Node | null)?.name === component) own.push(n);
+  }
+  // The props' types, and the types they name in turn.
+  const out = [...own];
+  const seen = new Set<string>();
+  for (let i = 0; i < out.length; i++) {
+    walk(out[i], (n) => {
+      const ref = n.type === 'TSTypeReference' ? (n.typeName as Node) : n.type === 'TSExpressionWithTypeArguments' || n.type === 'TSInterfaceHeritage' ? (n.expression as Node) : null;
+      const name = ref?.type === 'Identifier' ? String(ref.name) : null;
+      if (name && types.has(name) && !seen.has(name)) {
+        seen.add(name);
+        out.push(types.get(name)!);
+      }
+    });
+  }
+  return own.length ? out : [];
+}
+
+/**
+ * The cva variants of `component` in a file: of the cva its own declaration uses, by calling it or by naming it in its
+ * props' type (`VariantProps<typeof buttonVariants>`). A file declares several components and one cva often serves
+ * only one of them (Alert, not AlertTitle): another component of the file is given none, as its types allow none.
+ * When the component isn't declared in the file (re-exported from elsewhere), only the cva named after it counts.
+ */
 export function variantsIn(code: string, component: string): ComponentSpec | null {
   if (!code.includes('cva')) return null;
   const tree = ast(code);
@@ -86,8 +126,15 @@ export function variantsIn(code: string, component: string): ComponentSpec | nul
     const callee = init?.type === 'CallExpression' ? (init.callee as Node) : null;
     if (callee?.type === 'Identifier' && callee.name === 'cva') calls.push({ name: keyName(n.id as Node), call: init! });
   });
-  const mine = calls.find((c) => c.name === `${lowerFirst(component)}Variants`) ?? (calls.length === 1 ? calls[0] : null);
-  return mine ? readCva(mine.call) : null;
+  if (!calls.length) return null;
+  const named = calls.find((c) => c.name === `${lowerFirst(component)}Variants`);
+  const decl = declarationOf(tree, component);
+  if (!decl.length) return named ? readCva(named.call) : null;
+  const used = new Set<string>();
+  for (const d of decl) walk(d, (n) => n.type === 'Identifier' && used.add(String(n.name)));
+  const mine = calls.filter((c) => c.name && used.has(c.name));
+  const pick = mine.find((c) => c === named) ?? mine[0];
+  return pick ? readCva(pick.call) : null;
 }
 
 /** JSON with comments and trailing commas (tsconfig.json), as plain JSON. Comment marks inside strings ("@/*") stay. */
