@@ -58,6 +58,40 @@ interface SearchHit {
   text: string;
 }
 
+/** The longest line a pattern is tried on: minified code is cut to this. */
+const MAX_MATCH_LINE = 2000;
+
+/**
+ * Whether a regular expression may take exponential time: a quantified group whose body is itself quantified or has
+ * alternatives (`(a+)+`, `(a|aa)*`, `(\\w+\\s?)*`), or a backreference. Conservative: some safe patterns are refused too.
+ */
+export function unsafePattern(source: string): boolean {
+  if (/\\[1-9]|\\k</.test(source)) return true;
+  const stack: { quantified: boolean; alt: boolean }[] = [];
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '\\') {
+      i++;
+      continue;
+    }
+    if (c === '[') {
+      while (i < source.length && source[i] !== ']') i += source[i] === '\\' ? 2 : 1;
+      continue;
+    }
+    const top = stack.at(-1);
+    if (c === '(') stack.push({ quantified: false, alt: false });
+    else if (c === '|' && top) top.alt = true;
+    else if (c === ')') {
+      const g = stack.pop();
+      const next = source[i + 1];
+      const quantified = next === '*' || next === '+' || (next === '{' && /^\{\d*,?\d*\}/.test(source.slice(i + 1)) && !/^\{(0|1)\}/.test(source.slice(i + 1)));
+      if (quantified && g && (g.quantified || g.alt)) return true;
+      if (stack.length && g && (g.quantified || quantified)) stack.at(-1)!.quantified = true;
+    } else if ((c === '*' || c === '+' || c === '{') && top) top.quantified = true;
+  }
+  return false;
+}
+
 /** How long one code search may take; past it, the answer says how many files it covered. */
 const SEARCH_BUDGET_MS = 4000;
 /** A git commit waits this long for hooks (lint, tests, signing) before it is called off. */
@@ -66,11 +100,24 @@ const COMMIT_TIMEOUT_MS = 60_000;
 const RECHECK_MS = 5000;
 const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.devspace', '.saywright', '.next', '.nuxt', '.svelte-kit', '.astro', '.output', 'coverage', 'test-results', 'playwright-report', '.vite', '.turbo', '.vercel']);
 
-/** Refuses a path (relative to the project or its workspace) in a folder that isn't the app's code, or an environment file. */
+/**
+ * Files that hold keys or credentials, by name (compared without case: on macOS and Windows ".ENV" opens ".env"):
+ * environment files, package managers' and tools' credentials, private keys and certificates, keystores, and the
+ * folders tools keep them in. Never read, searched, listed, sent to a model or changed by one.
+ */
+const SECRET_FILE = /^(\.env.*|\.dev\.vars.*|\.npmrc|\.yarnrc\.yml|\.netrc|_netrc|\.pypirc|\.htpasswd|.*\.(pem|key|p12|pfx|keystore|jks|kdbx)|id_(rsa|dsa|ed25519|ecdsa).*|.*credentials.*|secrets\..*|\.git-credentials)$/i;
+const SECRET_DIR = /^\.(aws|ssh|gnupg|docker|kube|azure|gcloud|config\/gcloud)$/i;
+export const isSecretPath = (relative: string): boolean => {
+  const parts = relative.split(/[\\/]/);
+  return parts.slice(0, -1).some((p) => SECRET_DIR.test(p)) || SECRET_DIR.test(parts.at(-1) ?? '') || SECRET_FILE.test(parts.at(-1) ?? '');
+};
+
+/** Refuses a path (relative to the project or its workspace) in a folder that isn't the app's code, or a file that holds secrets. */
 function offLimits(relative: string, asked: string): void {
-  const parts = relative.split(path.sep);
+  const parts = relative.split(path.sep).map((p) => p.toLowerCase());
   if (IGNORED_DIRS.has(parts[0]) || parts.some((p) => p === 'node_modules' || p === '.git')) throw new HttpError(400, `Path is not editable: ${asked}`);
   if (parts.some((p) => p.startsWith('.env'))) throw new HttpError(400, 'Environment files are off limits');
+  if (isSecretPath(relative)) throw new HttpError(400, `Files that hold keys or credentials are off limits: ${asked}`);
 }
 const TEXT_EXT = /\.([cm]?[jt]sx?|css|scss|sass|less|styl|json|md|mdx|html?|svg|vue|svelte|astro|php|erb|ejs|hbs|handlebars|mustache|njk|liquid|twig|jinja2?|j2|cshtml|razor|py|rb|go|ya?ml|toml|xml|txt)$/i;
 
@@ -80,7 +127,7 @@ const unsearched = (name: string) => IGNORED_DIRS.has(name) || (name.startsWith(
 /** A project file worth searching: text, outside the folders above. */
 function searchable(rel: string): boolean {
   const parts = rel.split('/');
-  return TEXT_EXT.test(parts[parts.length - 1]) && !parts.some(unsearched);
+  return TEXT_EXT.test(parts[parts.length - 1]) && !parts.some(unsearched) && !isSecretPath(rel);
 }
 
 export class Project {
@@ -340,7 +387,7 @@ export class Project {
         const child = path.join(abs, e.name);
         if (e.isDirectory()) {
           if (!IGNORED_DIRS.has(e.name) && path.resolve(child) !== own) walk(child);
-        } else if (TEXT_EXT.test(e.name)) {
+        } else if (TEXT_EXT.test(e.name) && !isSecretPath(e.name)) {
           out.push(this.rel(child));
         }
       }
@@ -364,6 +411,9 @@ export class Project {
     } catch {
       throw new HttpError(400, 'Invalid search pattern');
     }
+    // The match runs on the studio's only thread: a pattern that can take exponential time would freeze everything,
+    // Stop included. A repeated group that itself repeats or alternates, or a backreference, is refused.
+    if (opts.regex && unsafePattern(query)) throw new HttpError(400, 'That search pattern could take too long (a repeated group that repeats inside, or a backreference). Search for plain text, or a simpler pattern.');
     const line = new RegExp(source, 'i');
     // Over a whole file: where a line may match (^ and $ at each line), so only those lines are tested.
     const any = new RegExp(source, 'gim');
@@ -397,7 +447,8 @@ export class Project {
         for (let i = text.indexOf('\n', counted); i !== -1 && i < start; i = text.indexOf('\n', i + 1)) lineNo++;
         counted = start;
         const lineText = text.slice(start, stop);
-        if (line.test(lineText)) {
+        // A very long line (minified code, data) is never matched as a whole: its first part is.
+        if (line.test(lineText.length > MAX_MATCH_LINE ? lineText.slice(0, MAX_MATCH_LINE) : lineText)) {
           hits.push({ path: at(file), line: lineNo, text: lineText.trim().slice(0, 200) });
           if (hits.length >= limit) return true;
         }

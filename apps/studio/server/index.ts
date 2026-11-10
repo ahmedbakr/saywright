@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 import { AI_TASKS, type AiEffort, type AiTask, type Budget } from '../shared/ai.ts';
 import { sameModel } from '../shared/models.ts';
-import type { Change, IntentResult, NextStep, RefInfo, StatusResponse } from '../shared/api.ts';
+import { MAX_REFS, type Change, type IntentResult, type NextStep, type RefInfo, type StatusResponse } from '../shared/api.ts';
 import { AppManager, appAddress } from './apps/manager.ts';
 import { envFor } from './apps/registry.ts';
 import { appRoutes } from './apps/routes.ts';
@@ -280,7 +280,7 @@ export async function createStudioApi(layout: StudioLayout) {
 
   /** Each ref's source location: as the page said (mapped from bundles), or found in the code by what identifies it (a guess). */
   const mapRefs = async (raw: unknown, pageUrl?: string): Promise<RefInfo[]> => {
-    const list = Array.isArray(raw) ? raw.slice(0, 6) : [];
+    const list = Array.isArray(raw) ? raw.slice(0, MAX_REFS) : [];
     const t = tracer();
     const traced = await Promise.all(list.map((r) => (t && r && typeof r === 'object' ? t.trace(r as Traceable, pageUrl).catch(() => null) : null)));
     const refs = sanitizeRefs(list.map((r, i) => (r && typeof r === 'object' ? { ...(r as object), src: traced[i]?.src ?? null } : r)));
@@ -579,8 +579,17 @@ export async function createStudioApi(layout: StudioLayout) {
       const latencyMs = Date.now() - started;
       if (out.kind === 'change') {
         // A fix is checked against the test as it was recorded: a change to that test is left out, or the test would prove nothing.
-        const normalized = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '');
-        const kept = out.edits.filter((e) => normalized(e.path) !== normalized(rel));
+        // Compared by the file each path leads to: "tests//x.spec.ts", "tests/./x.spec.ts" or a link are the test too.
+        const fileOf = (p: string) => {
+          try {
+            const abs = project.resolve(p);
+            return fs.existsSync(abs) ? fs.realpathSync(abs) : abs;
+          } catch {
+            return p;
+          }
+        };
+        const test = fileOf(rel);
+        const kept = out.edits.filter((e) => fileOf(e.path) !== test);
         const dropped = out.edits.length - kept.length;
         if (!kept.length) {
           metrics.record({ type: 'command', text: text || 'fix it', input, result: 'refused', source: agent.source, latencyMs, fix: true });

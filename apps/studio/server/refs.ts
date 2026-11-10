@@ -5,7 +5,7 @@
  * ("../packages/ui/Button.tsx"); where it really leads is checked again whenever it is read (Project.resolve).
  */
 import { parseSrc, type SourceHint } from '@saywright/vite/protocol';
-import type { RefInfo } from '../shared/api.ts';
+import { MAX_REFS, type RefInfo } from '../shared/api.ts';
 import { frameList } from './trace.ts';
 
 /** "file:line:col" with a relative path that stays inside the project or its workspace, or null. */
@@ -50,7 +50,7 @@ export function componentWrittenAt(read: (file: string) => string, src: string):
 /** A location already in the project's source (rather than in a bundle that source maps lead back from). */
 export function sanitizeRefs(raw: unknown): RefInfo[] {
   if (!Array.isArray(raw)) return [];
-  return raw.slice(0, 6).map((r) => {
+  return raw.slice(0, MAX_REFS).map((r) => {
     const o = (r ?? {}) as Record<string, unknown>;
     const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
     const ref: RefInfo = {

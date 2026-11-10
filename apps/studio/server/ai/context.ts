@@ -1,11 +1,18 @@
 import { maskSecrets, parseSrc, redactUrl } from '@saywright/vite/protocol';
 import type { Project } from '../project.ts';
 import { toLf } from '../text-file.ts';
+import { maskCode } from './secrets.ts';
 import { LATIN1_NOTE } from './tools.ts';
 import type { AgentInput } from './types.ts';
 
 const FULL_FILE_LINES = 400;
 const WINDOW = 80;
+/** The most code the first message carries, in characters, whatever the line count: about 30,000 tokens. */
+const MAX_CONTEXT_CHARS = 120_000;
+/** A line longer than this is cut, with a marker (an inlined SVG, a data URL). */
+const MAX_LINE_CHARS = 400;
+/** A file whose lines average more than this is minified or data: it is left out, with a note. */
+const MINIFIED_AVG = 300;
 
 /** Stable across requests (it only changes when project files or the design system change), so it caches well. */
 export function systemPrompt(project: Project): string {
@@ -43,11 +50,22 @@ Files:
 ${files.join('\n')}`;
 }
 
-function numbered(lines: string[], start: number, end: number): string {
+function numbered(project: Project, lines: string[], start: number, end: number): string {
   return lines
     .slice(start - 1, end)
-    .map((l, i) => `${String(start + i).padStart(4)}  ${l}`)
+    .map((l, i) => `${String(start + i).padStart(4)}  ${maskCode(project, l.length > MAX_LINE_CHARS ? `${l.slice(0, MAX_LINE_CHARS)} … (line cut: ${l.length.toLocaleString('en-US')} characters)` : l)}`)
     .join('\n');
+}
+
+/** Ranges that overlap or touch, joined; the rest kept apart (two places far apart in a long file are two windows). */
+function merged(ranges: Array<[number, number]>): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const r of [...ranges].sort((a, b) => a[0] - b[0])) {
+    const last = out.at(-1);
+    if (last && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1]);
+    else out.push([r[0], r[1]]);
+  }
+  return out;
 }
 
 /** Per-request message: what was said, what was pointed at, and the code around it. */
@@ -76,18 +94,44 @@ export function userMessage(input: AgentInput, project: Project): string {
     list.push([p.line - WINDOW, p.line + WINDOW]);
     windows.set(p.file, list);
   }
+  let room = MAX_CONTEXT_CHARS;
   for (const [file, ranges] of windows) {
-    const read = project.readText(file);
+    let read: ReturnType<Project['readText']>;
+    try {
+      read = project.readText(file);
+    } catch (err) {
+      // A binary file, or one the AI may not read: named, not sent.
+      parts.push(`\n--- ${file}: not included (${err instanceof Error ? err.message : String(err)}) ---`);
+      continue;
+    }
     // As read_file shows it: line ends as LF, and what may be written in a file that isn't UTF-8.
     const lines = toLf(read.text).split('\n');
     const note = read.encoding === 'latin1' ? `; ${LATIN1_NOTE}` : '';
-    if (lines.length <= FULL_FILE_LINES) {
-      parts.push(`\n--- ${file} (all ${lines.length} lines${note}) ---\n${numbered(lines, 1, lines.length)}`);
+    if (read.text.length / lines.length > MINIFIED_AVG) {
+      parts.push(`\n--- ${file}: not included (minified or data: ${read.text.length.toLocaleString('en-US')} characters on ${lines.length} line${lines.length === 1 ? '' : 's'}; read_file or search_code for a part of it) ---`);
       continue;
     }
-    const start = Math.max(1, Math.min(...ranges.map((r) => r[0])));
-    const end = Math.min(lines.length, Math.max(...ranges.map((r) => r[1])));
-    parts.push(`\n--- ${file} (lines ${start}-${end} of ${lines.length}; read_file for more${note}) ---\n${numbered(lines, start, end)}`);
+    if (room <= 0) {
+      parts.push(`\n--- ${file}: not included (the code sent with a request is capped; read_file for it) ---`);
+      continue;
+    }
+    const blocks: string[] = [];
+    if (lines.length <= FULL_FILE_LINES) blocks.push(`\n--- ${file} (all ${lines.length} lines${note}) ---\n${numbered(project, lines, 1, lines.length)}`);
+    else
+      for (const [a, b] of merged(ranges)) {
+        const start = Math.max(1, a);
+        const end = Math.min(lines.length, b);
+        blocks.push(`\n--- ${file} (lines ${start}-${end} of ${lines.length}; read_file for more${note}) ---\n${numbered(project, lines, start, end)}`);
+      }
+    for (const b of blocks) {
+      if (b.length > room) {
+        parts.push(`${b.slice(0, Math.max(0, room))}\n… (cut: the code sent with a request is capped; read_file for the rest)`);
+        room = 0;
+        break;
+      }
+      parts.push(b);
+      room -= b.length;
+    }
   }
 
   if (input.brief) {

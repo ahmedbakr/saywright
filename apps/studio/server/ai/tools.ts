@@ -6,6 +6,7 @@
 import type { FileEdit } from '../changes.ts';
 import type { Coverage } from '../code-index.ts';
 import type { Project } from '../project.ts';
+import { maskCode, unmaskCode } from './secrets.ts';
 import { eolOf, isBinaryName, lfView, toLf, unwritable, withEol, type TextEncoding } from '../text-file.ts';
 
 const MAX_READ_LINES = 400;
@@ -20,9 +21,10 @@ export function readFileTool(project: Project, path: string, start?: number, end
   const s = Math.max(1, Math.floor(start ?? 1));
   const e = Math.min(lines.length, Math.floor(end ?? s + MAX_READ_LINES - 1), s + MAX_READ_LINES - 1);
   if (s > lines.length) return `${path} has only ${lines.length} lines.`;
+  // Keys written in the code go out as placeholders (see secrets.ts); an edit that quotes one gets the value back.
   const body = lines
     .slice(s - 1, e)
-    .map((l, i) => `${String(s + i).padStart(4)}  ${l}`)
+    .map((l, i) => `${String(s + i).padStart(4)}  ${maskCode(project, l)}`)
     .join('\n');
   const more = e < lines.length ? `\n… ${lines.length - e} more lines. Call read_file with start_line=${e + 1} to continue.` : '';
   return `${path} (lines ${s}-${e} of ${lines.length}${file.encoding === 'latin1' ? `; ${LATIN1_NOTE}` : ''})\n${body}${more}`;
@@ -42,7 +44,7 @@ export async function searchCode(project: Project, query: string, regex = false,
   const r = await project.search(query, { regex, dir, limit: 60 });
   const note = coverageNote(r);
   if (!r.hits.length) return { text: `No matches for ${JSON.stringify(query)}${dir ? ` in ${dir}` : ''}.${note ? ` ${note}` : ''}`, note };
-  const lines = r.hits.map((h) => `${h.path}:${h.line}: ${h.text}`);
+  const lines = r.hits.map((h) => `${h.path}:${h.line}: ${maskCode(project, h.text)}`);
   if (r.hits.length >= 60) lines.push('(The first 60 matches; make the query more specific for others.)');
   if (note) lines.push(note);
   return { text: lines.join('\n'), note };
@@ -95,7 +97,9 @@ export function applyEditSpecs(project: Project, specs: EditSpec[]): FileEdit[] 
   if (specs.length > 25) throw new Error('Too many edits in one change; keep it focused.');
   // By the file each path leads to, so one file written two ways (“a.js”, “x/../a.js”) is edited once, in order.
   const working = new Map<string, Working>();
-  for (const spec of specs) {
+  for (const raw of specs) {
+    // A key the model was shown as a placeholder is written back as it was.
+    const spec = { ...raw, old_string: typeof raw.old_string === 'string' ? unmaskCode(project, raw.old_string) : raw.old_string, new_string: typeof raw.new_string === 'string' ? unmaskCode(project, raw.new_string) : raw.new_string };
     const path = spec.path.replace(/^\.\//, '');
     const abs = project.resolve(path); // throws on unsafe paths
     let file = working.get(abs);

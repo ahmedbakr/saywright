@@ -243,3 +243,6 @@ export interface SpeechStatus {
   /** Which model each language uses right now (null: none installed). */
   active: Record<SpeechLang, string | null>;
 }
+
+/** The most elements one request refers to: picked together in the page, sent to the studio, passed to the AI. */
+export const MAX_REFS = 8;

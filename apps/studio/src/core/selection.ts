@@ -11,6 +11,7 @@
  * to the selection, or takes it out.
  */
 import type { ElementInfo } from '@saywright/vite/protocol';
+import { MAX_REFS } from '@shared/api';
 
 export interface Picked {
   selection: ElementInfo | null;
@@ -18,7 +19,7 @@ export interface Picked {
 }
 
 /** At most this many picked together. */
-export const MAX_PICKED = 8;
+export const MAX_PICKED = MAX_REFS;
 
 /** Everything selected, in the order it was picked. */
 export function selectedOf(p: Picked): ElementInfo[] {
