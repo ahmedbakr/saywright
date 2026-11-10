@@ -155,17 +155,43 @@ export function installProxyRewrites(c: ProxyConfig): void {
     return (nativeOpen as (...a: unknown[]) => Window | null).call(this, url === undefined ? url : toAny(url), ...rest);
   } as typeof window.open;
 
-  // Navigations to the site's address (links, forms, location.href = …) stay in the proxy.
+  // Forms written with the site's full address post into the proxy, keeping their method and fields: their action
+  // (and the button's formaction) is rewritten as they are sent, whoever built them (the page's scripts too).
+  const retarget = (el: HTMLFormElement | HTMLButtonElement | HTMLInputElement | null | undefined, attr: 'action' | 'formAction') => {
+    const target = el as unknown as Record<string, string> | null | undefined;
+    const name = attr === 'action' ? 'action' : 'formaction';
+    if (!el || !el.hasAttribute(name) || !target) return;
+    const next = to(target[attr]);
+    if (next !== target[attr]) target[attr] = next;
+  };
+  document.addEventListener(
+    'submit',
+    (e) => {
+      retarget(e.target as HTMLFormElement | null, 'action');
+      retarget((e as SubmitEvent).submitter as HTMLButtonElement | null, 'formAction');
+    },
+    true,
+  );
+  // form.submit() sends without a submit event.
+  const nativeSubmit = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function (this: HTMLFormElement) {
+    retarget(this, 'action');
+    return nativeSubmit.call(this);
+  };
+
+  // Navigations to the site's address (links, location.href = …) stay in the proxy. A form's submission is left alone:
+  // cancelling it and going there again would lose its method and fields (its action was rewritten above).
   const navigation = (window as unknown as { navigation?: EventTarget }).navigation;
   navigation?.addEventListener('navigate', (event) => {
-    const e = event as Event & { destination: { url: string }; cancelable: boolean; hashChange: boolean; downloadRequest: string | null };
+    const e = event as Event & { destination: { url: string }; cancelable: boolean; hashChange: boolean; downloadRequest: string | null; formData: FormData | null };
+    if (e.formData) return;
     const next = to(e.destination.url);
     if (next !== e.destination.url && e.cancelable && !e.hashChange && !e.downloadRequest) {
       e.preventDefault();
       location.assign(next);
     }
   });
-  // Browsers without the Navigation API: links and forms written with the site's full address.
+  // Browsers without the Navigation API: links written with the site's full address.
   if (!navigation) {
     document.addEventListener(
       'click',
@@ -176,14 +202,6 @@ export function installProxyRewrites(c: ProxyConfig): void {
         e.preventDefault();
         if (a.target === '_blank') window.open(to(a.href), '_blank');
         else location.href = to(a.href);
-      },
-      true,
-    );
-    document.addEventListener(
-      'submit',
-      (e) => {
-        const form = e.target as HTMLFormElement;
-        if (form?.action) form.action = to(form.action);
       },
       true,
     );

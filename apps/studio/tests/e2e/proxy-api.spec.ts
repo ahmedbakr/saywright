@@ -87,7 +87,16 @@ test.beforeAll(async () => {
     res.end('{"secret":"TOP-SECRET"}');
   });
   secretPort = await listen(secret);
-  app = http.createServer((_req, res) => {
+  app = http.createServer((req, res) => {
+    if (req.url === '/echo') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<!doctype html><title>Echo</title><p data-testid="echo">${req.method} ${body}</p>`);
+      });
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(page(`http://localhost:${apiPort}`));
   });
@@ -183,5 +192,33 @@ test('a page shown through the proxy can’t read another service of this comput
   await studio.keyboard.press('u');
   await studio.frameLocator('iframe').getByTestId('login').click();
   await expect(studio.frameLocator('iframe').getByTestId('out')).toHaveText('Signed in: admin');
+  await studio.close();
+});
+
+test('a form the page’s script builds with the app’s full address posts its fields through the proxy', async ({ browser }) => {
+  const { probe } = await call<{ probe: unknown }>('POST', '/apps/probe', { url: `${appOrigin}/` });
+  linked = (await call<{ app: { id: string } }>('POST', '/apps', { probe, url: `${appOrigin}/` })).app.id;
+  const studio = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  await openStudio(studio);
+  await studio.waitForFunction(() => (window as any).__saywrightStore.get().app.connected);
+  const frameUrl = await studio.evaluate(() => (window as any).__saywrightStore.get().status.target.frameUrl as string);
+  const shown = studio.frames().find((f) => f.url().startsWith(new URL(frameUrl).origin))!;
+  // A button click (requestSubmit) and form.submit(), each with the app's own full address.
+  for (const how of ['requestSubmit', 'submit'] as const) {
+    await shown.evaluate(
+      ([origin, how]) => {
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = `${origin}/echo`;
+        form.innerHTML = '<input name="email" value="a@b.c">';
+        document.body.append(form);
+        form[how]();
+      },
+      [appOrigin, how] as const,
+    );
+    await expect(studio.frameLocator('iframe').getByTestId('echo')).toHaveText('POST email=a%40b.c');
+    expect(new URL(studio.frames().find((f) => f.url().includes('/echo'))!.url()).origin).toBe(new URL(frameUrl).origin);
+    await shown.goto(frameUrl);
+  }
   await studio.close();
 });
