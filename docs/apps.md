@@ -53,7 +53,7 @@ What it adds depends on the app:
 | **A folder of plain HTML** (with or without a `package.json`), **a PHP app** | Nothing: the studio shows every page through its proxy. |
 | **A monorepo's top folder** | Nothing: it lists the apps inside, to connect one of them. |
 
-Then the app opens first the next time the studio starts; connect several before then and each is linked, the last one opening first. `--dry-run` shows what it would change, with the lines it would add, and changes nothing; the other options (`--url`, `--start`, `--no-start`, `--studio`) are in [Configuration](configuration.md#saywright-connect).
+If the studio is running, it links the app at once: open it from **Your apps**. Otherwise the app opens first the next time the studio starts; connect several before then and each is linked, the last one opening first. `--dry-run` shows what it would change, with the lines it would add, and changes nothing; the other options (`--url`, `--start`, `--no-start`, `--studio`) are in [Configuration](configuration.md#saywright-connect).
 
 To disconnect an app, remove it from the app list (its code, sessions and reports stay where they are), and remove `saywright()` from its Vite config or the `saywright.js` script tag.
 

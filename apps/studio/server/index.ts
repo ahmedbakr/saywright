@@ -850,6 +850,7 @@ export async function createStudioApi(layout: StudioLayout) {
   const close = () => {
     speech.stop();
     apps.close();
+    forgetAddress(dataDir, studioOrigin);
   };
 
   /** The studio's own address, once it listens (the proxy adds the bridge from there). */
@@ -946,6 +947,20 @@ export function studioRoutes(studio: Studio, layout: StudioLayout): Array<[route
     // On-device speech runs on onnxruntime's WebAssembly.
     ...(ort ? [['/ort', files(ort)] as [string, Middleware]] : []),
   ];
+}
+
+/**
+ * A studio that stops takes its address out of server.json, so `connect`, `doctor` and the MCP command don't send
+ * anything to where nothing listens. Only the file this studio wrote: another one on the same data folder keeps its.
+ */
+function forgetAddress(dataDir: string, url: string): void {
+  const file = path.join(dataDir, 'server.json');
+  try {
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as { url?: unknown; pid?: unknown };
+    if (saved.pid === process.pid && saved.url === url) fs.rmSync(file, { force: true });
+  } catch {
+    /* none, or not ours to remove */
+  }
 }
 
 /** Once the studio listens: where it is, for the proxy, the open app's plugin and AI apps started as programs. */

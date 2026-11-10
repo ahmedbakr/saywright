@@ -8,8 +8,9 @@
  *                   (SvelteKit, Astro, Nuxt, Docusaurus…) nothing to add: the studio shows them through its proxy
  *
  * The app is read as the studio reads it (server/apps/detect.ts), so in a monorepo Vite, the dependencies and the
- * package manager are found in the workspace above the app. The studio links the app the next time it starts (from
- * target.json in its data folder) and opens it first.
+ * package manager are found in the workspace above the app. A studio that runs now (it answers at the address in
+ * server.json) links the app at once; otherwise the studio links it the next time it starts (from target.json in its
+ * data folder) and opens it first.
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -34,22 +35,45 @@ ${c.bold('saywright connect')} <app folder> [options]: connect an app to the stu
   --dry-run              show what would change, change nothing
 `;
 
-/** Where the studio that runs now listens, as it wrote when it started: null when none runs. */
-export function runningStudio(dataDir: string): string | null {
-  let saved: { url?: unknown; pid?: unknown };
+/** Whether a studio answers at this address: what it says about itself, not a process id that may be anyone's now. */
+export async function studioAnswers(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${url}/api/status`, { signal: AbortSignal.timeout(1500) });
+    return res.ok && typeof ((await res.json()) as { version?: unknown }).version === 'string';
+  } catch {
+    return false;
+  }
+}
+
+/** Where the studio that runs now listens, as it wrote when it started and as it still answers: null when none does. */
+export async function runningStudio(dataDir: string): Promise<string | null> {
+  let saved: { url?: unknown };
   try {
     saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'server.json'), 'utf8')) as typeof saved;
   } catch {
     return null;
   }
-  if (typeof saved.url !== 'string' || !/^https?:\/\//.test(saved.url) || typeof saved.pid !== 'number') return null;
+  if (typeof saved.url !== 'string' || !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(saved.url)) return null;
+  return (await studioAnswers(saved.url)) ? saved.url : null;
+}
+
+/**
+ * Link the app in the studio that runs now, through the API its “Link an app” dialog uses (a request from this
+ * computer, not from a web page, as the studio allows). The app's id when it is linked; null when that can't be done.
+ */
+async function linkNow(studio: string, target: { root: string; url: string; start: string | null }): Promise<string | null> {
+  const post = async (route: string, body: unknown) => {
+    const res = await fetch(`${studio}/api${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json()) as Record<string, unknown>;
+  };
   try {
-    process.kill(saved.pid, 0);
-  } catch (err) {
-    // Running, as another user: still the studio's address. Gone: the usual one.
-    if ((err as NodeJS.ErrnoException).code !== 'EPERM') return null;
+    const { probe } = await post('/apps/probe', { folder: target.root });
+    const { app } = await post('/apps', { probe, url: target.url, start: target.start, open: false });
+    return typeof (app as { id?: unknown } | undefined)?.id === 'string' ? (app as { id: string }).id : null;
+  } catch {
+    return null;
   }
-  return saved.url;
 }
 
 export async function connect(argv: string[], ctx: CliContext): Promise<number> {
@@ -67,7 +91,8 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
   }
   const dry = !!values['dry-run'];
   // The studio that runs now, where it said it listens (it may have moved off its usual port), else the usual place.
-  const studio = (values.studio ?? runningStudio(ctx.layout.dataDir) ?? STUDIO_URL).replace(/\/+$/, '');
+  const running = await runningStudio(ctx.layout.dataDir);
+  const studio = (values.studio ?? running ?? STUDIO_URL).replace(/\/+$/, '');
   const scriptUrl = `${studio}/saywright.js`;
   const root = path.resolve(positionals[0]);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
@@ -196,12 +221,18 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
   // A static site has no usual port: it gets its address when it is served, by its start script or by the studio.
   const url = values.url ?? (dev.port ? `http://localhost:${dev.port}` : ASSIGNED_URL);
   const start = noStart ? null : values.start === undefined ? dev.start : values.start || null;
+  // A studio that runs now is told at once; otherwise it links the app when it next starts.
+  let linked: 'now' | 'later' | 'restart' = 'later';
   if (!dry) {
-    // Every app connected before the studio next starts is linked then; this one, the last, opens first.
-    fs.mkdirSync(ctx.layout.dataDir, { recursive: true });
-    const file = path.join(ctx.layout.dataDir, 'target.json');
-    const waiting = connectedTargets(file).filter((t) => path.resolve(t.root) !== root);
-    fs.writeFileSync(file, JSON.stringify({ targets: [...waiting, { url, root, framework, start, studio }] }, null, 2));
+    if (running && (await linkNow(running, { root, url, start }))) linked = 'now';
+    else {
+      // Every app connected before the studio next starts is linked then; this one, the last, opens first.
+      fs.mkdirSync(ctx.layout.dataDir, { recursive: true });
+      const file = path.join(ctx.layout.dataDir, 'target.json');
+      const waiting = connectedTargets(file).filter((t) => path.resolve(t.root) !== root);
+      fs.writeFileSync(file, JSON.stringify({ targets: [...waiting, { url, root, framework, start, studio }] }, null, 2));
+      if (running) linked = 'restart';
+    }
   }
 
   const react = !!declaredDeps(root).react;
@@ -227,8 +258,14 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
     console.log(c.dim(`\nRun it again without --dry-run to make ${edits.length || changes.length ? 'these changes' : 'the connection'}.\n`));
     return 0;
   }
-  console.log(`\nNext: ${c.cyan(ctx.startCommand)}.${mapping}`);
   const undo = { plugin: ' and remove saywright() from your Vite config', script: ' and remove the saywright.js script tag', proxy: '' }[how];
+  if (linked === 'now') {
+    console.log(`\nLinked in the studio at ${c.cyan(running!)}: open it from Your apps.${mapping}`);
+    console.log(c.dim(`It stays in the studio’s app list. To disconnect: remove it from the app list${undo}.\n`));
+    return 0;
+  }
+  if (linked === 'restart') warn(`The studio is running at ${running}: link the folder in Your apps, or restart it.`, 'It links the app when it next starts.');
+  else console.log(`\nNext: ${c.cyan(ctx.startCommand)}.${mapping}`);
   console.log(c.dim(`It opens first next time the studio starts, and stays in its app list. To disconnect: remove it from the app list${undo}.\n`));
   return 0;
 }

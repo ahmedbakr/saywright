@@ -15,7 +15,7 @@ Most of Saywright is set up in the studio itself (**Settings**). This page lists
 | Command | What it does |
 | --- | --- |
 | `npx @saywright/studio` | Starts the studio and opens it in your browser. Same as `npx @saywright/studio start`. |
-| `npx @saywright/studio connect <app folder>` | Connects an app once: adds the Vite plugin or a script tag where they help, and opens the app first the next time the studio starts. See [Linking apps](apps.md#connect-from-the-terminal). |
+| `npx @saywright/studio connect <app folder>` | Connects an app once: adds the Vite plugin or a script tag where they help, and links the app in the studio that runs now, or opens it first the next time the studio starts. See [Linking apps](apps.md#connect-from-the-terminal). |
 | `npx @saywright/studio setup` | Downloads the optional extras (voice and speech models). |
 | `npx @saywright/studio doctor` | Checks what the studio needs and says how to fix what is missing. Exits with code 1 when something must be fixed. |
 | `npx @saywright/studio mcp` | Connects an AI app that starts MCP servers as programs (Claude Desktop) to the running studio. See [MCP](mcp.md). |
@@ -40,7 +40,7 @@ If a studio already answers on the port, the command opens it instead of startin
 | `--url <address>` | the port in the app's config, else its framework's usual one; for a folder of HTML, the address it gets when it is served | Where the app runs. |
 | `--start "<command>"` | the app's dev script | The command that starts it. |
 | `--no-start` | | You start the app yourself. |
-| `--studio <address>` | `http://localhost:7357` | Where the studio runs. A script tag loads from this address. |
+| `--studio <address>` | the running studio's address (it answers there), else `http://localhost:7357` | Where the studio runs. A script tag loads from this address. |
 | `--dry-run` | | Shows what would change and changes nothing. |
 
 #### `saywright setup`

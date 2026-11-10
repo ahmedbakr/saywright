@@ -114,7 +114,7 @@ export async function doctor(argv: string[], ctx: CliContext): Promise<number> {
   }
 
   // A studio running now says where it listens (it may have moved off its usual port): that is where it is.
-  const running = runningStudio(layout.dataDir);
+  const running = await runningStudio(layout.dataDir);
   if (running) ok(`The studio is running at ${running}`);
   const ports: Array<[number, string]> = running ? [] : [[STUDIO_PORT, 'the studio']];
   if (repoSample) ports.push([5174, 'the sample app']);

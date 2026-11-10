@@ -187,12 +187,28 @@ describe('connect', () => {
   it('points the script tag at the studio that runs now, wherever it moved, and at the usual place once it stops', async () => {
     const layout = `export default function Root({ children }) {\n  return <html><body>{children}</body></html>;\n}\n`;
     const dir = app({ 'app/layout.tsx': layout }, { next: '^16' });
-    // This process stands for a studio that started on 7440, its usual port being taken.
-    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url: 'http://localhost:7440', pid: process.pid }));
-    expect(await main(['connect', dir], ctx)).toBe(0);
-    expect(fs.readFileSync(path.join(dir, 'app/layout.tsx'), 'utf8')).toContain('<script src="http://localhost:7440/saywright.js" defer />');
+    // A small server stands for a studio that started on another port, its usual one being taken. It can't link
+    // apps, so connect says how to.
+    const fake = http.createServer((req, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/api/status') return res.end(JSON.stringify({ version: '0.3.0' }));
+      res.statusCode = 404;
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => fake.listen(0, '127.0.0.1', resolve));
+    const url = `http://localhost:${(fake.address() as AddressInfo).port}`;
+    try {
+      fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url, pid: 2 ** 22 + 12345 }));
+      expect(await main(['connect', dir], ctx)).toBe(0);
+      expect(fs.readFileSync(path.join(dir, 'app/layout.tsx'), 'utf8')).toContain(`<script src="${url}/saywright.js" defer />`);
+      expect(out.join('\n')).toMatch(/The studio is running at .*: link the folder in Your apps, or restart it/);
+    } finally {
+      fake.closeAllConnections();
+      await new Promise((resolve) => fake.close(resolve));
+    }
+    // Its server.json names a live process (this one) but nothing answers there: the usual place.
     const gone = app({ 'app/layout.tsx': layout }, { next: '^16' });
-    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url: 'http://localhost:7440', pid: 2 ** 22 + 12345 }));
+    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url, pid: process.pid }));
     expect(await main(['connect', gone], ctx)).toBe(0);
     expect(fs.readFileSync(path.join(gone, 'app/layout.tsx'), 'utf8')).toContain('<script src="http://localhost:7357/saywright.js" defer />');
   });
@@ -359,11 +375,25 @@ describe('setup and doctor', () => {
   });
 
   it('doctor says where a running studio listens, rather than calling its usual port free', async () => {
-    // This process stands for a studio that started on 7440, its usual port being taken.
-    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url: 'http://localhost:7440', pid: process.pid }));
+    // A small server stands for a studio that started on another port, its usual one being taken. It is asked.
+    vi.mocked(globalThis.fetch).mockRestore();
+    const fake = http.createServer((_req, res) => res.end(JSON.stringify({ version: '0.3.0' })));
+    await new Promise<void>((resolve) => fake.listen(0, '127.0.0.1', resolve));
+    const url = `http://localhost:${(fake.address() as AddressInfo).port}`;
+    try {
+      fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url, pid: 2 ** 22 + 12345 }));
+      await main(['doctor'], ctx);
+      expect(out.join('\n')).toContain(`✓ The studio is running at ${url}`);
+      expect(out.join('\n')).not.toMatch(/Port 7357/);
+    } finally {
+      fake.closeAllConnections();
+      await new Promise((resolve) => fake.close(resolve));
+    }
+    // A server.json left behind, naming a process that is alive but no studio: not running.
+    out = [];
+    fs.writeFileSync(path.join(ctx.layout.dataDir, 'server.json'), JSON.stringify({ url, pid: process.pid }));
     await main(['doctor'], ctx);
-    expect(out.join('\n')).toMatch(/✓ The studio is running at http:\/\/localhost:7440/);
-    expect(out.join('\n')).not.toMatch(/Port 7357/);
+    expect(out.join('\n')).not.toMatch(/The studio is running/);
   });
 
   it.skipIf(!engine)('doctor finds the speech models where SAYWRIGHT_SPEECH_DIR says', async () => {
@@ -416,5 +446,31 @@ describe('the studio, once started', () => {
       if (ai === undefined) delete process.env.SAYWRIGHT_AI;
       else process.env.SAYWRIGHT_AI = ai;
     }
+  }, 30_000);
+
+  it('links an app connected while it runs, at once, and takes its address out of server.json when it stops', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'saywright-started-'));
+    const ai = process.env.SAYWRIGHT_AI;
+    process.env.SAYWRIGHT_AI = 'fake';
+    const layout = { ...repoLayout(ROOT), dataDir: home, envDir: home };
+    const studio = await createStudioApi(layout);
+    const server = http.createServer(dispatch(studioRoutes(studio, layout)));
+    try {
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      announce(studio, layout, (server.address() as AddressInfo).port, () => undefined);
+      ctx = { ...ctx, layout };
+      const dir = app({ 'vite.config.ts': `export default { plugins: [] };\n` }, { vite: '^8', '@saywright/vite': '^0.1.0' });
+      expect(await main(['connect', dir, '--url', 'http://localhost:5180'], ctx)).toBe(0);
+      expect(studio.apps.registry.find(dir)).toBeTruthy();
+      expect(out.join('\n')).toMatch(/Linked in the studio at http:\/\/localhost:\d+/);
+      expect(fs.existsSync(path.join(home, 'target.json'))).toBe(false);
+    } finally {
+      studio.close();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      if (ai === undefined) delete process.env.SAYWRIGHT_AI;
+      else process.env.SAYWRIGHT_AI = ai;
+    }
+    expect(fs.existsSync(path.join(home, 'server.json'))).toBe(false);
   }, 30_000);
 });
