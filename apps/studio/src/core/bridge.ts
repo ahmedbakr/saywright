@@ -35,7 +35,12 @@ export class BridgeClient {
   /** The app's bridge and this studio can't work together: the side to update. */
   outdated: 'plugin' | 'studio' | null = null;
 
-  onReady: ((info: { url: string; title: string }) => void) | null = null;
+  /**
+   * The app's page answered. `loaded`: its frame has finished loading, so the page is there to work with. A page that
+   * announced itself as its script ran answers once before that too (so a recording carries on at once), with
+   * `loaded` false: nothing of it has been drawn yet.
+   */
+  onReady: ((info: { url: string; title: string; loaded: boolean }) => void) | null = null;
   onProbe: ((msg: ProbeReply) => void) | null = null;
   onRecorded: ((action: RecordedAction) => void) | null = null;
   onNavigated: ((info: { url: string; title: string }) => void) | null = null;
@@ -49,8 +54,8 @@ export class BridgeClient {
   onOutdated: ((side: 'plugin' | 'studio') => void) | null = null;
   /** A new page's bridge announced itself (before the frame's load event): the page before it is gone. */
   onHere: (() => void) | null = null;
-  /** The frame's current page announced itself, so its load event needs no hello of its own. */
-  private announced = false;
+  /** The frame's current page announced itself and hasn't finished loading: it is greeted, but not yet there to work with. */
+  private early = false;
 
   attach(frame: HTMLIFrameElement, src: string): void {
     this.detach();
@@ -83,10 +88,10 @@ export class BridgeClient {
     }, 400);
   }
 
-  /** Whether the page that just finished loading already announced itself (and was greeted): asked once per load. */
-  takeAnnounced(): boolean {
-    const was = this.announced;
-    this.announced = false;
+  /** The frame's page finished loading. Whether it had announced itself before (it was greeted then, as it started). */
+  pageLoaded(): boolean {
+    const was = this.early;
+    this.early = false;
     return was;
   }
 
@@ -126,11 +131,11 @@ export class BridgeClient {
         this.url = m.url;
         // A start sent while the app was (re)loading never arrived: say it again (the app ignores a repeat).
         if (this.wanted) this.post({ type: 'session', on: true, ...this.wanted });
-        this.onReady?.({ url: m.url, title: m.title });
+        this.onReady?.({ url: m.url, title: m.title, loaded: !this.early });
         break;
       }
       case 'here':
-        this.announced = true;
+        this.early = true;
         this.onHere?.();
         this.sayHello();
         break;

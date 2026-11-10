@@ -162,6 +162,8 @@ class Controller {
   private lastProbe: { x: number; y: number; t: number; deep: boolean } | null = null;
   /** Whether the open app has shown a page since the studio opened it (the first one is checked against kept steps). */
   private pageSeen = false;
+  /** The page now in the frame has had its first answer handled (its place in a test being written). */
+  private pageGreeted = false;
   /** When the boxes of what is selected, pinned or changed were last asked for. */
   private trackedAt = 0;
   /** The cursor canvas has something on it (else it is hidden). */
@@ -347,9 +349,10 @@ class Controller {
 
   /** The iframe (re)loaded: its bridge starts fresh, so old element ids mean nothing now. */
   frameLoaded(): void {
-    // A page that announced itself as its script ran was greeted then, and may already be recording.
-    if (this.bridge.takeAnnounced()) return;
-    set({ app: { ...get().app, connected: false } });
+    // A page that announced itself as its script ran was greeted then, and may already be recording. Now that it has
+    // loaded it is asked again: what it is called and where it ended up are known only now, and only now is it there
+    // to work with.
+    if (!this.bridge.pageLoaded()) set({ app: { ...get().app, connected: false } });
     this.bridge.sayHello();
   }
 
@@ -380,22 +383,30 @@ class Controller {
 
   private wireBridge(): void {
     const b = this.bridge;
-    b.onReady = ({ url, title }) => {
-      this.appLoads++;
-      set({ app: { ...get().app, connected: true, url, title, outdated: undefined } });
+    b.onReady = ({ url, title, loaded }) => {
       const mode = get().mode;
       b.trackMouse(mode !== 'edit');
       b.record(mode === 'record');
       b.forwardKeys(true);
-      void this.reresolveAll();
-      if (this.pageSeen) {
-        // A full page load (a link, a form sent, location.href) moved the app: the test waits for the new page too.
-        this.recordedPage(url);
-      } else {
-        // The first page since the studio (or this app) opened: kept steps that end elsewhere don't fit it.
-        this.pageSeen = true;
-        this.checkKeptSteps(url);
+      // Once for each page, at its first answer (as its script ran, when it announced itself): before any step on it.
+      if (!this.pageGreeted) {
+        this.pageGreeted = true;
+        if (this.pageSeen) {
+          // A full page load (a link, a form sent, location.href) moved the app: the test waits for the new page too.
+          this.recordedPage(url);
+        } else {
+          // The first page since the studio (or this app) opened: kept steps that end elsewhere don't fit it.
+          this.pageSeen = true;
+          this.checkKeptSteps(url);
+        }
       }
+      // Still loading: it is greeted and may be recording, but nothing of it is drawn yet. It is there to work with
+      // (pointed at, replayed in, looked at by Autopilot) once its frame has loaded, when it answers again.
+      if (!loaded) return;
+      this.pageGreeted = false;
+      this.appLoads++;
+      set({ app: { ...get().app, connected: true, url, title, outdated: undefined } });
+      void this.reresolveAll();
     };
     b.onHere = () => set({ app: { ...get().app, connected: false } });
     b.onOutdated = (outdated) => set({ app: { ...get().app, connected: false, outdated } });
@@ -2156,6 +2167,7 @@ class Controller {
     if (!changed) {
       // Opened again (a studio that restarted): its first page is checked against the kept steps.
       this.pageSeen = false;
+      this.pageGreeted = false;
       void this.refreshStatus();
       void this.refreshChanges();
       void sessions.refreshList();
@@ -2166,6 +2178,7 @@ class Controller {
     this.requests.stop();
     // The last app's test stays kept for it (keepRecorder); this app's own comes back.
     this.pageSeen = false;
+    this.pageGreeted = false;
     set({ selection: null, pins: [], hover: null, previewTargets: [], inspect: null, recorder: initialRecorder, changes: [], replay: null });
     if (get().mode === 'record') this.setMode('use');
     this.restoreRecorder(useApps.getState().active);
