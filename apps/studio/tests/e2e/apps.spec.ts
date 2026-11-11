@@ -195,6 +195,30 @@ test('a project with a dev command: the studio starts it, finds where it listens
   await expect(page.locator('[data-run-log]')).toContainText('DATABASE_URL is not set');
 });
 
+test('Cancel while an app is starting stops it, and what was cancelled isn’t then reported as a failure', async ({ page }) => {
+  const folder = copyFixture('devserver');
+  fs.mkdirSync(path.join(folder, 'node_modules'));
+  // A dev command that never answers: there is time to think again.
+  fs.writeFileSync(path.join(folder, 'package.json'), JSON.stringify({ name: 'harbor-dashboard', scripts: { dev: 'node -e "setTimeout(() => {}, 120000)"' } }));
+  const id = await linkFolder(folder);
+  await openStudio(page);
+  await page.locator('[data-app-switcher]').click();
+  await page.getByRole('menuitem', { name: 'All apps' }).click();
+  const answer = page.waitForResponse((r) => r.url().endsWith(`/api/apps/${id}/open`));
+  await page.locator(`[data-app="${id}"] [data-open-app]`).click();
+  const opening = page.locator('[data-opening]');
+  await expect(opening).toContainText('Starting harbor-dashboard');
+  await opening.getByRole('button', { name: 'Cancel' }).click();
+  await expect(opening).toHaveCount(0);
+  // The request to open it ends once it has stopped, with why it didn't start: nothing the person needs telling.
+  const res = await answer;
+  expect(res.status()).toBe(502);
+  await res.finished();
+  await page.waitForTimeout(400);
+  await expect(opening).toHaveCount(0);
+  expect((await call<AppsState>('GET', '/apps')).runs.find((r) => r.app === id)?.status).toBe('stopped');
+});
+
 test('a dev server that stops on its own is said so over the app, and Start it again brings it back', async ({ page }) => {
   const folder = copyFixture('devserver');
   fs.mkdirSync(path.join(folder, 'node_modules'));

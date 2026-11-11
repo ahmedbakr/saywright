@@ -68,6 +68,16 @@ function apply(r: AppsResponse): void {
   setA({ apps: r.apps, active: r.active, runs: Object.fromEntries(r.runs.map((x) => [x.app, x])), cloneDir: r.cloneDir, launcherPref: r.launcher, loaded: true });
 }
 
+/**
+ * Says why an app didn't open. Not when opening it was cancelled meanwhile (its dialog is gone, or is another app's by
+ * now): that it stopped is what was asked for.
+ */
+function failed(id: string, env: string, err: unknown): void {
+  const now = getA().opening;
+  if (!now || (now.id !== id && now.id !== 'sample')) return;
+  setA({ opening: { id, env, step: 'Failed', error: err instanceof Error ? err.message : String(err), code: err instanceof ApiError ? err.code : undefined } });
+}
+
 /** Called when the open app changed (the controller resets what it showed, unless it is the app it showed). */
 let onSwitched: (changed: boolean) => void = () => undefined;
 /** The app this page shows: a studio that restarted opens it again, and the page keeps what it had of it. */
@@ -153,7 +163,7 @@ export const apps = {
         setA({ opening: null, pending: { id, env, message: e.message } });
         return false;
       }
-      setA({ opening: { id, env: env ?? '', step: 'Failed', error: err instanceof Error ? err.message : String(err), code: e?.code } });
+      failed(id, env ?? '', err);
       return false;
     }
   },
@@ -197,8 +207,7 @@ export const apps = {
       // Linked by now, unless the sample itself is missing: named by its own id, so what can be done next (install,
       // try again) is offered as for any other app.
       await this.refresh();
-      const id = getA().apps.find((a) => a.sample)?.id ?? 'sample';
-      setA({ opening: { id, env: '', step: 'Failed', error: err instanceof Error ? err.message : String(err), code: err instanceof ApiError ? err.code : undefined } });
+      failed(getA().apps.find((a) => a.sample)?.id ?? 'sample', '', err);
     }
   },
 
@@ -209,7 +218,7 @@ export const apps = {
       setA({ opening: null });
       return true;
     } catch (err) {
-      setA({ opening: { id, env: '', step: 'Failed', error: err instanceof Error ? err.message : String(err) } });
+      failed(id, '', err);
       return false;
     }
   },
