@@ -2,6 +2,25 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-11-11
+
+Found on the day 0.3.0 went out, by updating as someone on 0.2.3 does: npx runs the newest studio by itself, the plugin in an app stays as it was installed, and the two went on working together without a word.
+
+### Fixed
+
+- **An app whose plugin is older than the studio is told to update it, and the studio does nothing in the app until then.** A studio updated to 0.3.0 kept working with an app still on a 0.2 plugin, and what 0.3.0 does in the page was not there. With “Let it delete, pay, send and sign out” off, Autopilot could still delete a record, sign out and send a payment in such an app, where the studio said it never sends a delete request; a session masked less, and Write test recorded less. The studio now names the plugin as the one to update, with the command, and an app on the new plugin says the same of an older studio. Apps linked by their address or connected with the script tag always run the studio's own script, and were not affected. **After updating to 0.3.1, run `npm i -D @saywright/vite@latest` in each app connected with the Vite plugin** (or `npx @saywright/studio connect` on it), then restart its dev server.
+- **`connect` brings an older plugin up to the studio's version.** It left a plugin that was already installed as it was. `npx @saywright/studio connect ./my-app` now updates it with the app's own package manager, and says which version it found.
+- **The sample shop's plugin is updated by the studio itself.** The shop is the studio's own copy, made by the release that first opened it, with that release's plugin. A studio updated since brings the plugin up to its own before it starts the shop, and says so while it does; when it can't (no connection), the shop opens with the notice above, and the studio tries again the next time it is started.
+- **Cancel while an app opens is the end of it.** The start that was cancelled came back a moment later as “didn't open”, with the dev command's output. The dialog now closes and stays closed, and a cancelled install is shown as stopped, not crashed.
+
+### Tests
+
+- 1,231 unit tests and 159 browser tests. The update was tried as two people would meet it: a first install in an empty home, and a week of 0.2.3 (a kept change, a generated test, a recorded session) updated in place. This release was then tried the same way from its packages, with a registry standing in for npm: the sample shop of 0.3.0 opened in the updated studio, and an app of one's own after the one command the notice names.
+
+### Documentation
+
+- [Configuration](docs/configuration.md), [Troubleshooting](docs/troubleshooting.md), [Autopilot](docs/autopilot.md) and the plugin's README: the plugin is updated whenever the studio is, how, and what the studio says until it is.
+
 ## [0.3.0] - 2026-11-11
 
 A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and through the code area by area: about 150 findings, the ones that matter fixed, each with a test. The first minute is one click, a check means what was said, Autopilot's safety switch holds, a verdict says only what the run could see, and answers stream from every provider.
@@ -375,6 +394,7 @@ The first release: `@saywright/studio` (the studio, and its command `saywright`)
 - [Getting started](docs/getting-started.md): every feature on the sample shop, one step at a time, with a picture of each and what you should see.
 - Screenshots of the real studio throughout the documentation, taken again by `npm run media:screenshots` when the interface changes.
 
+[0.3.1]: https://github.com/ahmedbakr/saywright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/ahmedbakr/saywright/releases/tag/v0.3.0
 [0.2.3]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.3
 [0.2.2]: https://github.com/ahmedbakr/saywright/releases/tag/v0.2.2
