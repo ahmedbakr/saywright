@@ -2,7 +2,7 @@
 
 All notable changes to Saywright. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.3.0] - 2026-11-10
+## [0.3.0] - 2026-11-11
 
 A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and through the code area by area: about 150 findings, the ones that matter fixed, each with a test. The first minute is one click, a check means what was said, Autopilot's safety switch holds, a verdict says only what the run could see, and answers stream from every provider.
 
