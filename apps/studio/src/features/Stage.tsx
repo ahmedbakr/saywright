@@ -158,7 +158,8 @@ function Connecting({ app, loaded, url, slow, error, outdated }: { app: StatusRe
         <div className="mt-1.5 text-[12.5px] leading-relaxed text-fg-3">
           {outdated === 'plugin' ? (
             <>
-              In the app’s folder, run <span className="font-mono text-fg-2">npm i -D @saywright/vite@latest</span>, then restart its dev server.
+              In the app’s folder, run <span className="font-mono text-fg-2">npm i -D @saywright/vite@latest</span>, then restart its dev server. If the studio started it,
+              stop the studio (Ctrl+C) and start it again. Until then the studio does nothing in this app.
             </>
           ) : (
             <>

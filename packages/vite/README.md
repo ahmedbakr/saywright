@@ -61,7 +61,7 @@ saywright({
 
 - **Vite 4 or newer** (the peer range is `vite >=4`) and **Node.js 22.18 or newer, or 24.11 or newer**.
 - **React** apps get exact locations from the JSX. In other apps on Vite (Vue, Svelte…), the plugin still connects the app to the studio and records sessions, and the studio finds an element's source through the framework's development information.
-- **Updating.** The plugin and the studio are updated separately. When the two can't work together, the studio says which one to update: `npm i -D @saywright/vite@latest` in your app, or `npx @saywright/studio@latest`.
+- **Updating.** The plugin and the studio are released together and updated separately: npx runs the newest studio by itself, while the plugin stays as your app installed it. When the plugin is older than the studio (or the studio older than the plugin), the studio says which one to update and does nothing in the app until then: `npm i -D @saywright/vite@latest` in your app (or `npx @saywright/studio connect .`), or `npx @saywright/studio@latest`. What the page refuses for Autopilot, masks in a session and records for a test is in the plugin, so the two have to match.
 
 For tools that talk to the studio or read its sessions, `@saywright/vite/protocol` exports the messages, the session events and `PROTOCOL_VERSION`, with their types.
 

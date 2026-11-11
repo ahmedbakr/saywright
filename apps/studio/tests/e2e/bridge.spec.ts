@@ -37,11 +37,13 @@ test('a page that frames the app gets no answer from its bridge', async ({ page 
   }
 });
 
-for (const [side, ready, says] of [
-  ['plugin', { v: 0 }, /This app’s Saywright plugin needs an update[\s\S]*npm i -D @saywright\/vite@latest/],
-  ['studio', { v: 99, oldest: 50 }, /This studio is older than the app’s Saywright plugin[\s\S]*npx @saywright\/studio@latest/],
+for (const [side, which, ready, says] of [
+  ['plugin', 'plugin is older than the studio can follow', { v: 0 }, /This app’s Saywright plugin needs an update[\s\S]*npm i -D @saywright\/vite@latest/],
+  // What every plugin up to 0.3.0 says: its page refuses nothing for Autopilot, so the studio does nothing in it.
+  ['plugin', 'plugin is the one of 0.3.0 or before', { v: 1, oldest: 1 }, /This app’s Saywright plugin needs an update[\s\S]*npm i -D @saywright\/vite@latest/],
+  ['studio', 'plugin is newer than the studio can follow', { v: 99, oldest: 50 }, /This studio is older than the app’s Saywright plugin[\s\S]*npx @saywright\/studio@latest/],
 ] as const) {
-  test(`an app whose ${side === 'plugin' ? 'plugin is older' : 'plugin is newer'} than the studio can follow says what to update`, async ({ page }) => {
+  test(`an app whose ${which} says what to update`, async ({ page }) => {
     // The app's bridge from another release: it answers hello with its version, and nothing else.
     await page.route('**/__saywright/bridge.js', (route) =>
       route.fulfill({

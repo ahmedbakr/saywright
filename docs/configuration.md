@@ -152,7 +152,7 @@ Preferences you set in the studio's page (theme, layout, voice) are kept in your
 | --- | --- |
 | `npx @saywright/studio` | Each run asks npm for the newest release and runs it, so there is nothing to do: npx keeps a copy in its cache, but runs a newer release when there is one (with npm 10). `npx @saywright/studio@latest` says so outright. |
 | Installed globally (`npm install -g @saywright/studio`) | It stays on the installed version until you run `npm install -g @saywright/studio@latest`. |
-| The Vite plugin in an app | `npm install -D @saywright/vite@latest` in the app (or your package manager's equivalent), when you update the studio. |
+| The Vite plugin in an app | `npm install -D @saywright/vite@latest` in the app (or your package manager's equivalent), or `npx @saywright/studio connect <the app's folder>`, whenever the studio is updated; then restart the app's dev server. The studio says so over an app whose plugin is older than it, and does nothing in that app until the plugin is updated. |
 | A checkout of this repository | `git pull`, then `npm install`. |
 | The sample shop's copy (`~/.saywright/sample-shop`) | It is copied once, the first time you open it, and is yours to change. For the current release's copy, remove the sample from the app list and remove the folder: the next **Or try the sample shop first** copies it again. |
 

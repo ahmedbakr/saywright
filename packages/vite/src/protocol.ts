@@ -14,10 +14,17 @@ export const NS = 'saywright' as const;
  * the oldest of the other side's it still works with (`oldest`). Raise
  * PROTOCOL_VERSION when a message changes in a way an older side can't follow,
  * and OLDEST_PROTOCOL when this side stops understanding an older one; adding
- * a message or an optional field needs neither (unknown ones are ignored).
+ * a message or an optional field needs neither (unknown ones are ignored),
+ * unless the studio relies on the page doing something for it: a page that
+ * ignores those words carries on without them, and nobody is told.
+ *
+ * 2 (0.3.1): what the page does for the studio is part of what the two agree on. Since 0.3.0 the page itself refuses
+ * what Autopilot may not do, says what each control is (where a link goes, the form a button sends), masks more of
+ * what a session keeps and records more of what a test replays. A page from before ignored the studio's words for
+ * these: Autopilot, with its switch off, could still delete, pay and sign out there. Neither side works with a 1.
  */
-export const PROTOCOL_VERSION = 1;
-export const OLDEST_PROTOCOL = 1;
+export const PROTOCOL_VERSION = 2;
+export const OLDEST_PROTOCOL = 2;
 
 /** Which side has to be updated for a studio and an app's bridge to work together: the app's plugin, the studio, or neither. */
 export function outdated(studio: { v: number; oldest?: number }, bridge: { v: number; oldest?: number }): 'plugin' | 'studio' | null {
