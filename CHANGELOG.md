@@ -72,6 +72,7 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 - **Nothing is called saved that wasn't.** When the list of changes can't be written (a full disk, a folder that can't be written), a preview fails whole and Keep keeps nothing, with a sentence that says why. When the app's folder is moved or deleted while the studio runs, the studio says so and never makes an empty folder in its place. The studio's memory stays flat through a long day of changes.
 - **The budget counts every call it can know about.** A stopped or failed request is counted, an answer that came without usage is counted at an estimate, never as free, the connection **Test** is held to the budget, and a damaged budget file keeps **Stop** in force and says so.
 - **Provider errors are sentences with what to do:** out of credit, a prompt that is too long, an overloaded provider, a wrong address, a model that can't call tools, a connection lost mid-answer (“terminated” before). A rate limit or a server error is tried once more. A search pattern that could freeze the studio is refused, and the code sent with a request has a limit.
+- **A spoken command heard as a word that sounds like it is still the command.** “Undo” heard as “Andi” was taken as “Andi”: the sound-alike, tried first, kept the command from being weighed against the audio. It is weighed like any short command, as it was when two words were heard (“and you”).
 
 #### Apps and the proxy
 
@@ -92,7 +93,7 @@ A full audit of 0.2.3, as a new user on real apps with Claude and with GPT and t
 
 ### Tests
 
-- 1,224 unit tests (907 in 0.2.3) and 157 browser tests (129). Recorded steps are run through Playwright itself: each must find the one element that was used. The first run is tested with the real install, not a stand-in: its bug shipped behind one.
+- 1,225 unit tests (907 in 0.2.3) and 157 browser tests (129). Recorded steps are run through Playwright itself: each must find the one element that was used. The first run is tested with the real install, not a stand-in: its bug shipped behind one.
 - The package's smoke test opens the packaged sample shop with the plugin from the tarball.
 
 ### Documentation

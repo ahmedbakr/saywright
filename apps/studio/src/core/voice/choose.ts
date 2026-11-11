@@ -182,6 +182,18 @@ export function soundsLike(heard: string, command: string): boolean {
   return tokens(heard).length <= 3 && merged(heard).length >= 2 && merged(heard) === merged(command);
 }
 
+/**
+ * The short commands the model scored against the audio, as candidates: every one but those a recogniser heard as
+ * they are. A command that is also a sound-alike made from what was heard (“Andi.” gives “Undo.”) is weighed as a
+ * command too: a variant must explain the audio about as well as the transcript it came from, which a command the
+ * model couldn't transcribe never does.
+ */
+export function commandCandidates(candidates: Candidate[], scored: Record<string, number>): Candidate[] {
+  return Object.keys(scored)
+    .filter((text) => !candidates.some((c) => c.text === text && c.source !== 'variant'))
+    .map((text) => ({ text, source: 'command', rank: 0 }));
+}
+
 /** The short command the audio clearly is, if any. */
 function rescued(commands: Candidate[], scores: Record<string, number>, heard: Candidate[]): Candidate | null {
   const ranked = commands.filter((c) => scores[c.text] !== undefined).sort((a, b) => scores[b.text] - scores[a.text]);

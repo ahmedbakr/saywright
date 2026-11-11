@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AudioCapture, RATE } from '../../src/core/voice/capture';
-import { alignWords, isClipped, pick, plausible, sameWords, soundAlikes, soundKey, soundsLike, understood, type Candidate } from '../../src/core/voice/choose';
+import { alignWords, commandCandidates, isClipped, pick, plausible, sameWords, soundAlikes, soundKey, soundsLike, understood, type Candidate } from '../../src/core/voice/choose';
 
 const browser = (...texts: string[]): Candidate[] => texts.map((text, rank) => ({ text, source: 'browser', rank }));
 const device = (text: string): Candidate => ({ text, source: 'device', rank: 0 });
@@ -115,6 +115,21 @@ describe('picking what you said', () => {
     const scores = { 'And you?': -0.5, 'Undo.': -3.0, 'Cancel.': -6.3 };
     expect(pick([device('And you?'), command('Undo.'), command('Cancel.')], scores)?.text).toBe('Undo.');
     expect(pick([device('Hello there.'), command('Undo.'), command('Cancel.')], { ...scores, 'Hello there.': -0.5 })?.text).toBe('Hello there.');
+  });
+
+  it('weighs a command as a command, though a sound-alike of what was heard gave the same words', () => {
+    // “Undo”, heard as one word that sounds like it: the sound-alike is “Undo.” itself.
+    const heard = device('Andi.');
+    const alike: Candidate = { text: 'Undo.', source: 'variant', rank: 0, from: heard };
+    const scored = { 'Undo.': -2.05, 'Undo that.': -3.69, 'Run the test.': -5.19 };
+    const commands = commandCandidates([heard, alike], scored);
+    expect(commands.map((c) => c.text)).toEqual(['Undo.', 'Undo that.', 'Run the test.']);
+    // As a sound-alike it explains the audio much less well than what was heard; as a command it is clearly the one said.
+    expect(pick([heard, alike], { 'Andi.': -0.83, ...scored })?.text).toBe('Andi.');
+    expect(pick([heard, alike, ...commands], { 'Andi.': -0.83, ...scored })).toMatchObject({ text: 'Undo.', source: 'command' });
+    // What a recogniser heard as it is needs no rescue: it is not weighed twice.
+    expect(commandCandidates([device('Undo.')], scored).map((c) => c.text)).toEqual(['Undo that.', 'Run the test.']);
+    expect(commandCandidates(browser('undo that', 'Undo that.'), scored).map((c) => c.text)).toEqual(['Undo.', 'Run the test.']);
   });
 
   it('swaps in a sound-alike studio word when the audio supports it', () => {

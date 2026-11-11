@@ -11,7 +11,7 @@
  * still being processed: the microphone never stops recording in between.
  */
 import { AudioCapture, RATE, type Span } from './capture';
-import { SHORT_COMMANDS, alignWords, chooseWithoutScores, pick, plausible, sameWords, soundAlikes, understood, type Candidate, type CandidateSource } from './choose';
+import { SHORT_COMMANDS, alignWords, chooseWithoutScores, commandCandidates, pick, plausible, sameWords, soundAlikes, understood, type Candidate, type CandidateSource } from './choose';
 import { arabicCommand } from '@shared/arabic-commands';
 import { ServerAsr } from './server-asr';
 import { SpeechController, type Word } from './speech';
@@ -553,10 +553,9 @@ export class VoiceInput {
         if (scores && length < SHORT_MS && !(meanwhile && understood(meanwhile.text))) {
           const rescue = await this.asr.score(u.id, SHORT_COMMANDS, true);
           if (gen !== this.gen) return;
-          for (const [text, score] of Object.entries(rescue ?? {})) {
-            if (candidates.some((c) => c.text === text)) continue;
-            candidates.push({ text, source: 'command', rank: 0 });
-            scores![text] = score;
+          for (const c of commandCandidates(candidates, rescue ?? {})) {
+            candidates.push(c);
+            scores![c.text] = rescue![c.text];
           }
         }
       }

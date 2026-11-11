@@ -6,10 +6,9 @@ Synthesised with [Piper](https://github.com/rhasspy/piper) voices (via sherpa-on
 | --- | --- | --- |
 | `make-this-bigger.wav`, `e2e-make-this-bigger.wav` | make this bigger | en_GB-alba-medium |
 | `why.wav` | why is the total wrong | en_GB-alba-medium |
-| `undo.wav` | undo | en_GB-alba-medium |
+| `undo.wav`, `e2e-undo.wav` | undo | en_GB-alba-medium |
 | `keep-it.wav` | keep it | en_GB-northern_english_male-medium |
 | `expect.wav` | this should show eighty dollars eighty | en_GB-northern_english_male-medium |
-| `e2e-undo.wav` | undo | en_GB-northern_english_male-medium |
 | `silence.wav` | (one second of silence: the default fake microphone in E2E tests) | |
 
 Real recordings of people reading, from Google's [FLEURS](https://huggingface.co/datasets/google/fleurs) test set ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), normalised to 16-bit:

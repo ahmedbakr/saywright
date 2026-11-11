@@ -102,11 +102,14 @@ test.describe('“make this bigger”, recorded', () => {
 test.describe('“undo”, recorded', () => {
   test.use({ recording: 'e2e-undo.wav' });
 
-  test('a short command the model can’t transcribe is still recognised', async ({ page }) => {
+  test('a short command is recognised, whatever the model makes of it', async ({ page }) => {
     await openStudio(page, { onboarded: true, theme: 'dark', voice: { engine: 'device' } });
     await modelReady(page);
     await talk(page, 2600);
-    expect(await store<string>(page, 's.voice.last.text')).toBe('Undo.');
+    // The model mostly hears “And do.” (now and then “Andi.”, or the word itself): the audio is weighed against the
+    // short commands, and what was said is the command either way.
+    expect(await store<string>(page, 's.voice.last.text')).toMatch(/^Undo[.,]$/);
+    expect(['command', 'device']).toContain(await store<string>(page, 's.voice.last.source'));
     // Nothing waits to be undone: it says so, or offers the last change kept (an earlier test's, if one was).
     await expectIsland(page, /Nothing to undo|Nothing is waiting\. Undo the last change you kept/);
   });
