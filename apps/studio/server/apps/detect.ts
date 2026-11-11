@@ -17,6 +17,7 @@ import { appFetch, certificateProblem } from './local-tls.ts';
 
 interface Pkg {
   name?: string;
+  version?: string;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;

@@ -16,6 +16,7 @@ import { browserSpeechReady } from '../server/assets.ts';
 import { speechDir } from '../server/layout.ts';
 import { programExists } from '../server/program.ts';
 import { SpeechService, speechEngineLoads } from '../server/speech/service.ts';
+import { newer } from '../server/versions.ts';
 import { nodeMessage, nodeSupported, proxyVariables } from '../bin/node-env.mjs';
 import { dataDirProblem } from './data-dir.ts';
 import { runningStudio } from './connect.ts';
@@ -90,12 +91,6 @@ async function latestRelease(): Promise<string | null> {
     return null;
   }
 }
-const newer = (a: string, b: string) => {
-  const [x, y] = [a, b].map((v) => v.split(/[.-]/).slice(0, 3).map(Number));
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
-  return false;
-};
-
 type Status = 'ok' | 'warn' | 'problem' | 'info';
 
 export async function doctor(argv: string[], ctx: CliContext): Promise<number> {

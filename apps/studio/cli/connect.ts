@@ -21,6 +21,7 @@ import { declaredDeps, devCommandOf, FRAMEWORK_NAME, frameworkOf, htmlTitle, ins
 import { diffFile } from '../server/diff.ts';
 import { connectedTargets } from '../server/apps/connected.ts';
 import { ASSIGNED_URL } from '../server/apps/registry.ts';
+import { newer } from '../server/versions.ts';
 import type { CliContext } from './index.ts';
 import { addJsxScript, addPageScript, addVitePlugin } from './source.ts';
 import { c, fail, warn } from './term.ts';
@@ -167,11 +168,20 @@ export async function connect(argv: string[], ctx: CliContext): Promise<number> 
     }
     // The package first: if installing fails, the config isn't left importing a plugin that isn't there. In a
     // monorepo it may be installed for the whole workspace already.
-    if (!deps['@saywright/vite'] && !installedPackage(root, '@saywright/vite')) {
-      // A folder (this repository's plugin) needs file: for yarn; a published version installs as it is.
-      const spec = path.isAbsolute(ctx.pluginSpec) && pm === 'yarn' ? `file:${ctx.pluginSpec}` : ctx.pluginSpec;
+    const has = installedPackage(root, '@saywright/vite');
+    // A folder (this repository's plugin) needs file: for yarn; a published version installs as it is.
+    const spec = path.isAbsolute(ctx.pluginSpec) && pm === 'yarn' ? `file:${ctx.pluginSpec}` : ctx.pluginSpec;
+    if (!deps['@saywright/vite'] && !has) {
       changes.push(`${dry ? 'Installs' : 'Installed'} @saywright/vite with ${pm}`);
       if (!run(pm === 'npm' ? ['install', '-D', spec] : ['add', '-D', spec])) return 1;
+    } else if (has && !path.isAbsolute(ctx.pluginSpec)) {
+      // A plugin from an earlier release is brought up to this studio's: the page's part of the work is in it (what
+      // it refuses for Autopilot, what it masks, what it records), and a studio does nothing in a page that is older.
+      const at = readPkg(has)?.version;
+      if (at && newer(ctx.layout.version, at)) {
+        changes.push(`${dry ? 'Updates' : 'Updated'} @saywright/vite with ${pm} (it is ${at}; this studio is ${ctx.layout.version})`);
+        if (!run(pm === 'npm' ? ['install', '-D', spec] : ['add', '-D', spec])) return 1;
+      }
     }
     if (edit.kind === 'edit' && edit.code !== before) write(viteConfig, edit.code, edit.repaired ? 'Added the saywright() plugin to the config’s own plugins' : 'Added the saywright() plugin');
   } else if (framework === 'next') {

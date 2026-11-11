@@ -119,6 +119,21 @@ describe('connect', () => {
     expect(out.join('\n')).toMatch(/nothing has changed yet/);
   });
 
+  it('brings a plugin from an earlier release up to the studio’s, and leaves a current one alone', async () => {
+    // The app as it is a week after it was connected: the plugin of that time installed, the studio updated since.
+    const withPlugin = (version: string) =>
+      app({ 'vite.config.ts': VITE, 'node_modules/@saywright/vite/package.json': JSON.stringify({ name: '@saywright/vite', version }) }, { vite: '^8', '@saywright/vite': `^${version}` });
+    expect(await main(['connect', withPlugin('0.2.3'), '--dry-run'], ctx)).toBe(0);
+    expect(out.join('\n')).toContain(`Updates @saywright/vite with npm (it is 0.2.3; this studio is ${ctx.layout.version})`);
+    out = [];
+    expect(await main(['connect', withPlugin(ctx.layout.version), '--dry-run'], ctx)).toBe(0);
+    expect(out.join('\n')).not.toMatch(/Updates @saywright\/vite/);
+    // A plugin that is newer than this studio is the studio's to catch up with, not connect's to change.
+    out = [];
+    expect(await main(['connect', withPlugin('99.0.0'), '--dry-run'], ctx)).toBe(0);
+    expect(out.join('\n')).not.toMatch(/Updates @saywright\/vite/);
+  });
+
   it('writes the import in the config’s own style: no semicolon where its imports have none', async () => {
     const bare = `import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\n\nexport default defineConfig({ plugins: [react()] })\n`;
     const dir = app({ 'vite.config.ts': bare }, { vite: '^8', '@saywright/vite': '^0.1.0' });
