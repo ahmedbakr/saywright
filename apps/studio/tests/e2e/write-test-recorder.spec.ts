@@ -174,17 +174,52 @@ document.getElementById('go').onclick = () => { sessionStorage.setItem('a${i + 1
   }
 });
 
-test('a click in a page’s first moments is a step', async ({ page }) => {
+test('a click in a page’s first moments is a step: the recording carries on as soon as the studio’s script has run there', async ({ page }) => {
   const file = path.join(E2E_SHOP, 'quick.html');
   fs.writeFileSync(file, '<!doctype html><html><head><meta charset="utf-8"><title>Quick</title></head><body><main><h1>Quick</h1><button>Go now</button></main></body></html>');
+  await page.addInitScript(() => {
+    if (window.parent === window) {
+      // The studio, once the test says so: busy with work of its own for two seconds from the moment the next page
+      // says it is here (as it is when it listens or tracks a hand). Until then it can't greet that page, or tell it
+      // to record.
+      window.addEventListener(
+        'message',
+        (e) => {
+          const studio = window as { __busyAtNextPage?: boolean };
+          if (!studio.__busyAtNextPage || (e.data as { type?: string } | null)?.type !== 'here') return;
+          studio.__busyAtNextPage = false;
+          const t = performance.now();
+          while (performance.now() - t < 2000);
+        },
+        true,
+      );
+    } else if (location.pathname === '/quick.html') {
+      // The new page: its button is clicked from inside it as soon as its scripts have run, the studio's among them.
+      // (Not by the browser: in a frame's first moments the Chromium of GitHub's machines gives one click in six to
+      // the page around the frame, and the app never has it.)
+      let greeted = false;
+      window.addEventListener('message', (e) => (greeted ||= (e.data as { type?: string } | null)?.type === 'hello'), true);
+      document.addEventListener('DOMContentLoaded', () => {
+        (window as { __clickedBeforeGreeted?: boolean }).__clickedBeforeGreeted = !greeted;
+        document.querySelector('button')?.click();
+      });
+    }
+  });
   try {
     await writeTestOnAccount(page);
     const app = page.frameLocator('iframe');
+    // A first step: the page has heard the studio and is recording.
+    await app.getByText('Show password').click();
+    await expect.poll(async () => (await steps(page)).length).toBe(1);
+    await page.evaluate(() => ((window as { __busyAtNextPage?: boolean }).__busyAtNextPage = true));
     await app.locator('body').evaluate(() => (location.href = '/quick.html'));
-    // As soon as the studio has seen the new page (which turns its recording on): the page is a few milliseconds old.
-    await expect.poll(() => store<string>(page, 's.app.url'), { intervals: [20] }).toContain('/quick.html');
-    await app.getByRole('button', { name: 'Go now' }).click();
-    await expect.poll(async () => (await steps(page)).filter((s) => s.kind === 'click').map((s) => s.description)).toEqual(['Click the “Go now” button']);
+    await expect.poll(async () => (await steps(page)).slice(1).map((s) => s.description)).toEqual(['Wait for /quick.html', 'Click the “Go now” button']);
+    // The step is the page's own doing: the studio hadn't greeted it when the click was made.
+    expect(await app.locator('body').evaluate(() => (window as { __clickedBeforeGreeted?: boolean }).__clickedBeforeGreeted)).toBe(true);
+
+    // Write test off: the tab no longer says to record, and the next page records nothing until the studio says so.
+    await page.evaluate(() => (window as unknown as { __saywright: { setMode(mode: string): void } }).__saywright.setMode('use'));
+    await expect.poll(() => app.locator('body').evaluate(() => sessionStorage.getItem('saywright.record'))).toBeNull();
   } finally {
     fs.rmSync(file, { force: true });
   }

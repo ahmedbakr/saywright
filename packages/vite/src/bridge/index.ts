@@ -14,6 +14,7 @@ import {
   isStudioMessage,
   outdated,
   type BridgeToStudio,
+  type RecordedAction,
   type Rect,
   type StudioToBridge,
 } from '../protocol';
@@ -62,6 +63,9 @@ function standalone(): void {
   void studioUrl().then((endpoint) => new Widget(endpoint, session));
 }
 
+/** How many steps a page keeps while no studio has greeted it yet: a few clicks and fields, never a session's worth. */
+const EARLY_STEPS = 50;
+
 /** Any bridge message, without the namespace tag `post` adds. */
 type Outgoing = BridgeToStudio extends infer M ? (M extends unknown ? Omit<M, 'ns'> : never) : never;
 
@@ -76,7 +80,14 @@ function start(): void {
     window.parent.postMessage({ ns: NS, ...msg }, studioOrigin);
   };
 
-  const recorder = new Recorder((action) => post({ type: 'recorded', action }));
+  /** Steps recorded on this page before the studio greeted it: sent, in order, once it has. */
+  const early: RecordedAction[] = [];
+  const recorder = new Recorder((action) => {
+    if (studioOrigin) post({ type: 'recorded', action });
+    else if (early.length < EARLY_STEPS) early.push(action);
+  });
+  // Write test was recording in the page before this one (a link, a form sent, location.href): it carries on.
+  recorder.resume();
   const session = new SessionRecorder(
     (stats) => post({ type: 'session', ...stats }),
     (reason) => post({ type: 'moment', reason }),
@@ -233,6 +244,8 @@ function start(): void {
       mismatch = side;
       post({ type: 'ready', v: PROTOCOL_VERSION, oldest: OLDEST_PROTOCOL, url: location.href, title: document.title, page: pageKey, loaded: document.readyState === 'complete' });
       if (!mismatch) post({ type: 'session', id: session.id, events: 0, issues: 0 });
+      // What was done here before this greeting comes after the page itself (a studio that isn't writing a test drops it).
+      for (const action of early.splice(0)) if (!mismatch) post({ type: 'recorded', action });
       return;
     }
     // A studio this bridge can't work with is told so (ready), and nothing else it asks is done.

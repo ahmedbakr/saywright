@@ -5,6 +5,9 @@ import { buildLocator } from './locator';
 
 type Emit = (action: RecordedAction) => void;
 
+/** Kept in the tab while Write test records, for the next page of a full page load (see `resume`). */
+const ON_KEY = 'saywright.record';
+
 const INTERACTIVE = 'button, a[href], [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], input, select, textarea, summary, label';
 const TEXTUAL = new Set(['text', 'email', 'search', 'tel', 'url', 'password', 'number', '']);
 /** Inputs whose value is picked rather than typed: a test sets it (fill does, as the input keeps it: 2026-11-20). */
@@ -239,6 +242,26 @@ export class Recorder {
     if (!on) this.flushAll();
     this.on = on;
     this.answerDialogs(on);
+    try {
+      if (on) sessionStorage.setItem(ON_KEY, '1');
+      else sessionStorage.removeItem(ON_KEY);
+    } catch {
+      /* storage blocked: the next page records once the studio has told it to */
+    }
+  }
+
+  /**
+   * Carry on in a page opened by a full page load (a link, a form sent, location.href) while Write test records.
+   * The page before this one left word in the tab, so what is done here is recorded from the moment this script
+   * runs, not from when the studio has greeted the page and told it again. The studio still says whether it records
+   * as it greets each page, which settles it either way.
+   */
+  resume(): void {
+    try {
+      if (sessionStorage.getItem(ON_KEY) === '1') this.setOn(true);
+    } catch {
+      /* storage blocked */
+    }
   }
 
   /** The page's own dialogs, while ours stand in for them (recording); put back as they were when it stops. */
