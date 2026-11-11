@@ -470,7 +470,7 @@ export function OpeningCard() {
         <div className="flex items-start gap-3 p-5">
           {failed ? <TriangleAlert className="mt-0.5 size-5 shrink-0 text-warn" /> : <Spinner className="mt-0.5 size-5 shrink-0 text-human" />}
           <div className="min-w-0 flex-1">
-            <h3 id={`${id}-title`} className="text-[14.5px] font-semibold text-fg">{failed ? `${name} didn’t open` : `${opening.step === 'Opening' ? 'Opening' : opening.step} ${opening.step.startsWith('Starting the') || opening.step.startsWith('Installing') ? '' : name}`.trim()}</h3>
+            <h3 id={`${id}-title`} className="text-[14.5px] font-semibold text-fg">{failed ? `${name} didn’t open` : `${opening.step === 'Opening' ? 'Opening' : opening.step} ${/^(Starting the|Installing|Updating) /.test(opening.step) ? '' : name}`.trim()}</h3>
             <p id={`${id}-what`} className={cn('mt-1 whitespace-pre-line text-[12.5px] leading-relaxed', failed ? 'text-fg-2' : 'shimmer-text')}>
               {failed ? opening.error?.split('\n')[0] : run?.status === 'starting' ? `Running “${run.command}” and waiting for it to answer…` : run?.status === 'installing' ? `Running “${run.command}”…` : 'Connecting…'}
             </p>

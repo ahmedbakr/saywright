@@ -150,13 +150,20 @@ function lastWords(log: string[]): string | undefined {
 function Connecting({ app, loaded, url, slow, error, outdated }: { app: StatusResponse['app']; loaded: boolean; url?: string; slow: boolean; error: string | null; outdated?: 'plugin' | 'studio' }) {
   // An app being opened (one `connect` just set up, say): said, rather than “No app open”.
   const opening = useApps((s) => (s.opening && !s.opening.error ? (s.apps.find((a) => a.id === s.opening!.id)?.name ?? null) : null));
+  // The sample shop's plugin is the studio's to update, when it starts the shop: here it tried and couldn't.
+  const ownShop = useApps((s) => !!app?.sample && s.runs[app.id]?.status === 'running');
   if (outdated)
     return (
       <div className="max-w-[380px] text-center" data-outdated={outdated}>
         <PlugZap className="mx-auto mb-3 size-6 text-warn" />
         <div className="text-[13px] font-medium text-fg">{outdated === 'plugin' ? 'This app’s Saywright plugin needs an update' : 'This studio is older than the app’s Saywright plugin'}</div>
         <div className="mt-1.5 text-[12.5px] leading-relaxed text-fg-3">
-          {outdated === 'plugin' ? (
+          {outdated === 'plugin' && ownShop ? (
+            <>
+              The studio updates the sample shop’s plugin itself when it starts the shop, and couldn’t this time: that needs a connection. Stop the studio (Ctrl+C) and start
+              it again to try once more. Until then the studio does nothing in this app.
+            </>
+          ) : outdated === 'plugin' ? (
             <>
               In the app’s folder, run <span className="font-mono text-fg-2">npm i -D @saywright/vite@latest</span>, then restart its dev server. If the studio started it,
               stop the studio (Ctrl+C) and start it again. Until then the studio does nothing in this app.

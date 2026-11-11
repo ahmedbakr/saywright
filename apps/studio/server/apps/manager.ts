@@ -14,7 +14,8 @@ import type { Metrics } from '../metrics.ts';
 import { Project } from '../project.ts';
 import type { Sessions } from '../sessions/index.ts';
 import type { SourceMapper } from '../sessions/sourcemap.ts';
-import { dependenciesInstalled, hasPlugin, hasScriptTag, otherStudio, probeFolder, scriptTagIn, scriptTagStudios } from './detect.ts';
+import { newer } from '../versions.ts';
+import { dependenciesInstalled, hasPlugin, hasScriptTag, installedPackage, otherStudio, probeFolder, readPkg, scriptTagIn, scriptTagStudios } from './detect.ts';
 import { appFetch } from './local-tls.ts';
 import { AppProxy } from './proxy.ts';
 import { AppRegistry, appStateDir, envFor } from './registry.ts';
@@ -41,6 +42,8 @@ interface ManagerDeps {
   proxyPort?: number;
   /** How long a dev server has to answer after it is started (90 seconds). */
   startMs?: number;
+  /** The studio's version: the sample shop's plugin is kept at it. */
+  version?: string;
 }
 
 export type OpenDecision = 'keep' | 'undo';
@@ -95,6 +98,8 @@ export class AppManager {
   /** Shown before an app opens (false once the studio was started for a given app). */
   launcher = true;
   opening: { id: string; env: string } | null = null;
+  /** The sample shops whose plugin this run of the studio has tried to bring up to its own (see ownPlugin). */
+  private brought = new Set<string>();
 
   constructor(private deps: ManagerDeps) {
     this.registry = new AppRegistry(deps.dataDir);
@@ -251,6 +256,7 @@ export class AppManager {
     if (app.framework !== 'static' && app.framework !== 'php' && fs.existsSync(`${app.root}/package.json`) && !dependenciesInstalled(app.root)) {
       throw new HttpError(409, `${app.name}’s dependencies aren’t installed yet.`, 'needs-install');
     }
+    if (app.sample) await this.ownPlugin(app, env);
     await this.runner.start(app);
     // Its usual address counts only when nothing else is there: with another program on it, the app says where it is.
     const url = await this.runner.ready(app.id, assigned || taken ? null : env.url, this.deps.startMs ?? 90_000);
@@ -333,6 +339,28 @@ export class AppManager {
     // Still no answer: something is there and busy. Not proof of another program.
     if (folder === undefined) return false;
     return folder === null || !sameFolder(folder, app.root);
+  }
+
+  /**
+   * The sample shop is the studio's own copy, made by whichever release first opened it and holding that release's
+   * plugin. A studio updated since brings the plugin up to its own before it starts the shop, rather than name a
+   * command to run in a folder its user never opened. Tried once each time the studio runs: when it can't be done (no
+   * connection), the shop starts as it is and says what it needs.
+   */
+  private async ownPlugin(app: LinkedApp, env: AppEnv): Promise<void> {
+    const { version } = this.deps;
+    const plugin = app.root && installedPackage(app.root, '@saywright/vite');
+    const has = plugin ? readPkg(plugin)?.version : undefined;
+    if (!version || !has || !newer(version, has) || this.runner.running(app.id) || this.brought.has(app.id)) return;
+    this.brought.add(app.id);
+    this.deps.emit('apps', { kind: 'opening', id: app.id, env: env.id, step: 'Updating the sample shop’s Saywright plugin' });
+    const done = await this.runner.install(app, `@saywright/vite@${version}`);
+    // Cancelled while it ran: the shop isn't started behind the back of whoever cancelled, and the next opening tries again.
+    if (!done && this.runner.get(app.id).status === 'stopped') {
+      this.brought.delete(app.id);
+      throw new HttpError(502, `${app.name} didn’t start: it was stopped.`, 'start-failed');
+    }
+    this.deps.emit('apps', { kind: 'opening', id: app.id, env: env.id, step: 'Starting' });
   }
 
   /** Why a dev server didn't come up, and what to do. One that is still running but never answered is stopped. */

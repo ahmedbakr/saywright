@@ -343,25 +343,31 @@ export class AppRunner {
     return proc;
   }
 
-  /** Install the app's dependencies (its own package manager). Resolves with whether it worked. */
-  install(app: LinkedApp): Promise<boolean> {
+  /**
+   * Install the app's dependencies with its own package manager, or, with `add`, one package it is developed with
+   * (name@version). Resolves with whether it worked.
+   */
+  install(app: LinkedApp, add?: string): Promise<boolean> {
     if (!app.root) return Promise.resolve(false);
     const r = this.run(app.id);
     const pm = app.packageManager ?? 'npm';
-    r.command = `${pm} install`;
-    r.log = [`$ ${pm} install`];
+    const command = add ? `${pm} ${pm === 'npm' ? 'install' : 'add'} -D ${add}` : `${pm} install`;
+    r.command = command;
+    r.log = [`$ ${command}`];
     r.exitCode = null;
     this.set(r, 'installing');
     return new Promise((resolve) => {
-      const proc = this.spawn(r, `${pm} install`, app.root!);
+      const proc = this.spawn(r, command, app.root!);
       r.proc = proc;
       proc.on('error', (err) => {
         this.append(r, `${err.message}\n`);
       });
       proc.on('exit', (code) => {
+        // Stopped on the way (the opening was cancelled) is not a crash.
+        const stopped = r.status === 'stopped';
         r.proc = null;
         r.exitCode = code;
-        this.set(r, code === 0 ? 'stopped' : 'crashed');
+        this.set(r, code === 0 || stopped ? 'stopped' : 'crashed');
         resolve(code === 0);
       });
     });

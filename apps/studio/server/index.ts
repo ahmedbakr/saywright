@@ -186,6 +186,7 @@ export async function createStudioApi(layout: StudioLayout) {
     dataDir,
     emit: (event, data) => hub.emit(event, data),
     studio: () => studioOrigin,
+    version: layout.version,
     proxyPort: Number(process.env.SAYWRIGHT_PROXY_PORT) || undefined,
     build: (project) => ({
       changes: new ChangeStore(project, undefined, () => hub.emit('changes', {})),
